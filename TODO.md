@@ -14,7 +14,7 @@ FinVault-compatible event contract, heartbeat monitoring.
 - [x] Scaffold TypeScript monorepo tooling (#1)
 - [x] Build shared messaging package wire-compatible with FinVault (#2)
 - [x] Build Control Room heartbeat monitoring service (#3)
-- [ ] Write repo README quickstart (#4)
+- [x] Write repo README quickstart (#4)
 
 ---
 
