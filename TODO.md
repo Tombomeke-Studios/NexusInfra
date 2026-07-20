@@ -11,7 +11,7 @@ Phase 1 from the [roadmap](../CONCEPTS/infrastructure-platform/roadmap.md): repo
 FinVault-compatible event contract, heartbeat monitoring.
 
 - [x] Add CLAUDE.md workflow rules and TODO.md task tracking (#5)
-- [ ] Scaffold TypeScript monorepo tooling (#1)
+- [x] Scaffold TypeScript monorepo tooling (#1)
 - [ ] Build shared messaging package wire-compatible with FinVault (#2)
 - [ ] Build Control Room heartbeat monitoring service (#3)
 - [ ] Write repo README quickstart (#4)
