@@ -5,23 +5,19 @@ Every actionable item carries its GitHub issue ref `(#N)`.
 
 ---
 
-## Active — `feature/node-agent`
+## Active — `feature/orchestrator`
 
-Phase 2 (Core), first half: a Node Agent that manages Docker containers on a host and reports health.
+Phase 2 (Core), second half: the Orchestrator — node registry, deployment planning, and lifecycle
+tracking. Persistence lands first since the rest builds on it.
 
-- [x] Node Agent: Docker container lifecycle via Docker API (#9)
-- [x] Node Agent: heartbeat and resource reporting (#10)
+- [ ] Persistence layer for nodes and deployments (#14)
+- [ ] Orchestrator: node registry (#11)
+- [ ] Orchestrator: deployment API with resource-aware node selection (#12)
+- [ ] Orchestrator: server lifecycle event handling (#13)
 
 ---
 
 ## Backlog
-
-### Phase 2 — Core (`feature/orchestrator`)
-
-- [ ] Orchestrator: node registry (#11)
-- [ ] Orchestrator: deployment API with resource-aware node selection (#12)
-- [ ] Orchestrator: server lifecycle event handling (#13)
-- [ ] Persistence layer for nodes and deployments (#14)
 
 ### Phase 3 — Dashboard (`feature/dashboard`)
 
@@ -42,6 +38,11 @@ Phase 2 (Core), first half: a Node Agent that manages Docker containers on a hos
 ---
 
 ## Done
+
+### `feature/node-agent` — merged in #24
+
+- [x] Node Agent: Docker container lifecycle via Docker API (#9)
+- [x] Node Agent: heartbeat and resource reporting (#10)
 
 ### `feature/ci` — merged in #23
 
