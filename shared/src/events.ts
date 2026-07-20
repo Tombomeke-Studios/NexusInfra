@@ -14,8 +14,11 @@ export type NexusInfraEvent =
   // ── Monitoring / heartbeats ──────────────────────────────────────────
   | { type: 'heartbeat.service'; payload: { name: string; status: 'healthy'; timestamp: string } }
   | { type: 'heartbeat.node'; payload: { nodeId: string; status: 'healthy'; timestamp: string; resources?: NodeResources } }
-  // ── Server lifecycle ─────────────────────────────────────────────────
-  | { type: 'server.start'; payload: { deploymentId: string; nodeId: string; dockerImage: string } }
+  // ── Server lifecycle — commands (Orchestrator → Node Agent) ──────────
+  | { type: 'server.start'; payload: { deploymentId: string; nodeId: string; dockerImage: string; containerName?: string; env?: Record<string, string>; ports?: Record<string, string> } }
+  | { type: 'server.stop'; payload: { deploymentId: string; nodeId: string; containerId: string } }
+  | { type: 'server.restart'; payload: { deploymentId: string; nodeId: string; containerId: string } }
+  // ── Server lifecycle — reports (Node Agent → Orchestrator) ───────────
   | { type: 'server.started'; payload: { deploymentId: string; containerId: string; nodeId: string } }
   | { type: 'server.stopped'; payload: { deploymentId: string; containerId: string } }
   | { type: 'server.crashed'; payload: { deploymentId: string; containerId: string; reason: string } }

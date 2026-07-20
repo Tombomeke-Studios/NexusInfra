@@ -156,7 +156,7 @@ is the migrations directory.
 |---|---|
 | `shared/src/events.ts` | Event union, envelope, AES-256-GCM payload encryption — **wire-compatible with FinVault** (same algorithm, KDF salt, envelope shape) |
 | `shared/src/rabbitmq.ts` | Connect/publish/consume helpers targeting the shared `finvault.events` topic exchange + `finvault.events.dlx` |
-| `shared/src/heartbeat.ts` | `startHeartbeat(name)` — periodic `monitoring.heartbeat.service.{name}` publisher |
+| `shared/src/heartbeat.ts` | `startHeartbeat(name)` (service pulse) + `startNodeHeartbeat(nodeId, collectResources)` (node pulse, resources every 5s); both take an injectable publisher |
 | `shared/src/events.test.ts` | Wire-compatibility guard tests (encryption round-trip, ciphertext layout, envelope shape) |
 
 ### services/control-room (heartbeat monitoring)
@@ -164,6 +164,14 @@ is the migrations directory.
 |---|---|
 | `src/index.ts` | HTTP `/health` + `/status`, consumes `monitoring.heartbeat.#`, healthy→degraded(3s)→offline(10s) tracking |
 | `Dockerfile` | Multi-stage workspace build (pattern shared by all services) |
+
+### services/node-agent (Docker host agent)
+| Path | Contents |
+|---|---|
+| `src/runtime.ts` | `ContainerRuntime` interface + `DockerodeRuntime` (real Docker via dockerode) + host resource collection |
+| `src/agent.ts` | Command handling: consumes server.start/stop/restart for this node, publishes server.started/stopped/crashed; dependency-injected for testing |
+| `src/agent.test.ts` | Unit tests with a fake runtime + captured publisher (no Docker/broker needed) |
+| `src/index.ts` | Entry: DockerodeRuntime + agent, binds `nexusinfra.node-agent.{nodeId}`, HTTP `/health` |
 
 ### Infrastructure
 | Path | Contents |
