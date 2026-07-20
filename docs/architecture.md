@@ -13,7 +13,7 @@ event contracts, or infra topology.
 |---|---|---|
 | `shared` (library) | ✅ Built | Event contract + RabbitMQ helpers, wire-compatible with FinVault |
 | `services/control-room` | ✅ Built | Heartbeat monitoring, status thresholds, HTTP status API |
-| `services/node-agent` | Planned (#9, #10) | Docker container lifecycle on a host node |
+| `services/node-agent` | 🚧 In progress | Docker container lifecycle on a host node (#9 done, heartbeat #10 next) |
 | `services/orchestrator` | Planned (#11–#14) | Node registry, deployment planning, lifecycle events |
 | `services/billing-bridge` | Planned (#18, #19) | Runtime tracking → FinVault payments |
 | `services/gateway` | Planned (#20) | JWT validation, routing, WebSocket proxy |
@@ -35,9 +35,14 @@ via `readPayload()` only.
 |---|---|---|
 | `monitoring.heartbeat.service.{name}` | every service (1s) | control-room |
 | `monitoring.heartbeat.node.{id}` | node-agent (planned) | control-room |
+| `infra.server.start` / `infra.server.stop` / `infra.server.restart` | orchestrator (planned) | node-agent |
+| `infra.server.started` / `infra.server.stopped` / `infra.server.crashed` | node-agent | orchestrator (planned) |
 
-Planned keys (defined in `shared/src/events.ts`, not yet flowing): `infra.server.*`,
-`infra.deployment.*`, `bank.payment.*` — see the
+Node Agents each bind their own queue `nexusinfra.node-agent.{nodeId}` to the three `infra.server.*`
+command keys and ignore commands whose payload `nodeId` is not theirs.
+
+Planned keys (defined in `shared/src/events.ts`, not yet flowing): `infra.deployment.*`,
+`bank.payment.*` — see the
 [CONCEPTS routing-key table](../../CONCEPTS/integration/rabbitmq-architecture.md).
 
 ## Heartbeat / status model

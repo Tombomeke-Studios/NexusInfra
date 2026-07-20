@@ -9,7 +9,7 @@ Every actionable item carries its GitHub issue ref `(#N)`.
 
 Phase 2 (Core), first half: a Node Agent that manages Docker containers on a host and reports health.
 
-- [ ] Node Agent: Docker container lifecycle via Docker API (#9)
+- [x] Node Agent: Docker container lifecycle via Docker API (#9)
 - [ ] Node Agent: heartbeat and resource reporting (#10)
 
 ---

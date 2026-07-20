@@ -165,6 +165,14 @@ is the migrations directory.
 | `src/index.ts` | HTTP `/health` + `/status`, consumes `monitoring.heartbeat.#`, healthy→degraded(3s)→offline(10s) tracking |
 | `Dockerfile` | Multi-stage workspace build (pattern shared by all services) |
 
+### services/node-agent (Docker host agent)
+| Path | Contents |
+|---|---|
+| `src/runtime.ts` | `ContainerRuntime` interface + `DockerodeRuntime` (real Docker via dockerode) + host resource collection |
+| `src/agent.ts` | Command handling: consumes server.start/stop/restart for this node, publishes server.started/stopped/crashed; dependency-injected for testing |
+| `src/agent.test.ts` | Unit tests with a fake runtime + captured publisher (no Docker/broker needed) |
+| `src/index.ts` | Entry: DockerodeRuntime + agent, binds `nexusinfra.node-agent.{nodeId}`, HTTP `/health` |
+
 ### Infrastructure
 | Path | Contents |
 |---|---|
