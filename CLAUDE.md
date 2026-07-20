@@ -83,7 +83,7 @@ A "unit" = one function, feature, fix, or refactor — the smallest shippable sl
 10. Repeat 1–9 until the branch group is fully ticked.
 
 **Branch finish protocol** (after the last item on a feature branch):
-1. Run CI locally: `npm run build && npm test` — both must pass.
+1. Run CI locally: `npm run build && npm run lint && npm test` — all must pass.
 2. Push the final state and open a PR **targeting `dev`**.
 3. **Wait for CI to pass on the PR** — a red PR is not done.
 4. After merge: move the branch group in TODO.md to the Done section.
@@ -142,6 +142,7 @@ is the migrations directory.
 | Install workspace deps | `npm install` |
 | Build everything (shared first) | `npm run build` |
 | Run all tests | `npm test` |
+| Lint all workspaces | `npm run lint` |
 | Dev watch: shared + control-room | `npm run dev` |
 | Start stack (RabbitMQ + services, Docker) | `docker-compose up` |
 | Start only the broker | `docker-compose up rabbitmq` |
@@ -169,6 +170,16 @@ is the migrations directory.
 |---|---|
 | `docker-compose.yml` | RabbitMQ + control-room stack |
 | `.env.example` | Env contract — documents the FinVault-shared vars (`RABBITMQ_URL`, `FINVAULT_MESSAGE_KEY`) |
+| `.github/workflows/ci.yml` | CI: npm ci → build → lint (if present) → test, on PRs and pushes to dev/staging/main |
+| `eslint.config.js` | Flat ESLint config (typescript-eslint recommended) covering all workspaces |
+
+### docs/
+| Path | Contents |
+|---|---|
+| `docs/architecture.md` | Services as built, event bus topology, routing keys in use, status model |
+| `docs/security.md` | Payload encryption, secrets handling, auth plan, known gaps |
+| `docs/deployment.md` | Local dev, Docker image pattern, combined-with-FinVault deployment, CI |
+| `docs/api.md` | HTTP endpoints + event contract summary |
 
 ## 8. Conventions & gotchas
 

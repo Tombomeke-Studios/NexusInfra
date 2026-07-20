@@ -14,11 +14,15 @@
     "dev": "concurrently \"npm run dev:shared\" \"npm run dev:control-room\"",
     "build": "npm run build --workspace=shared && npm run build --workspaces --if-present",
     "install:all": "npm install",
+    "lint": "eslint .",
     "test": "vitest run"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "concurrently": "^8.2.2",
+    "eslint": "^10.7.0",
     "typescript": "^5.3.3",
+    "typescript-eslint": "^8.65.0",
     "vitest": "^1.6.0"
   }
 }

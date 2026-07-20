@@ -1,0 +1,35 @@
+# Security
+
+Updated with every change touching auth, secrets, message encryption, or other security concerns.
+Cross-project security design: [`../../CONCEPTS/integration/security.md`](../../CONCEPTS/integration/security.md).
+
+---
+
+## Event payload encryption
+
+- Payloads on the shared bus are **AES-256-GCM** encrypted when `FINVAULT_MESSAGE_KEY` is set.
+  Key derivation: scrypt over the message key with a fixed public salt (`finvault-events-v1`) —
+  identical to FinVault so ciphertext is interoperable. Entropy comes from the key, not the salt.
+- Ciphertext layout `iv(12) | tag(16) | ct`, base64. GCM auth tag rejects tampering.
+- The event `type` is deliberately plaintext (needed for topic routing); never put sensitive data
+  in routing keys or event types.
+- An empty message key sends plaintext payloads — acceptable for local dev only.
+
+## Secrets
+
+- All secrets come from the environment (`.env`, never committed). `.env.example` documents every
+  variable without values.
+- `FINVAULT_MESSAGE_KEY` is shared with FinVault — treat it with the same care as FinVault does;
+  rotating it requires rotating both platforms together.
+- RabbitMQ dev credentials (`guest/guest`) must be replaced in any non-local deployment.
+
+## Authentication (planned)
+
+- Dashboard/API auth uses **FinVault-issued JWTs** validated at the NexusInfra gateway (#20) —
+  one identity across the ecosystem.
+- WebSocket connections authenticate via JWT in the query string, mirroring FinVault's gateway.
+
+## Known gaps (foundation phase)
+
+- No auth on Control Room HTTP endpoints yet (localhost/dev only) — gated by the gateway later.
+- No TLS on AMQP; assumed same-host/private-network broker in dev.
