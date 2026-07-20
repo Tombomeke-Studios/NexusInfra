@@ -1,0 +1,33 @@
+services:
+  # Standalone RabbitMQ for local NexusInfra dev.
+  # In a combined deployment with FinVault, omit this service and point
+  # control-room's RABBITMQ_URL at FinVault's `finvault-rabbitmq` container so
+  # both platforms share the same `finvault.events` topic exchange.
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: nexusinfra-rabbitmq
+    ports:
+      - "5672:5672"   # AMQP protocol
+      - "15672:15672" # Management dashboard
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+  control-room:
+    build:
+      context: .
+      dockerfile: services/control-room/Dockerfile
+    container_name: nexusinfra-control-room
+    ports:
+      - "9000:9000"
+    environment:
+      - PORT=9000
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
+    depends_on:
+      - rabbitmq
+
+volumes:
+  rabbitmq_data:
