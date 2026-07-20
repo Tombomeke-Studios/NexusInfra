@@ -14,6 +14,10 @@ docker-compose up          # RabbitMQ (5672 / UI 15672) + Control Room (9000)
 
 Or hybrid: `docker-compose up rabbitmq` + `npm run dev` for hot-reloading services.
 
+The `node-agent` service mounts the host Docker socket (`/var/run/docker.sock`) so it can start
+and stop real containers. On Windows/macOS Docker Desktop exposes this path to Linux containers.
+Set `NODE_ID` per host when running multiple agents.
+
 ## Docker images
 
 Every service uses the same **multi-stage workspace build** (see
