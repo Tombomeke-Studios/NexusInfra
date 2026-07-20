@@ -156,7 +156,7 @@ is the migrations directory.
 |---|---|
 | `shared/src/events.ts` | Event union, envelope, AES-256-GCM payload encryption — **wire-compatible with FinVault** (same algorithm, KDF salt, envelope shape) |
 | `shared/src/rabbitmq.ts` | Connect/publish/consume helpers targeting the shared `finvault.events` topic exchange + `finvault.events.dlx` |
-| `shared/src/heartbeat.ts` | `startHeartbeat(name)` — periodic `monitoring.heartbeat.service.{name}` publisher |
+| `shared/src/heartbeat.ts` | `startHeartbeat(name)` (service pulse) + `startNodeHeartbeat(nodeId, collectResources)` (node pulse, resources every 5s); both take an injectable publisher |
 | `shared/src/events.test.ts` | Wire-compatibility guard tests (encryption round-trip, ciphertext layout, envelope shape) |
 
 ### services/control-room (heartbeat monitoring)

@@ -1,15 +1,10 @@
 import os from 'os';
 import Docker from 'dockerode';
+import type { NodeResources } from 'shared';
 
-// Host resource snapshot reported to the Control Room. Shape mirrors the
-// heartbeat payload in CONCEPTS/infrastructure-platform/functional-analysis.md.
-export interface NodeResources {
-  cpuPercent: number;
-  ramUsedMb: number;
-  ramTotalMb: number;
-  diskUsedGb: number;
-  diskTotalGb: number;
-}
+// NodeResources is the shared event-payload type (shared/src/events.ts) — the
+// host snapshot reported to the Control Room via the node heartbeat.
+export type { NodeResources };
 
 export interface StartSpec {
   dockerImage: string;

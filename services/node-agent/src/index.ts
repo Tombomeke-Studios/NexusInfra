@@ -1,6 +1,6 @@
 import os from 'os';
 import express from 'express';
-import { consumeRabbitQueue } from 'shared';
+import { consumeRabbitQueue, startNodeHeartbeat } from 'shared';
 import { DockerodeRuntime } from './runtime.js';
 import { createAgent } from './agent.js';
 
@@ -30,6 +30,10 @@ async function start() {
       (envelope) => agent.handleCommand(envelope)
     );
     console.log(`[Node Agent ${NODE_ID}] Listening for server commands`);
+
+    // 1s liveness pulse; CPU/RAM/disk snapshot every 5s. Control Room monitors it.
+    startNodeHeartbeat(NODE_ID, () => runtime.collectResources());
+    console.log(`[Node Agent ${NODE_ID}] Publishing heartbeat on monitoring.heartbeat.node.${NODE_ID}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[Node Agent ${NODE_ID}] Failed to connect to event bus:`, message);
