@@ -5,23 +5,19 @@ Every actionable item carries its GitHub issue ref `(#N)`.
 
 ---
 
-## Active — `feature/ci`
+## Active — `feature/node-agent`
 
-Tooling the workflow depends on: CI so PRs gate on green, lint so the commit rules are checkable,
-docs so section 5 of CLAUDE.md has targets.
+Phase 2 (Core), first half: a Node Agent that manages Docker containers on a host and reports health.
 
-- [x] Add GitHub Actions CI workflow (build + test) (#6)
-- [x] Add ESLint configuration for all workspaces (#7)
-- [x] Scaffold docs/ (architecture, security, deployment, api) (#8)
+- [ ] Node Agent: Docker container lifecycle via Docker API (#9)
+- [ ] Node Agent: heartbeat and resource reporting (#10)
 
 ---
 
 ## Backlog
 
-### Phase 2 — Core (`feature/node-agent`, `feature/orchestrator`)
+### Phase 2 — Core (`feature/orchestrator`)
 
-- [ ] Node Agent: Docker container lifecycle via Docker API (#9)
-- [ ] Node Agent: heartbeat and resource reporting (#10)
 - [ ] Orchestrator: node registry (#11)
 - [ ] Orchestrator: deployment API with resource-aware node selection (#12)
 - [ ] Orchestrator: server lifecycle event handling (#13)
@@ -46,6 +42,12 @@ docs so section 5 of CLAUDE.md has targets.
 ---
 
 ## Done
+
+### `feature/ci` — merged in #23
+
+- [x] Add GitHub Actions CI workflow (build + test) (#6)
+- [x] Add ESLint configuration for all workspaces (#7)
+- [x] Scaffold docs/ (architecture, security, deployment, api) (#8)
 
 ### `feature/foundation` — merged in #22
 
