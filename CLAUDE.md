@@ -169,6 +169,7 @@ is the migrations directory.
 |---|---|
 | `docker-compose.yml` | RabbitMQ + control-room stack |
 | `.env.example` | Env contract — documents the FinVault-shared vars (`RABBITMQ_URL`, `FINVAULT_MESSAGE_KEY`) |
+| `.github/workflows/ci.yml` | CI: npm ci → build → lint (if present) → test, on PRs and pushes to dev/staging/main |
 
 ## 8. Conventions & gotchas
 
