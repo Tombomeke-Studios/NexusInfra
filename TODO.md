@@ -5,26 +5,18 @@ Every actionable item carries its GitHub issue ref `(#N)`.
 
 ---
 
-## Active — `feature/foundation`
+## Active — `feature/ci`
 
-Phase 1 from the [roadmap](../CONCEPTS/infrastructure-platform/roadmap.md): repo skeleton, event bus,
-FinVault-compatible event contract, heartbeat monitoring.
-
-- [x] Add CLAUDE.md workflow rules and TODO.md task tracking (#5)
-- [x] Scaffold TypeScript monorepo tooling (#1)
-- [x] Build shared messaging package wire-compatible with FinVault (#2)
-- [x] Build Control Room heartbeat monitoring service (#3)
-- [x] Write repo README quickstart (#4)
-
----
-
-## Backlog
-
-### Tooling & CI (`feature/ci`)
+Tooling the workflow depends on: CI so PRs gate on green, lint so the commit rules are checkable,
+docs so section 5 of CLAUDE.md has targets.
 
 - [ ] Add GitHub Actions CI workflow (build + test) (#6)
 - [ ] Add ESLint configuration for all workspaces (#7)
 - [ ] Scaffold docs/ (architecture, security, deployment, api) (#8)
+
+---
+
+## Backlog
 
 ### Phase 2 — Core (`feature/node-agent`, `feature/orchestrator`)
 
@@ -55,4 +47,10 @@ FinVault-compatible event contract, heartbeat monitoring.
 
 ## Done
 
-*(groups move here after their PR merges)*
+### `feature/foundation` — merged in #22
+
+- [x] Add CLAUDE.md workflow rules and TODO.md task tracking (#5)
+- [x] Scaffold TypeScript monorepo tooling (#1)
+- [x] Build shared messaging package wire-compatible with FinVault (#2)
+- [x] Build Control Room heartbeat monitoring service (#3)
+- [x] Write repo README quickstart (#4)
