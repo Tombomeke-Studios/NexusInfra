@@ -173,6 +173,14 @@ is the migrations directory.
 | `.github/workflows/ci.yml` | CI: npm ci → build → lint (if present) → test, on PRs and pushes to dev/staging/main |
 | `eslint.config.js` | Flat ESLint config (typescript-eslint recommended) covering all workspaces |
 
+### docs/
+| Path | Contents |
+|---|---|
+| `docs/architecture.md` | Services as built, event bus topology, routing keys in use, status model |
+| `docs/security.md` | Payload encryption, secrets handling, auth plan, known gaps |
+| `docs/deployment.md` | Local dev, Docker image pattern, combined-with-FinVault deployment, CI |
+| `docs/api.md` | HTTP endpoints + event contract summary |
+
 ## 8. Conventions & gotchas
 
 - Monorepo: npm workspaces (`services/*`, `shared`), TypeScript ESM (`"type": "module"`, NodeNext),

@@ -12,7 +12,7 @@ docs so section 5 of CLAUDE.md has targets.
 
 - [x] Add GitHub Actions CI workflow (build + test) (#6)
 - [x] Add ESLint configuration for all workspaces (#7)
-- [ ] Scaffold docs/ (architecture, security, deployment, api) (#8)
+- [x] Scaffold docs/ (architecture, security, deployment, api) (#8)
 
 ---
 
