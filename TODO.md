@@ -33,7 +33,8 @@ tracking. Persistence lands first since the rest builds on it.
 >   README). Full `npm run build && lint && test` green (40 tests). **PR to `dev` opened.**
 >
 > **Next up (resume here):**
-> - Wait for CI green on the `feature/orchestrator` PR → merge → move this group to Done.
+> - **PR #25 (`feature/orchestrator` → `dev`) is CI-green and awaiting human review/merge** — the
+>   agent is not authorized to self-merge into `dev`. Once merged, move this group to Done.
 > - **Then Part B — `feature/dashboard`** (branch off `dev` after A merges): B1 #15 Vite+React scaffold;
 > B2 new stub-login issue (`auth.ts` JWT `/auth/login` + `requireAuth` on orchestrator, Login page);
 > B3 #16 Overview + New Deployment form + Servers list (poll status). Ports: control-room 9000,
