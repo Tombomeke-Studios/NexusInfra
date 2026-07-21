@@ -1,6 +1,7 @@
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createDeployment } from '../api';
+import { IconPlus } from '../components/Icons';
 
 // New Deployment form: image + optional port and env rows. On submit it creates
 // the deployment (which places it on a node and starts the container) and jumps
@@ -32,12 +33,7 @@ export function NewDeployment() {
     setBusy(true);
     setError(null);
     try {
-      await createDeployment({
-        name,
-        dockerImage,
-        ports: rowsToRecord(ports),
-        env: rowsToRecord(env),
-      });
+      await createDeployment({ name, dockerImage, ports: rowsToRecord(ports), env: rowsToRecord(env) });
       navigate('/servers');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create deployment');
@@ -47,60 +43,60 @@ export function NewDeployment() {
   };
 
   return (
-    <section style={{ padding: '1.5rem', maxWidth: 560 }}>
-      <h2>New Deployment</h2>
-      <form onSubmit={onSubmit}>
-        <Field label="Name">
-          <input value={name} onChange={(e) => setName(e.target.value)} required style={inputStyle} />
-        </Field>
-        <Field label="Docker image">
-          <input
-            value={dockerImage}
-            onChange={(e) => setDockerImage(e.target.value)}
-            placeholder="nginx"
-            required
-            style={inputStyle}
-          />
-        </Field>
+    <div className="page" style={{ maxWidth: 640 }}>
+      <div className="page__head">
+        <h1 className="page__title">New Deployment</h1>
+      </div>
 
-        <RowEditor
-          legend="Ports"
-          hint="host : container"
-          keyPlaceholder="8080"
-          valuePlaceholder="80"
-          rows={ports}
-          onChange={setPorts}
-        />
-        <RowEditor
-          legend="Environment"
-          hint="KEY : value"
-          keyPlaceholder="KEY"
-          valuePlaceholder="value"
-          rows={env}
-          onChange={setEnv}
-        />
+      <div className="card">
+        <div className="card__body">
+          <form onSubmit={onSubmit}>
+            <label className="field">
+              <span className="field__label">
+                Name <span className="field__req">*</span>
+              </span>
+              <input
+                className="input"
+                aria-label="Name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="my-nginx"
+                required
+              />
+            </label>
 
-        {error && (
-          <p role="alert" style={{ color: '#dc2626' }}>
-            {error}
-          </p>
-        )}
-        <button type="submit" disabled={busy}>
-          {busy ? 'Deploying…' : 'Deploy'}
-        </button>
-      </form>
-    </section>
-  );
-}
+            <label className="field">
+              <span className="field__label">
+                Docker image <span className="field__req">*</span>
+              </span>
+              <input
+                className="input"
+                aria-label="Docker image"
+                value={dockerImage}
+                onChange={(e) => setDockerImage(e.target.value)}
+                placeholder="nginx"
+                required
+              />
+              <span className="field__hint">Any image your nodes can pull, e.g. nginx, redis, ghcr.io/org/app.</span>
+            </label>
 
-const inputStyle = { display: 'block', width: '100%', padding: '0.5rem', marginTop: '0.25rem' };
+            <RowEditor legend="Ports" hint="host : container" keyPlaceholder="8080" valuePlaceholder="80" rows={ports} onChange={setPorts} />
+            <RowEditor legend="Environment" hint="KEY : value" keyPlaceholder="KEY" valuePlaceholder="value" rows={env} onChange={setEnv} />
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label style={{ display: 'block', marginBottom: '0.75rem' }}>
-      {label}
-      {children}
-    </label>
+            {error && (
+              <p role="alert" className="alert alert--error" style={{ marginBottom: 'var(--space-4)' }}>
+                {error}
+              </p>
+            )}
+
+            <button type="submit" className="btn btn--primary" disabled={busy}>
+              {busy && <span className="spinner" />}
+              {busy ? 'Deploying…' : 'Deploy'}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -119,35 +115,46 @@ function RowEditor({
   rows: Row[];
   onChange: (rows: Row[]) => void;
 }) {
-  const update = (i: number, patch: Partial<Row>) =>
-    onChange(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  const update = (i: number, patch: Partial<Row>) => onChange(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  const remove = (i: number) => onChange(rows.length > 1 ? rows.filter((_, idx) => idx !== i) : [{ key: '', value: '' }]);
 
   return (
-    <fieldset style={{ border: '1px solid #e2e8f0', borderRadius: 8, marginBottom: '0.75rem' }}>
-      <legend>
-        {legend} <small style={{ color: '#64748b' }}>({hint})</small>
-      </legend>
-      {rows.map((r, i) => (
-        <div key={i} style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <input
-            aria-label={`${legend} key ${i + 1}`}
-            placeholder={keyPlaceholder}
-            value={r.key}
-            onChange={(e) => update(i, { key: e.target.value })}
-            style={{ flex: 1, padding: '0.4rem' }}
-          />
-          <input
-            aria-label={`${legend} value ${i + 1}`}
-            placeholder={valuePlaceholder}
-            value={r.value}
-            onChange={(e) => update(i, { value: e.target.value })}
-            style={{ flex: 1, padding: '0.4rem' }}
-          />
-        </div>
-      ))}
-      <button type="button" onClick={() => onChange([...rows, { key: '', value: '' }])}>
-        + Add {legend.toLowerCase()}
+    <div className="field">
+      <span className="field__label">
+        {legend} <span className="subtle" style={{ fontWeight: 400 }}>({hint})</span>
+      </span>
+      <div className="stack">
+        {rows.map((r, i) => (
+          <div key={i} className="row" style={{ flexWrap: 'nowrap' }}>
+            <input
+              className="input"
+              aria-label={`${legend} key ${i + 1}`}
+              placeholder={keyPlaceholder}
+              value={r.key}
+              onChange={(e) => update(i, { key: e.target.value })}
+            />
+            <input
+              className="input"
+              aria-label={`${legend} value ${i + 1}`}
+              placeholder={valuePlaceholder}
+              value={r.value}
+              onChange={(e) => update(i, { value: e.target.value })}
+            />
+            <button type="button" className="icon-btn" onClick={() => remove(i)} aria-label={`Remove ${legend.toLowerCase()} row ${i + 1}`}>
+              −
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        className="btn btn--secondary btn--sm"
+        style={{ marginTop: 'var(--space-2)' }}
+        onClick={() => onChange([...rows, { key: '', value: '' }])}
+      >
+        <IconPlus size={15} />
+        Add {legend.toLowerCase()}
       </button>
-    </fieldset>
+    </div>
   );
 }
