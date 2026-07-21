@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { listDeployments, stopDeployment, restartDeployment, type DeploymentView } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
 import { IconStop, IconRestart } from '../components/Icons';
+import { useToast } from '../components/Toast';
 import { formatRelative, shortId } from '../format';
 
 // Servers: the live list of deployments. It polls the Orchestrator so status
@@ -13,6 +14,7 @@ export function Servers() {
   const [deployments, setDeployments] = useState<DeploymentView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const { toast } = useToast();
 
   const load = useCallback(async () => {
     try {
@@ -33,9 +35,12 @@ export function Servers() {
     setPendingId(id);
     try {
       await action(id);
+      toast(`Deployment ${verb} requested`, 'success');
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : `Failed to ${verb} deployment`);
+      const message = e instanceof Error ? e.message : `Failed to ${verb} deployment`;
+      setError(message);
+      toast(message, 'error');
     } finally {
       setPendingId(null);
     }

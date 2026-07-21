@@ -63,7 +63,7 @@ components and pages, plus a couple of UX features. Small units, one issue + one
 **Features**
 - [x] feat: restart endpoint (#48) + dashboard restart action
 - [ ] feat: deployment detail view with the event/audit trail (#49)
-- [ ] UI: toast notifications for actions (#50)
+- [x] UI: toast notifications for actions (#50)
 
 ---
 

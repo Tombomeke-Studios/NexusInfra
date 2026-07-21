@@ -398,6 +398,48 @@
   color: var(--color-primary);
 }
 
+/* ── Toasts ─────────────────────────────────────────────────────────────── */
+.toast-viewport {
+  position: fixed;
+  bottom: var(--space-5);
+  right: var(--space-5);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 360px;
+}
+.toast {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-neutral);
+  box-shadow: var(--shadow-lg);
+  font-size: 0.9rem;
+  cursor: pointer;
+  animation: toast-in 200ms ease;
+}
+.toast--success {
+  border-left-color: var(--color-success);
+}
+.toast--error {
+  border-left-color: var(--color-danger);
+}
+.toast--info {
+  border-left-color: var(--color-primary);
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* ── Live indicator ─────────────────────────────────────────────────────── */
 .live {
   display: inline-flex;

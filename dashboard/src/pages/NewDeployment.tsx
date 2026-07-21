@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createDeployment } from '../api';
 import { IconPlus } from '../components/Icons';
+import { useToast } from '../components/Toast';
 
 // New Deployment form: image + optional port and env rows. On submit it creates
 // the deployment (which places it on a node and starts the container) and jumps
@@ -27,6 +28,7 @@ export function NewDeployment() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
+  const { toast } = useToast();
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -34,6 +36,7 @@ export function NewDeployment() {
     setError(null);
     try {
       await createDeployment({ name, dockerImage, ports: rowsToRecord(ports), env: rowsToRecord(env) });
+      toast(`Deploying ${name}`, 'success');
       navigate('/servers');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create deployment');
