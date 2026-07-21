@@ -19,7 +19,7 @@ Small units, one issue + one commit each.
 - [x] Dashboard: login page + token storage + auth guard (#30)
 - [x] Dashboard: server overview page — node health tiles + active count (#16)
 - [x] Dashboard: New Deployment form page (#31)
-- [ ] Dashboard: Servers list page with status polling + stop (#32)
+- [x] Dashboard: Servers list page with status polling + stop (#32)
 - [ ] Dashboard: Dockerfile + docker-compose service (#33)
 - [ ] Dashboard: run docs — README, api.md auth, CLAUDE map (#34)
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AppRoutes } from './routes';
@@ -15,7 +15,12 @@ function renderAt(path: string) {
 }
 
 describe('app shell', () => {
-  beforeEach(() => logout());
+  // Routed pages fetch on mount; stub fetch so their async state updates settle.
+  beforeEach(() => {
+    logout();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => [] } as Response));
+  });
+  afterEach(() => vi.unstubAllGlobals());
 
   it('redirects unauthenticated users to the login page', () => {
     renderAt('/');
