@@ -12,8 +12,35 @@ tracking. Persistence lands first since the rest builds on it.
 
 - [x] Persistence layer for nodes and deployments (#14)
 - [x] Orchestrator: node registry (#11)
-- [ ] Orchestrator: deployment API with resource-aware node selection (#12)
+- [x] Orchestrator: deployment API with resource-aware node selection (#12)
 - [ ] Orchestrator: server lifecycle event handling (#13)
+
+> **▶ Resume marker (MVP: Orchestrator + Dashboard, plan `i-want-you-to-binary-flame`)**
+> Building the MVP server panel: Orchestrator backend (this branch) then a React/Vite dashboard
+> (`feature/dashboard`) with stub JWT login. Working on branch **`feature/orchestrator`** (off `dev`).
+>
+> **Done & pushed** on this branch:
+> - A1 #14 — `services/orchestrator` workspace, Prisma+SQLite schema + migration, `Repository`
+>   interface, `InMemoryRepository`/`PrismaRepository`, contract tests.
+> - A2 #11 — `nodeRegistry.ts` (consumes `monitoring.heartbeat.node.#`, health thresholds) + tests.
+> - A3 #12 — `nodeSelection.ts` (least-loaded) + `api.ts` (POST/GET `/deployments`, stop, `/nodes`) + tests.
+>   *(committed next.)*
+>
+> **Next up (resume here):**
+> - A4 #13 — `lifecycle.ts` (consume `server.started/stopped/crashed` → update deployment) + `index.ts`
+>   wiring (connect broker, start consumers on queue `nexusinfra.orchestrator`, mount API, heartbeat, `/health`).
+> - A5 — `Dockerfile`, add `orchestrator` to `docker-compose.yml`, docs (`docs/api.md`,
+>   `docs/architecture.md`, CLAUDE.md §7 map), then `npm run build && lint && test` green → PR to `dev`
+>   (`Closes #11 #12 #13 #14`, each on its own line) → wait for CI → move group to Done.
+>
+> **Then Part B — `feature/dashboard`** (branch off `dev` after A merges): B1 #15 Vite+React scaffold;
+> B2 new stub-login issue (`auth.ts` JWT `/auth/login` + `requireAuth` on orchestrator, Login page);
+> B3 #16 Overview + New Deployment form + Servers list (poll status). Ports: control-room 9000,
+> node-agent 9100, orchestrator **9200**, dashboard (Vite) 5173.
+>
+> **Verify loop:** `docker-compose up rabbitmq control-room node-agent orchestrator` → dashboard login →
+> deploy `nginx` `8080:80` → `docker ps` shows it, `GET :9200/deployments` = running, `curl :8080` works,
+> Stop flips it to stopped.
 
 ---
 
