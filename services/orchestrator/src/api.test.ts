@@ -104,4 +104,25 @@ describe('deployment API', () => {
     const res = await request(app).post(`/deployments/${created.body.id}/stop`);
     expect(res.status).toBe(409);
   });
+
+  it('restarts a running deployment by emitting server.restart', async () => {
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'abc123' });
+
+    const res = await request(app).post(`/deployments/${created.body.id}/restart`);
+    expect(res.status).toBe(202);
+
+    const restart = published.find((p) => p.key === 'infra.server.restart');
+    expect(restart).toBeDefined();
+    const payload = readPayload(restart!.envelope.event) as Record<string, unknown>;
+    expect(payload.containerId).toBe('abc123');
+  });
+
+  it('refuses to restart a deployment that is not running', async () => {
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    const res = await request(app).post(`/deployments/${created.body.id}/restart`);
+    expect(res.status).toBe(409);
+  });
 });

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { listDeployments, stopDeployment, type DeploymentView } from '../api';
+import { listDeployments, stopDeployment, restartDeployment, type DeploymentView } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
-import { IconStop } from '../components/Icons';
+import { IconStop, IconRestart } from '../components/Icons';
 import { formatRelative, shortId } from '../format';
 
 // Servers: the live list of deployments. It polls the Orchestrator so status
@@ -29,17 +29,20 @@ export function Servers() {
     return () => clearInterval(handle);
   }, [load]);
 
-  const onStop = async (id: string) => {
+  const runAction = async (id: string, action: (id: string) => Promise<unknown>, verb: string) => {
     setPendingId(id);
     try {
-      await stopDeployment(id);
+      await action(id);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to stop deployment');
+      setError(e instanceof Error ? e.message : `Failed to ${verb} deployment`);
     } finally {
       setPendingId(null);
     }
   };
+
+  const onStop = (id: string) => runAction(id, stopDeployment, 'stop');
+  const onRestart = (id: string) => runAction(id, restartDeployment, 'restart');
 
   return (
     <div className="page">
@@ -97,15 +100,26 @@ export function Servers() {
                   <td>
                     <span className="actions">
                       {d.status === 'running' && (
-                        <button
-                          className="btn btn--danger btn--sm"
-                          onClick={() => onStop(d.id)}
-                          disabled={pendingId === d.id}
-                          aria-label={`Stop ${d.name}`}
-                        >
-                          {pendingId === d.id ? <span className="spinner" /> : <IconStop size={15} />}
-                          Stop
-                        </button>
+                        <>
+                          <button
+                            className="btn btn--secondary btn--sm"
+                            onClick={() => onRestart(d.id)}
+                            disabled={pendingId === d.id}
+                            aria-label={`Restart ${d.name}`}
+                          >
+                            <IconRestart size={15} />
+                            Restart
+                          </button>
+                          <button
+                            className="btn btn--danger btn--sm"
+                            onClick={() => onStop(d.id)}
+                            disabled={pendingId === d.id}
+                            aria-label={`Stop ${d.name}`}
+                          >
+                            {pendingId === d.id ? <span className="spinner" /> : <IconStop size={15} />}
+                            Stop
+                          </button>
+                        </>
                       )}
                     </span>
                   </td>

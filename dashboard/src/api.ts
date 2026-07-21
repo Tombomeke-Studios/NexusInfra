@@ -116,3 +116,7 @@ export function createDeployment(input: CreateDeploymentInput): Promise<Deployme
 export function stopDeployment(id: string): Promise<{ status: string; deploymentId: string }> {
   return request(`/deployments/${id}/stop`, { method: 'POST' });
 }
+
+export function restartDeployment(id: string): Promise<{ status: string; deploymentId: string }> {
+  return request(`/deployments/${id}/restart`, { method: 'POST' });
+}

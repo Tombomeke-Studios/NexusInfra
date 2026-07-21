@@ -83,6 +83,12 @@ A single deployment with its full `events` audit trail. `404` if unknown.
 Request a running deployment be stopped — emits `infra.server.stop` with the stored container id.
 `202` while stopping, `404` if unknown, `409` if the deployment is not running.
 
+### `POST /deployments/:id/restart`
+
+Request a running deployment be restarted — emits `infra.server.restart` with the stored container id;
+the agent restarts the container and reports `server.started`. `202` while restarting, `404` if
+unknown, `409` if the deployment is not running.
+
 ### `GET /nodes`
 
 Registered nodes with their latest resources and derived `health` (`healthy | degraded | offline`).

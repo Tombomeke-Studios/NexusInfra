@@ -61,7 +61,7 @@ components and pages, plus a couple of UX features. Small units, one issue + one
 - [x] UI: restyle the Servers table + row actions (#47)
 
 **Features**
-- [ ] feat: restart endpoint (#48) + dashboard restart action
+- [x] feat: restart endpoint (#48) + dashboard restart action
 - [ ] feat: deployment detail view with the event/audit trail (#49)
 - [ ] UI: toast notifications for actions (#50)
 
