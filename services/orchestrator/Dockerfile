@@ -1,6 +1,8 @@
-# Multi-stage build (pattern from services/node-agent/Dockerfile).
-FROM node:18-alpine AS builder
+# Multi-stage build. Debian slim (not alpine) + openssl, because Prisma's query
+# and schema engines need OpenSSL and don't run on alpine/musl out of the box.
+FROM node:18-slim AS builder
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
 COPY tsconfig.json ./
 COPY shared/ ./shared/
@@ -10,8 +12,9 @@ RUN npm run build --workspace=shared
 # `build` also runs `prisma generate` (see services/orchestrator/package.json).
 RUN npm run build --workspace=services/orchestrator
 
-FROM node:18-alpine
+FROM node:18-slim
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
 COPY --from=builder /app/shared/dist ./shared/dist
 COPY --from=builder /app/shared/package*.json ./shared/
