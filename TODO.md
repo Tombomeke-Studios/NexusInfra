@@ -10,10 +10,39 @@ Every actionable item carries its GitHub issue ref `(#N)`.
 Phase 2 (Core), second half: the Orchestrator — node registry, deployment planning, and lifecycle
 tracking. Persistence lands first since the rest builds on it.
 
-- [ ] Persistence layer for nodes and deployments (#14)
-- [ ] Orchestrator: node registry (#11)
-- [ ] Orchestrator: deployment API with resource-aware node selection (#12)
-- [ ] Orchestrator: server lifecycle event handling (#13)
+- [x] Persistence layer for nodes and deployments (#14)
+- [x] Orchestrator: node registry (#11)
+- [x] Orchestrator: deployment API with resource-aware node selection (#12)
+- [x] Orchestrator: server lifecycle event handling (#13)
+
+> **▶ Resume marker (MVP: Orchestrator + Dashboard, plan `i-want-you-to-binary-flame`)**
+> Building the MVP server panel: Orchestrator backend (this branch) then a React/Vite dashboard
+> (`feature/dashboard`) with stub JWT login. Working on branch **`feature/orchestrator`** (off `dev`).
+>
+> **Done & pushed** on this branch:
+> - A1 #14 — `services/orchestrator` workspace, Prisma+SQLite schema + migration, `Repository`
+>   interface, `InMemoryRepository`/`PrismaRepository`, contract tests.
+> - A2 #11 — `nodeRegistry.ts` (consumes `monitoring.heartbeat.node.#`, health thresholds) + tests.
+> - A3 #12 — `nodeSelection.ts` (least-loaded) + `api.ts` (POST/GET `/deployments`, stop, `/nodes`) + tests.
+> - A4 #13 — `lifecycle.ts` (consume `server.started/stopped/crashed` → update deployment) + `index.ts`
+>   wiring (broker consumers on queue `nexusinfra.orchestrator`, mounts API + `/health`, heartbeat).
+>   27 orchestrator unit tests passing.
+>
+> - A5 — `Dockerfile`, `orchestrator` added to `docker-compose.yml` (SQLite on a `/data` volume),
+>   `DATABASE_URL`/`JWT_SECRET` in `.env.example`, docs (`api.md`, `architecture.md`, CLAUDE.md §7,
+>   README). Full `npm run build && lint && test` green (40 tests). **PR to `dev` opened.**
+>
+> **Next up (resume here):**
+> - **PR #25 (`feature/orchestrator` → `dev`) is CI-green and awaiting human review/merge** — the
+>   agent is not authorized to self-merge into `dev`. Once merged, move this group to Done.
+> - **Then Part B — `feature/dashboard`** (branch off `dev` after A merges): B1 #15 Vite+React scaffold;
+> B2 new stub-login issue (`auth.ts` JWT `/auth/login` + `requireAuth` on orchestrator, Login page);
+> B3 #16 Overview + New Deployment form + Servers list (poll status). Ports: control-room 9000,
+> node-agent 9100, orchestrator **9200**, dashboard (Vite) 5173.
+>
+> **Verify loop:** `docker-compose up rabbitmq control-room node-agent orchestrator` → dashboard login →
+> deploy `nginx` `8080:80` → `docker ps` shows it, `GET :9200/deployments` = running, `curl :8080` works,
+> Stop flips it to stopped.
 
 ---
 

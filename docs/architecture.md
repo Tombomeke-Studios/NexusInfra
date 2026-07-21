@@ -14,7 +14,7 @@ event contracts, or infra topology.
 | `shared` (library) | ✅ Built | Event contract + RabbitMQ helpers, wire-compatible with FinVault |
 | `services/control-room` | ✅ Built | Heartbeat monitoring, status thresholds, HTTP status API |
 | `services/node-agent` | ✅ Built | Docker container lifecycle + node heartbeat/resource reporting |
-| `services/orchestrator` | Planned (#11–#14) | Node registry, deployment planning, lifecycle events |
+| `services/orchestrator` | ✅ Built | Node registry, deployment API + least-loaded node selection, lifecycle events |
 | `services/billing-bridge` | Planned (#18, #19) | Runtime tracking → FinVault payments |
 | `services/gateway` | Planned (#20) | JWT validation, routing, WebSocket proxy |
 | `apps/web-dashboard` | Planned (#15–#17) | React dashboard |
@@ -35,14 +35,17 @@ via `readPayload()` only.
 |---|---|---|
 | `monitoring.heartbeat.service.{name}` | every service (1s) | control-room |
 | `monitoring.heartbeat.node.{id}` | node-agent (1s pulse, resources every 5s) | control-room |
-| `infra.server.start` / `infra.server.stop` / `infra.server.restart` | orchestrator (planned) | node-agent |
-| `infra.server.started` / `infra.server.stopped` / `infra.server.crashed` | node-agent | orchestrator (planned) |
+| `infra.server.start` / `infra.server.stop` / `infra.server.restart` | orchestrator | node-agent |
+| `infra.server.started` / `infra.server.stopped` / `infra.server.crashed` | node-agent | orchestrator |
+| `infra.deployment.created` | orchestrator | (dashboard/audit; no binder yet) |
+| `monitoring.heartbeat.node.{id}` | node-agent | control-room **and** orchestrator (node registry) |
 
 Node Agents each bind their own queue `nexusinfra.node-agent.{nodeId}` to the three `infra.server.*`
-command keys and ignore commands whose payload `nodeId` is not theirs.
+command keys and ignore commands whose payload `nodeId` is not theirs. The Orchestrator binds one
+queue `nexusinfra.orchestrator` to the node heartbeat topic (to maintain its node registry) and the
+three `infra.server.*` report keys (to update deployment state).
 
-Planned keys (defined in `shared/src/events.ts`, not yet flowing): `infra.deployment.*`,
-`bank.payment.*` — see the
+Planned keys (defined in `shared/src/events.ts`, not yet flowing): `bank.payment.*` — see the
 [CONCEPTS routing-key table](../../CONCEPTS/integration/rabbitmq-architecture.md).
 
 ## Heartbeat / status model
@@ -52,6 +55,10 @@ Planned keys (defined in `shared/src/events.ts`, not yet flowing): `infra.deploy
 
 ## Persistence
 
-Prisma + SQLite per service (FinVault pattern), PostgreSQL-ready via Prisma. No service has a
-database yet; the Orchestrator gets the first one (#14). Schema source of truth: each service's
-migrations directory — never documented here.
+Prisma + SQLite per service (FinVault pattern), PostgreSQL-ready via Prisma. The Orchestrator holds
+the first database: nodes (maintained from heartbeats), server configs, deployments, and an
+append-only deployment-event audit trail. Schema source of truth: the service's
+`prisma/migrations` directory — never documented here.
+
+The Orchestrator's node registry mirrors the same last-seen status model above (healthy < 3s ≤
+degraded < 10s ≤ offline); only `healthy` nodes are eligible for placement.
