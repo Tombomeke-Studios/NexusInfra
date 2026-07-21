@@ -65,7 +65,15 @@ export class DockerodeRuntime implements ContainerRuntime {
   }
 
   async stop(containerId: string): Promise<void> {
-    await this.docker.getContainer(containerId).stop();
+    // Stop and remove the container so its name and host ports are freed — this
+    // lets the same deployment be started again without a name/port conflict.
+    const container = this.docker.getContainer(containerId);
+    try {
+      await container.stop();
+    } catch {
+      // Already stopped — fall through to removal.
+    }
+    await container.remove({ force: true });
   }
 
   async restart(containerId: string): Promise<void> {
