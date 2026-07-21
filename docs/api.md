@@ -37,9 +37,23 @@ The deployment control plane. Creating a deployment selects the least-loaded hea
 the deployment, and commands the Node Agent to start the container. `GET /health` returns the usual
 liveness shape. All responses are JSON.
 
-> Auth: the MVP defaults the owning user to `dev-user`. A stub JWT login
-> (`POST /auth/login` + a `requireAuth` guard) is added on the `feature/dashboard` branch; the full
-> API Gateway / FinVault-JWT integration remains a later phase (#20).
+> Auth (stub, MVP only): all routes below require a Bearer token from `POST /auth/login`; requests
+> without a valid token get `401`. This is a local stand-in — the real FinVault-issued JWT validated
+> at the API Gateway is a later phase (#20).
+
+### `POST /auth/login`  *(public)*
+
+Exchange seeded dev credentials for a signed JWT (12h TTL). Defaults: `admin` / `admin`
+(override via `DEV_USERNAME` / `DEV_PASSWORD`; the signing key is `JWT_SECRET`).
+
+```json
+// request
+{ "username": "admin", "password": "admin" }
+// 200 response
+{ "token": "<jwt>" }
+```
+
+`401` on bad credentials. Send the token as `Authorization: Bearer <jwt>` on every other call.
 
 ### `POST /deployments`
 

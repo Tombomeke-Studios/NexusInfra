@@ -6,7 +6,8 @@
   "private": true,
   "workspaces": [
     "services/*",
-    "shared"
+    "shared",
+    "dashboard"
   ],
   "scripts": {
     "dev:shared": "npm run dev --workspace=shared",
