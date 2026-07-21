@@ -12,7 +12,7 @@ docker-compose up --build # full stack
 ```
 
 The stack publishes: RabbitMQ (`5672` / UI `15672`), Control Room (`9000`), Node Agent (`9100`),
-Orchestrator (`9200`), and the dashboard (`8090`). Open the dashboard at `http://localhost:8090`
+Orchestrator (`9200`), and the dashboard (`8095`). Open the dashboard at `http://localhost:8095`
 and sign in with the seeded dev user (`admin` / `admin`).
 
 Or hybrid: `docker-compose up rabbitmq` + `npm run dev` (backend) and
