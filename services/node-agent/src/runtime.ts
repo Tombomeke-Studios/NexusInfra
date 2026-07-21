@@ -40,6 +40,10 @@ export class DockerodeRuntime implements ContainerRuntime {
   async start(spec: StartSpec): Promise<string> {
     await this.ensureImage(spec.dockerImage);
 
+    // Remove any leftover container with the same name so start is idempotent and
+    // resilient to earlier containers that outlived their deployment.
+    if (spec.containerName) await this.removeByName(spec.containerName);
+
     const env = spec.env ? Object.entries(spec.env).map(([k, v]) => `${k}=${v}`) : undefined;
 
     const portBindings: Record<string, Array<{ HostPort: string }>> = {};
@@ -91,6 +95,17 @@ export class DockerodeRuntime implements ContainerRuntime {
       diskUsedGb: 0,
       diskTotalGb: 0,
     };
+  }
+
+  // Remove any container whose name exactly matches (Docker prefixes names with
+  // "/"). Used before create so a leftover doesn't cause a 409 name conflict.
+  private async removeByName(name: string): Promise<void> {
+    const existing = await this.docker.listContainers({ all: true, filters: { name: [name] } });
+    for (const c of existing) {
+      if (c.Names?.some((n) => n === `/${name}`)) {
+        await this.docker.getContainer(c.Id).remove({ force: true });
+      }
+    }
   }
 
   // Pull the image if it isn't present locally, so start() doesn't fail on a
