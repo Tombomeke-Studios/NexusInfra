@@ -105,4 +105,6 @@ export interface Repository {
 
   listDeployments(): Promise<DeploymentView[]>;
   getDeployment(id: string): Promise<DeploymentDetail | null>;
+  /** The server config behind a deployment (image/ports/env), for re-starting it. */
+  getDeploymentConfig(deploymentId: string): Promise<ServerConfigRecord | null>;
 }

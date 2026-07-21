@@ -5,7 +5,7 @@ import { Servers } from './Servers';
 
 const deployments = [
   { id: 'd1', name: 'my-nginx', dockerImage: 'nginx', nodeId: 'node-local', containerId: 'abcdef123456', status: 'running', startedAt: '', stoppedAt: null, createdAt: '' },
-  { id: 'd2', name: 'idle', dockerImage: 'redis', nodeId: 'node-local', containerId: null, status: 'pending', startedAt: null, stoppedAt: null, createdAt: '' },
+  { id: 'd2', name: 'idle', dockerImage: 'redis', nodeId: 'node-local', containerId: null, status: 'stopped', startedAt: null, stoppedAt: '', createdAt: '' },
 ];
 
 describe('Servers', () => {
@@ -14,7 +14,7 @@ describe('Servers', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', fetchMock);
     fetchMock.mockImplementation((url: string, options?: RequestInit) => {
-      if (typeof url === 'string' && (url.endsWith('/stop') || url.endsWith('/restart'))) {
+      if (typeof url === 'string' && (url.endsWith('/stop') || url.endsWith('/restart') || url.endsWith('/start'))) {
         return Promise.resolve({ ok: true, status: 202, json: async () => ({ status: 'ok' }) } as Response);
       }
       return Promise.resolve({ ok: true, status: 200, json: async () => deployments } as Response);
@@ -56,5 +56,17 @@ describe('Servers', () => {
       ([u, o]) => typeof u === 'string' && u.includes('/deployments/d1/restart') && o?.method === 'POST'
     );
     expect(restartCall).toBeDefined();
+  });
+
+  it('shows Start for a stopped deployment and calls the start endpoint', async () => {
+    render(<Servers />);
+    await screen.findByText('idle');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Start idle' }));
+
+    const startCall = fetchMock.mock.calls.find(
+      ([u, o]) => typeof u === 'string' && u.includes('/deployments/d2/start') && o?.method === 'POST'
+    );
+    expect(startCall).toBeDefined();
   });
 });

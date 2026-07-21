@@ -120,6 +120,12 @@ export class InMemoryRepository implements Repository {
     return { ...view, events };
   }
 
+  async getDeploymentConfig(deploymentId: string): Promise<ServerConfigRecord | null> {
+    const deployment = this.deployments.get(deploymentId);
+    if (!deployment) return null;
+    return this.configs.get(deployment.serverConfigId) ?? null;
+  }
+
   private toView(d: DeploymentRecord): DeploymentView | null {
     const config = this.configs.get(d.serverConfigId);
     if (!config) return null;

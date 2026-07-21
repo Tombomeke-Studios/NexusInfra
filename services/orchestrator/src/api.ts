@@ -105,6 +105,42 @@ export function createApiRouter(deps: ApiDeps): Router {
     return res.status(202).json({ status: 'stopping', deploymentId: detail.id });
   });
 
+  // Start (or re-run) a deployment that isn't currently running: re-place it on a
+  // healthy node and command a fresh container from its saved config.
+  router.post('/deployments/:id/start', async (req: Request, res: Response) => {
+    const detail = await repo.getDeployment(req.params.id);
+    if (!detail) return res.status(404).json({ error: 'deployment not found' });
+    if (detail.status === 'running' || detail.status === 'pending') {
+      return res.status(409).json({ error: 'deployment is already running' });
+    }
+    const config = await repo.getDeploymentConfig(detail.id);
+    if (!config) return res.status(404).json({ error: 'server config not found' });
+
+    const node = selectNode(await repo.listNodes(), Date.now());
+    if (!node) return res.status(503).json({ error: 'No healthy node available to place the deployment' });
+
+    await repo.updateDeploymentStatus(detail.id, {
+      status: 'pending',
+      nodeId: node.id,
+      containerId: null,
+      startedAt: null,
+      stoppedAt: null,
+    });
+    await repo.appendDeploymentEvent(detail.id, 'start-requested', `re-placed on node ${node.id}`);
+    await emit(KEY_START, {
+      type: 'server.start',
+      payload: {
+        deploymentId: detail.id,
+        nodeId: node.id,
+        dockerImage: config.dockerImage,
+        containerName: config.name,
+        env: config.env,
+        ports: config.ports,
+      },
+    });
+    return res.status(202).json({ status: 'starting', deploymentId: detail.id });
+  });
+
   // Request a running deployment be restarted — the agent restarts the container
   // and reports server.started back.
   router.post('/deployments/:id/restart', async (req: Request, res: Response) => {

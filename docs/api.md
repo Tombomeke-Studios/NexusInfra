@@ -78,10 +78,17 @@ List all deployments (newest first), each joined with its config name/image and 
 
 A single deployment with its full `events` audit trail. `404` if unknown.
 
+### `POST /deployments/:id/start`
+
+Start (or re-run) a deployment that is **not** currently running — re-places it on a healthy node and
+emits `infra.server.start` from the saved config. `202` while starting, `404` if unknown, `409` if it
+is already running/pending, `503` if no healthy node is available.
+
 ### `POST /deployments/:id/stop`
 
-Request a running deployment be stopped — emits `infra.server.stop` with the stored container id.
-`202` while stopping, `404` if unknown, `409` if the deployment is not running.
+Request a running deployment be stopped — emits `infra.server.stop`; the agent stops **and removes**
+the container (freeing its name and host ports). `202` while stopping, `404` if unknown, `409` if the
+deployment is not running.
 
 ### `POST /deployments/:id/restart`
 

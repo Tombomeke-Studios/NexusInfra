@@ -125,4 +125,31 @@ describe('deployment API', () => {
     const res = await request(app).post(`/deployments/${created.body.id}/restart`);
     expect(res.status).toBe(409);
   });
+
+  it('starts a stopped deployment by re-emitting server.start from its config', async () => {
+    await seedHealthyNode(repo);
+    const created = await request(app)
+      .post('/deployments')
+      .send({ name: 'svc', dockerImage: 'nginx', ports: { '8080': '80' } });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'stopped', containerId: null });
+    published.length = 0; // ignore the events from creation
+
+    const res = await request(app).post(`/deployments/${created.body.id}/start`);
+    expect(res.status).toBe(202);
+
+    const start = published.find((p) => p.key === 'infra.server.start');
+    expect(start).toBeDefined();
+    const payload = readPayload(start!.envelope.event) as Record<string, unknown>;
+    expect(payload.deploymentId).toBe(created.body.id);
+    expect(payload.dockerImage).toBe('nginx');
+    expect(payload.ports).toEqual({ '8080': '80' });
+  });
+
+  it('refuses to start a deployment that is already running', async () => {
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'abc' });
+    const res = await request(app).post(`/deployments/${created.body.id}/start`);
+    expect(res.status).toBe(409);
+  });
 });
