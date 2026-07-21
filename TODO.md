@@ -54,7 +54,7 @@ components and pages, plus a couple of UX features. Small units, one issue + one
 - [x] UI: base component styles — buttons, inputs, cards, badges, table (#42)
 
 **Pages & shell**
-- [ ] UI: restyle the app shell — top nav, brand, theme toggle, sign out (#43)
+- [x] UI: restyle the app shell — top nav, brand, theme toggle, sign out (#43)
 - [ ] UI: restyle the Login page (#44)
 - [ ] UI: restyle the Overview page — stat cards + node tiles (#45)
 - [ ] UI: restyle the New Deployment form (#46)
