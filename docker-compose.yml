@@ -65,6 +65,17 @@ services:
     depends_on:
       - rabbitmq
 
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: nexusinfra-dashboard
+    ports:
+      - "8090:80"
+    # nginx proxies /api to the orchestrator service (see dashboard/nginx.conf).
+    depends_on:
+      - orchestrator
+
 volumes:
   rabbitmq_data:
   orchestrator_data:

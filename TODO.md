@@ -20,7 +20,7 @@ Small units, one issue + one commit each.
 - [x] Dashboard: server overview page — node health tiles + active count (#16)
 - [x] Dashboard: New Deployment form page (#31)
 - [x] Dashboard: Servers list page with status polling + stop (#32)
-- [ ] Dashboard: Dockerfile + docker-compose service (#33)
+- [x] Dashboard: Dockerfile + docker-compose service (#33)
 - [ ] Dashboard: run docs — README, api.md auth, CLAUDE map (#34)
 
 > **▶ Resume marker (MVP: Orchestrator + Dashboard, plan `i-want-you-to-binary-flame`)**
