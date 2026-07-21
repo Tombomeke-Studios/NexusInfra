@@ -31,39 +31,19 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 
 ## Current state
 
-> **The MVP server panel is complete and verified running end to end.**
+> **The MVP server panel is complete, polished, and verified running end to end.**
 > `docker-compose up` brings up RabbitMQ + Control Room + Node Agent + Orchestrator + dashboard; the
-> dashboard is at **http://localhost:8095** (`admin` / `admin`). Verified live: deploying `nginx`
-> starts a real container (**running**), and **Stop** removes it (**stopped**); an in-use host port
-> is reported as **crashed** with the exact Docker reason.
+> dashboard is at **http://localhost:8095** (`admin` / `admin`). The UI has a full design system
+> (light/dark theme), restyled pages, plus **restart**, a **deployment detail drawer**, and **toasts**.
+> Verified live: deploying `nginx` starts a real container (**running**), **Restart**/**Stop** work, and
+> an in-use host port surfaces as **crashed** with the exact Docker reason.
 >
 > **Ports** — Control Room `9000` · Node Agent `9100` · Orchestrator `9200` · dashboard `8095`
 > (Docker) / `5173` (Vite dev).
 >
-> **Active work:** the MVP is functional; current focus is a **UI overhaul + UX features** (see below).
-
----
-
-## Active — `feature/ui-overhaul`
-
-Make the panel look and feel professional: a real design system (tokens + light/dark theme), polished
-components and pages, plus a couple of UX features. Small units, one issue + one commit each.
-
-**Design system & components**
-- [x] UI: design tokens + global stylesheet (light/dark theme) (#41)
-- [x] UI: base component styles — buttons, inputs, cards, badges, table (#42)
-
-**Pages & shell**
-- [x] UI: restyle the app shell — top nav, brand, theme toggle, sign out (#43)
-- [x] UI: restyle the Login page (#44)
-- [x] UI: restyle the Overview page — stat cards + node tiles (#45)
-- [x] UI: restyle the New Deployment form (#46)
-- [x] UI: restyle the Servers table + row actions (#47)
-
-**Features**
-- [x] feat: restart endpoint (#48) + dashboard restart action
-- [x] feat: deployment detail view with the event/audit trail (#49)
-- [x] UI: toast notifications for actions (#50)
+> **Next up:** no active feature branch. Candidates: the **Billing Bridge** (Phase 4), the
+> **API Gateway / real FinVault JWT** (#20), **live log streaming** (#17), or the node-agent
+> container-name fix (#52). Promote a group to a `feature/<topic>` branch before starting.
 
 ---
 
@@ -92,6 +72,7 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 
 ### Phase 5 — Production hardening (`feature/production`)
 
+- [ ] Node Agent: remove stopped containers / unique names to avoid redeploy name conflicts (#52)
 - [ ] Multi-node: run several node agents; verify resource-aware placement across them (#21)
 - [ ] Node Agent: auto-restart on crash + offline command queue / replay on reconnect
 - [ ] Control Room: uptime % / history + alerting via the Notification/Mail service + DLQ monitoring
@@ -106,7 +87,14 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 
 ### 🐛 Fixes
 
+- [x] Dashboard 501 in some browsers: move published port off 8090 → 8095 (#39, merged #40)
 - [x] Orchestrator container crashed: Prisma engine on Alpine → Debian slim + openssl (#36, merged #37)
+
+### `feature/ui-overhaul` — merged in #51
+
+- [x] Design tokens + light/dark theme (#41) · base component styles (#42)
+- [x] Restyled shell (#43), Login (#44), Overview (#45), New Deployment (#46), Servers (#47)
+- [x] Restart endpoint + action (#48) · deployment detail drawer (#49) · toasts (#50)
 
 ### `feature/dashboard` — merged in #35
 
