@@ -52,7 +52,7 @@ Small units, one issue + one commit each.
 
 - [ ] UI motion: foundation — keyframes, utilities, `motionEnabled()` helper (#57)
 - [x] UI motion: animated route/page transitions (#58)
-- [ ] UI motion: Overview — count-up stats + staggered node tiles (#59)
+- [x] UI motion: Overview — count-up stats + staggered node tiles (#59)
 - [ ] UI motion: Servers — staggered row entrance + row transitions (#60)
 - [ ] UI motion: toast enter/exit + drawer polish (#61)
 - [ ] UI motion: card hover lift + interactive micro-interactions (#62)
