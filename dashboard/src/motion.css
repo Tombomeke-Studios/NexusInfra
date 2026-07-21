@@ -67,3 +67,27 @@
   animation: fade-in-up 320ms var(--ease-out) both;
   animation-delay: calc(var(--stagger-step) * var(--i, 0));
 }
+
+/* ── Micro-interactions ─────────────────────────────────────────────────── */
+/* Cards that represent objects lift on hover. */
+.stat,
+.grid-cards > .card {
+  transition: transform var(--transition), box-shadow var(--transition);
+  will-change: transform;
+}
+.stat:hover,
+.grid-cards > .card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+/* Press feedback: a subtle scale on active for buttons and icon buttons. */
+.btn:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
+}
+.icon-btn:active {
+  transform: scale(0.94);
+}
+.name-btn:active {
+  transform: translateY(1px);
+}

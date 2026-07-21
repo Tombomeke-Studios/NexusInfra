@@ -55,7 +55,7 @@ Small units, one issue + one commit each.
 - [x] UI motion: Overview — count-up stats + staggered node tiles (#59)
 - [x] UI motion: Servers — staggered row entrance + row transitions (#60)
 - [x] UI motion: toast enter/exit + drawer polish (#61)
-- [ ] UI motion: card hover lift + interactive micro-interactions (#62)
+- [x] UI motion: card hover lift + interactive micro-interactions (#62)
 
 ---
 
