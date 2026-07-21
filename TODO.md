@@ -1,47 +1,49 @@
-# NexusInfra — TODO
+<div align="center">
 
-Working checklist, grouped per branch. Rules live in [CLAUDE.md](CLAUDE.md).
-Every actionable item carries its GitHub issue ref `(#N)`.
+# 🗺️ NexusInfra — Roadmap & TODO
+
+![MVP](https://img.shields.io/badge/MVP-complete-16a34a?style=flat-square)
+![Phase](https://img.shields.io/badge/current-Phase_2_·_Core-3b82f6?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-60_passing-6e9f18?style=flat-square)
+![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
+
+</div>
+
+Working checklist and roadmap, grouped per branch. Conventions and the iteration loop live in
+[CLAUDE.md](CLAUDE.md); every actionable item carries its GitHub issue ref `(#N)`.
+
+**Legend** — `[x]` done · `[ ]` to do · ✅ merged · 📋 backlog · 🐛 bug
 
 ---
 
-## Active — `feature/dashboard`
+## Progress overview
 
-Phase 3 (Dashboard): the React/Vite web panel that drives the Orchestrator, plus a stub JWT login so
-it has a user identity (the full API Gateway / FinVault-JWT integration, #20, stays backlog).
-Small units, one issue + one commit each.
+| Phase | Focus | Status |
+|---|---|:--:|
+| **1 · Foundation** | Monorepo, `shared` event contract, Control Room, CI, docs | ✅ Done |
+| **2 · Core** | Node Agent (Docker lifecycle), Orchestrator (registry · placement · lifecycle) | ✅ Done |
+| **3 · Dashboard (MVP)** | React/Vite panel · stub JWT login · deploy loop end to end | ✅ Done |
+| **3+ · Dashboard extras** | Live logs, API Gateway, detail views | 📋 Backlog |
+| **4 · Billing** | Billing Bridge ↔ FinVault, usage-based charging | 📋 Backlog |
+| **5 · Production** | Multi-node, metrics, security hardening, Postgres | 📋 Backlog |
 
-- [x] Web dashboard scaffold (Vite + React + TypeScript) + root workspace wiring (#15)
-- [x] Dashboard: test + lint tooling — Vitest/jsdom, Testing Library, ESLint JSX (#27)
-- [x] Dashboard: typed Orchestrator API client (#28)
-- [x] Orchestrator: stub JWT `/auth/login` endpoint + `requireAuth` middleware (#26)
-- [x] Dashboard: app shell — routing + nav layout (#29)
-- [x] Dashboard: login page + token storage + auth guard (#30)
-- [x] Dashboard: server overview page — node health tiles + active count (#16)
-- [x] Dashboard: New Deployment form page (#31)
-- [x] Dashboard: Servers list page with status polling + stop (#32)
-- [x] Dashboard: Dockerfile + docker-compose service (#33)
-- [x] Dashboard: run docs — README, api.md auth, CLAUDE map (#34)
+---
 
-> **▶ Resume marker (MVP: Orchestrator + Dashboard, plan `i-want-you-to-binary-flame`)**
-> Building the MVP server panel. **Part A (Orchestrator) is DONE and merged** (PR #25 → `dev`).
-> Now on **Part B**, branch **`feature/dashboard`** (off `dev`).
->
-> **Part B is code-complete** — all 11 units done and pushed (#15, #27, #28, #26, #29, #30, #16, #31,
-> #32, #33, #34). Full `build + lint + test` green (60 tests). **PR #35 → `dev` is CI-green and
-> awaiting human review/merge** (the agent is not authorized to self-merge into `dev`).
->
-> **Next up (resume here):** review + merge the `feature/dashboard` PR → move this group to Done.
-> Then the MVP server panel is complete; pick the next slice from the backlog (billing, gateway, logs).
->
-> Ports: control-room 9000, node-agent 9100, orchestrator **9200**, dashboard (Vite) **5173** /
-> (Docker/nginx) **8090**.
->
-> **Verify loop:** `docker-compose up` (rabbitmq + control-room + node-agent + orchestrator + dashboard)
-> → open the dashboard → login `admin`/`admin` → deploy `nginx` `8080:80` → Servers page shows it
-> running, `docker ps` + `curl :8080` confirm, Stop flips it to stopped.
+## Current state
 
-> Out of MVP scope (stay in backlog): real-time log streaming (#17), API Gateway + FinVault JWT (#20).
+> **The MVP server panel is complete and verified running end to end.**
+> `docker-compose up` brings up RabbitMQ + Control Room + Node Agent + Orchestrator + dashboard; the
+> dashboard is at **http://localhost:8090** (`admin` / `admin`). Verified live: deploying `nginx`
+> starts a real container (**running**), and **Stop** removes it (**stopped**); an in-use host port
+> is reported as **crashed** with the exact Docker reason.
+>
+> **Ports** — Control Room `9000` · Node Agent `9100` · Orchestrator `9200` · dashboard `8090`
+> (Docker) / `5173` (Vite dev).
+>
+> **Next up:** no active feature branch. Pick the next slice from the backlog — the natural
+> candidates are the **Billing Bridge** (Phase 4), the **API Gateway / real FinVault JWT** (#20), or
+> **live log streaming** (#17). Promote a group to a `feature/<topic>` branch and ensure each item has
+> an issue before starting.
 
 ---
 
@@ -50,7 +52,7 @@ Small units, one issue + one commit each.
 Backlog items get their own GitHub issue at the latest when their group is promoted to an active
 `feature/<topic>` branch (bugs get one immediately). Items without a `(#N)` still need one created.
 
-### Phase 3 — Dashboard, later slices (after the MVP dashboard merges)
+### Phase 3+ — Dashboard, later slices
 
 - [ ] Real-time container log streaming via WebSocket (#17)
 - [ ] API Gateway: JWT validation, routing, WebSocket proxy (#20)
@@ -61,28 +63,46 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 
 ### Phase 4 — Billing integration (`feature/billing-bridge`)
 
-- [ ] Billing Bridge: service scaffold + Prisma schema (billing_plans, server_billing, billing_cycles) (#18)
-- [ ] Billing Bridge: runtime tracking from `deployment.started`/`deployment.stopped` (#18)
-- [ ] Billing Bridge: pricing tiers + free-hours/credit model (#18)
+- [ ] Billing Bridge: service scaffold + persistence (billing plans, server billing, cycles) (#18)
+- [ ] Billing Bridge: runtime tracking from `deployment.started` / `deployment.stopped` (#18)
+- [ ] Billing Bridge: pricing tiers + free-hours / credit model (#18)
 - [ ] Billing Bridge: periodic `payment.request` to FinVault at cycle end (#19)
-- [ ] Billing Bridge: consume `payment.confirmed`/`payment.failed`; suspend on failure (#19)
+- [ ] Billing Bridge: consume `payment.confirmed` / `payment.failed`; suspend on failure (#19)
 - [ ] Orchestrator: consume `billing.server.suspend` → stop the user's servers
 - [ ] Billing Bridge: monthly `invoice.generate`
 - [ ] Dashboard: Billing page (cost breakdown, payment history, credit balance)
 
 ### Phase 5 — Production hardening (`feature/production`)
 
-- [ ] Multi-node: run several node-agents; verify resource-aware placement across them (#21)
-- [ ] Node Agent: auto-restart on crash + offline command queue/replay on reconnect
-- [ ] Control Room: uptime %/history + alerting via the Notification/Mail service + DLQ monitoring
+- [ ] Multi-node: run several node agents; verify resource-aware placement across them (#21)
+- [ ] Node Agent: auto-restart on crash + offline command queue / replay on reconnect
+- [ ] Control Room: uptime % / history + alerting via the Notification/Mail service + DLQ monitoring
 - [ ] Metrics: InfluxDB + Grafana dashboards
 - [ ] Security: secrets handling, rate limiting, service-to-service auth, HTTPS
 - [ ] Production docker-compose + deployment docs; migrate SQLite → PostgreSQL via Prisma
-- [ ] Integration tests: RabbitMQ/DB-backed end-to-end (Docker Compose test target)
+- [ ] Integration tests: RabbitMQ / DB-backed end to end (Docker Compose test target)
 
 ---
 
 ## Done
+
+### 🐛 Fixes
+
+- [x] Orchestrator container crashed: Prisma engine on Alpine → Debian slim + openssl (#36, merged #37)
+
+### `feature/dashboard` — merged in #35
+
+- [x] Web dashboard scaffold (Vite + React + TypeScript) + workspace wiring (#15)
+- [x] Test + lint tooling — Vitest/jsdom, Testing Library (#27)
+- [x] Typed Orchestrator API client (#28)
+- [x] Orchestrator: stub JWT `/auth/login` + `requireAuth` middleware (#26)
+- [x] App shell — routing + nav layout (#29)
+- [x] Login page + token storage + auth guard (#30)
+- [x] Server overview page — node health tiles + active count (#16)
+- [x] New Deployment form page (#31)
+- [x] Servers list page with status polling + stop (#32)
+- [x] Dashboard Dockerfile + docker-compose service (#33)
+- [x] Run docs — README, api.md auth, CLAUDE map (#34)
 
 ### `feature/orchestrator` — merged in #25
 
