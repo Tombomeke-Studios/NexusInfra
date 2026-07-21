@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { listDeployments, stopDeployment, restartDeployment, startDeployment, type DeploymentView } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
 import { DeploymentDrawer } from '../components/DeploymentDrawer';
@@ -92,9 +92,9 @@ export function Servers() {
                 <th></th>
               </tr>
             </thead>
-            <tbody>
-              {deployments.map((d) => (
-                <tr key={d.id}>
+            <tbody className="stagger">
+              {deployments.map((d, i) => (
+                <tr key={d.id} style={{ ['--i']: Math.min(i, 12) } as CSSProperties}>
                   <td>
                     <button className="name-btn" onClick={() => setDetailId(d.id)}>
                       {d.name}
