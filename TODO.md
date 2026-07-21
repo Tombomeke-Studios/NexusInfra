@@ -15,7 +15,7 @@ Small units, one issue + one commit each.
 - [x] Dashboard: test + lint tooling — Vitest/jsdom, Testing Library, ESLint JSX (#27)
 - [x] Dashboard: typed Orchestrator API client (#28)
 - [x] Orchestrator: stub JWT `/auth/login` endpoint + `requireAuth` middleware (#26)
-- [ ] Dashboard: app shell — routing + nav layout (#29)
+- [x] Dashboard: app shell — routing + nav layout (#29)
 - [ ] Dashboard: login page + token storage + auth guard (#30)
 - [ ] Dashboard: server overview page — node health tiles + active count (#16)
 - [ ] Dashboard: New Deployment form page (#31)
