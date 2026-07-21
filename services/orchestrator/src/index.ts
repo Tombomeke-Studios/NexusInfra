@@ -3,6 +3,7 @@ import cors from 'cors';
 import { consumeRabbitQueue, startHeartbeat, type EventEnvelope } from 'shared';
 import { PrismaRepository } from './db.js';
 import { createApiRouter } from './api.js';
+import { createAuthRouter, requireAuth } from './auth.js';
 import { createNodeRegistry } from './nodeRegistry.js';
 import { createLifecycle } from './lifecycle.js';
 
@@ -25,6 +26,9 @@ app.use(express.json());
 app.get('/health', (_req, res) => {
   res.json({ service: 'orchestrator', status: 'healthy', uptimeSec: Math.round(process.uptime()) });
 });
+// Public login, then everything below requires a valid Bearer token.
+app.use(createAuthRouter());
+app.use(requireAuth);
 app.use(createApiRouter({ repo }));
 app.listen(PORT, () => console.log(`[Orchestrator] HTTP listening on http://localhost:${PORT}`));
 
