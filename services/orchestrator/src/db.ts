@@ -86,20 +86,34 @@ export class PrismaRepository implements Repository {
   constructor(private readonly client: PrismaClient = getPrisma()) {}
 
   async upsertNode(input: UpsertNodeInput): Promise<NodeRecord> {
-    const data = {
-      name: input.name ?? input.id,
-      ipAddress: input.ipAddress ?? null,
+    // Undefined fields mean "preserve": liveness-only heartbeats (every 1s) omit
+    // resources, which arrive only every 5s — so we must not null them out on the
+    // in-between beats. Only keys explicitly provided are written on update.
+    const provided = <T>(v: T | undefined): v is T => v !== undefined;
+    const update = {
       lastHeartbeat: new Date(input.lastHeartbeat),
-      cpuPercent: input.cpuPercent ?? null,
-      ramUsedMb: input.ramUsedMb ?? null,
-      ramTotalMb: input.ramTotalMb ?? null,
-      diskUsedGb: input.diskUsedGb ?? null,
-      diskTotalGb: input.diskTotalGb ?? null,
+      ...(provided(input.name) ? { name: input.name } : {}),
+      ...(provided(input.ipAddress) ? { ipAddress: input.ipAddress } : {}),
+      ...(provided(input.cpuPercent) ? { cpuPercent: input.cpuPercent } : {}),
+      ...(provided(input.ramUsedMb) ? { ramUsedMb: input.ramUsedMb } : {}),
+      ...(provided(input.ramTotalMb) ? { ramTotalMb: input.ramTotalMb } : {}),
+      ...(provided(input.diskUsedGb) ? { diskUsedGb: input.diskUsedGb } : {}),
+      ...(provided(input.diskTotalGb) ? { diskTotalGb: input.diskTotalGb } : {}),
     };
     const node = await this.client.node.upsert({
       where: { id: input.id },
-      create: { id: input.id, ...data },
-      update: data,
+      create: {
+        id: input.id,
+        name: input.name ?? input.id,
+        ipAddress: input.ipAddress ?? null,
+        lastHeartbeat: new Date(input.lastHeartbeat),
+        cpuPercent: input.cpuPercent ?? null,
+        ramUsedMb: input.ramUsedMb ?? null,
+        ramTotalMb: input.ramTotalMb ?? null,
+        diskUsedGb: input.diskUsedGb ?? null,
+        diskTotalGb: input.diskTotalGb ?? null,
+      },
+      update,
     });
     return toNodeRecord(node);
   }
