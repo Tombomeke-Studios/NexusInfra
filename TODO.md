@@ -13,7 +13,7 @@ Small units, one issue + one commit each.
 
 - [x] Web dashboard scaffold (Vite + React + TypeScript) + root workspace wiring (#15)
 - [x] Dashboard: test + lint tooling — Vitest/jsdom, Testing Library, ESLint JSX (#27)
-- [ ] Dashboard: typed Orchestrator API client (#28)
+- [x] Dashboard: typed Orchestrator API client (#28)
 - [ ] Orchestrator: stub JWT `/auth/login` endpoint + `requireAuth` middleware (#26)
 - [ ] Dashboard: app shell — routing + nav layout (#29)
 - [ ] Dashboard: login page + token storage + auth guard (#30)
