@@ -28,13 +28,13 @@ tracking. Persistence lands first since the rest builds on it.
 >   wiring (broker consumers on queue `nexusinfra.orchestrator`, mounts API + `/health`, heartbeat).
 >   27 orchestrator unit tests passing.
 >
-> **Next up (resume here):**
-> - A5 — `services/orchestrator/Dockerfile`, add `orchestrator` to `docker-compose.yml`, add
->   `DATABASE_URL` to `.env.example`, docs (`docs/api.md`,
->   `docs/architecture.md`, CLAUDE.md §7 map), then `npm run build && lint && test` green → PR to `dev`
->   (`Closes #11 #12 #13 #14`, each on its own line) → wait for CI → move group to Done.
+> - A5 — `Dockerfile`, `orchestrator` added to `docker-compose.yml` (SQLite on a `/data` volume),
+>   `DATABASE_URL`/`JWT_SECRET` in `.env.example`, docs (`api.md`, `architecture.md`, CLAUDE.md §7,
+>   README). Full `npm run build && lint && test` green (40 tests). **PR to `dev` opened.**
 >
-> **Then Part B — `feature/dashboard`** (branch off `dev` after A merges): B1 #15 Vite+React scaffold;
+> **Next up (resume here):**
+> - Wait for CI green on the `feature/orchestrator` PR → merge → move this group to Done.
+> - **Then Part B — `feature/dashboard`** (branch off `dev` after A merges): B1 #15 Vite+React scaffold;
 > B2 new stub-login issue (`auth.ts` JWT `/auth/login` + `requireAuth` on orchestrator, Login page);
 > B3 #16 Overview + New Deployment form + Servers list (poll status). Ports: control-room 9000,
 > node-agent 9100, orchestrator **9200**, dashboard (Vite) 5173.

@@ -173,10 +173,25 @@ is the migrations directory.
 | `src/agent.test.ts` | Unit tests with a fake runtime + captured publisher (no Docker/broker needed) |
 | `src/index.ts` | Entry: DockerodeRuntime + agent, binds `nexusinfra.node-agent.{nodeId}`, HTTP `/health` |
 
+### services/orchestrator (deployment control plane)
+| Path | Contents |
+|---|---|
+| `prisma/schema.prisma` | Prisma + SQLite schema: `Node`, `ServerConfig`, `Deployment`, `DeploymentEvent`. `prisma/migrations` is the schema source of truth |
+| `src/types.ts` | Domain records + the `Repository` interface (decouples logic from the DB) |
+| `src/repository.ts` | `InMemoryRepository` — backs unit tests and a DB-less local mode |
+| `src/db.ts` | `getPrisma()` + `PrismaRepository` (SQLite-backed `Repository`) |
+| `src/nodeRegistry.ts` | Consumes `monitoring.heartbeat.node.#`, upserts nodes, derives health (3s/10s) |
+| `src/nodeSelection.ts` | Pure least-loaded `selectNode` (healthy nodes, ranked by CPU+RAM load) |
+| `src/api.ts` | Express deployment API: create/list/get deployments, stop, node health |
+| `src/lifecycle.ts` | Consumes `infra.server.started/stopped/crashed`, updates deployment status + audit |
+| `src/index.ts` | Entry: PrismaRepository + consumers on `nexusinfra.orchestrator`, mounts API, HTTP `/health` (`:9200`) |
+| `src/*.test.ts` | Unit tests with the in-memory repo + captured publisher (no Docker/broker/DB needed) |
+| `Dockerfile` | Multi-stage build; runtime applies `prisma migrate deploy` then starts |
+
 ### Infrastructure
 | Path | Contents |
 |---|---|
-| `docker-compose.yml` | RabbitMQ + control-room stack |
+| `docker-compose.yml` | RabbitMQ + control-room + node-agent + orchestrator stack |
 | `.env.example` | Env contract — documents the FinVault-shared vars (`RABBITMQ_URL`, `FINVAULT_MESSAGE_KEY`) |
 | `.github/workflows/ci.yml` | CI: npm ci → build → lint (if present) → test, on PRs and pushes to dev/staging/main |
 | `eslint.config.js` | Flat ESLint config (typescript-eslint recommended) covering all workspaces |

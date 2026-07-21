@@ -47,5 +47,24 @@ services:
     depends_on:
       - rabbitmq
 
+  orchestrator:
+    build:
+      context: .
+      dockerfile: services/orchestrator/Dockerfile
+    container_name: nexusinfra-orchestrator
+    ports:
+      - "9200:9200"
+    environment:
+      - PORT=9200
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
+      - DATABASE_URL=file:/data/orchestrator.db
+      - JWT_SECRET=${JWT_SECRET:-dev-secret}
+    volumes:
+      - orchestrator_data:/data
+    depends_on:
+      - rabbitmq
+
 volumes:
   rabbitmq_data:
+  orchestrator_data:
