@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { getDeployment, type DeploymentDetail } from '../api';
 import { StatusBadge } from './StatusBadge';
 import { formatRelative } from '../format';
@@ -8,6 +8,13 @@ import { formatRelative } from '../format';
 export function DeploymentDrawer({ deploymentId, onClose }: { deploymentId: string; onClose: () => void }) {
   const [detail, setDetail] = useState<DeploymentDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [closing, setClosing] = useState(false);
+
+  // Play the exit animation before unmounting.
+  const close = useCallback(() => {
+    setClosing(true);
+    setTimeout(onClose, 170);
+  }, [onClose]);
 
   useEffect(() => {
     let alive = true;
@@ -20,18 +27,23 @@ export function DeploymentDrawer({ deploymentId, onClose }: { deploymentId: stri
   }, [deploymentId]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close();
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [close]);
 
   return (
     <>
-      <div className="drawer__scrim" onClick={onClose} />
-      <aside className="drawer__panel" role="dialog" aria-modal="true" aria-label="Deployment details">
+      <div className={`drawer__scrim${closing ? ' drawer__scrim--closing' : ''}`} onClick={close} />
+      <aside
+        className={`drawer__panel${closing ? ' drawer__panel--closing' : ''}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Deployment details"
+      >
         <div className="drawer__head">
           <strong>{detail?.name ?? 'Deployment'}</strong>
-          <button className="icon-btn" onClick={onClose} aria-label="Close details">
+          <button className="icon-btn" onClick={close} aria-label="Close details">
             ✕
           </button>
         </div>

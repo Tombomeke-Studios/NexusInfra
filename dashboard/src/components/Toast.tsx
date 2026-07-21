@@ -9,6 +9,7 @@ interface Toast {
   id: number;
   message: string;
   variant: ToastVariant;
+  leaving?: boolean;
 }
 
 interface ToastApi {
@@ -26,7 +27,11 @@ const AUTO_DISMISS_MS = 4000;
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const remove = useCallback((id: number) => setToasts((ts) => ts.filter((t) => t.id !== id)), []);
+  // Mark the toast as leaving so its exit animation plays, then drop it.
+  const remove = useCallback((id: number) => {
+    setToasts((ts) => ts.map((t) => (t.id === id ? { ...t, leaving: true } : t)));
+    setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== id)), 200);
+  }, []);
 
   const toast = useCallback(
     (message: string, variant: ToastVariant = 'info') => {
@@ -42,7 +47,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div className="toast-viewport" role="status" aria-live="polite">
         {toasts.map((t) => (
-          <div key={t.id} className={`toast toast--${t.variant}`} onClick={() => remove(t.id)}>
+          <div
+            key={t.id}
+            className={`toast toast--${t.variant}${t.leaving ? ' toast--leaving' : ''}`}
+            onClick={() => remove(t.id)}
+          >
             {t.message}
           </div>
         ))}
