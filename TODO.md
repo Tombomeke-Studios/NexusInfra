@@ -12,7 +12,7 @@ it has a user identity (the full API Gateway / FinVault-JWT integration, #20, st
 Small units, one issue + one commit each.
 
 - [x] Web dashboard scaffold (Vite + React + TypeScript) + root workspace wiring (#15)
-- [ ] Dashboard: test + lint tooling — Vitest/jsdom, Testing Library, ESLint JSX (#27)
+- [x] Dashboard: test + lint tooling — Vitest/jsdom, Testing Library, ESLint JSX (#27)
 - [ ] Dashboard: typed Orchestrator API client (#28)
 - [ ] Orchestrator: stub JWT `/auth/login` endpoint + `requireAuth` middleware (#26)
 - [ ] Dashboard: app shell — routing + nav layout (#29)
