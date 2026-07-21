@@ -11,6 +11,10 @@ out/
 .env.local
 .env.*.local
 
+# Local-only Docker Compose overrides (per-machine port remaps, etc.)
+docker-compose.override.yml
+docker-compose.override.yaml
+
 # IDE / Editor configurations
 .vscode/
 .idea/
