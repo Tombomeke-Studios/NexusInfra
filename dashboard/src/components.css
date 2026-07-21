@@ -317,6 +317,36 @@
   color: var(--color-success);
 }
 
+/* ── Auth (login) ───────────────────────────────────────────────────────── */
+.auth-wrap {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+}
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+}
+.auth-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 700;
+  color: var(--color-primary);
+  margin-bottom: var(--space-4);
+}
+.input-wrap {
+  position: relative;
+}
+.input-affix {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  min-height: 30px;
+  height: 30px;
+}
+
 /* ── App bar / navigation ───────────────────────────────────────────────── */
 .appbar {
   position: sticky;
