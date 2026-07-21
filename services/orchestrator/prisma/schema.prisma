@@ -1,0 +1,74 @@
+// Orchestrator persistence — Prisma + SQLite (FinVault pattern, PostgreSQL-ready).
+// This schema (and its generated migrations/) is the source of truth for the data
+// model; docs describe it in prose only (see CLAUDE.md documentation rules).
+//
+// Entities mirror CONCEPTS/infrastructure-platform/functional-analysis.md §2.2.
+// JSON-shaped columns (ports, environmentVars, resourceLimits) are stored as
+// serialized strings because SQLite has no native JSON type.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// A Docker host the Orchestrator can place containers on. Rows are maintained
+// from node heartbeats (monitoring.heartbeat.node.#), not created by hand.
+model Node {
+  id            String       @id
+  name          String
+  ipAddress     String?
+  lastHeartbeat DateTime
+  cpuPercent    Float?
+  ramUsedMb     Float?
+  ramTotalMb    Float?
+  diskUsedGb    Float?
+  diskTotalGb   Float?
+  createdAt     DateTime     @default(now())
+  deployments   Deployment[]
+}
+
+// A user's desired server (image + runtime config). One config can be deployed
+// many times over its lifetime.
+model ServerConfig {
+  id              String       @id
+  userId          String
+  name            String
+  dockerImage     String
+  ports           String       @default("{}")
+  environmentVars String       @default("{}")
+  resourceLimits  String       @default("{}")
+  autoRestart     Boolean      @default(false)
+  type            String       @default("generic")
+  createdAt       DateTime     @default(now())
+  deployments     Deployment[]
+}
+
+// A single placement of a ServerConfig onto a Node. Status transitions:
+// pending -> running -> stopped, or -> crashed / failed.
+model Deployment {
+  id             String            @id
+  serverConfig   ServerConfig      @relation(fields: [serverConfigId], references: [id])
+  serverConfigId String
+  node           Node?             @relation(fields: [nodeId], references: [id])
+  nodeId         String?
+  containerId    String?
+  status         String            @default("pending")
+  startedAt      DateTime?
+  stoppedAt      DateTime?
+  createdAt      DateTime          @default(now())
+  events         DeploymentEvent[]
+}
+
+// Append-only audit trail for a deployment's lifecycle.
+model DeploymentEvent {
+  id           String     @id
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+  deploymentId String
+  event        String
+  message      String
+  timestamp    DateTime   @default(now())
+}

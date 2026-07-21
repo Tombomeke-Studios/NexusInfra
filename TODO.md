@@ -10,7 +10,7 @@ Every actionable item carries its GitHub issue ref `(#N)`.
 Phase 2 (Core), second half: the Orchestrator — node registry, deployment planning, and lifecycle
 tracking. Persistence lands first since the rest builds on it.
 
-- [ ] Persistence layer for nodes and deployments (#14)
+- [x] Persistence layer for nodes and deployments (#14)
 - [ ] Orchestrator: node registry (#11)
 - [ ] Orchestrator: deployment API with resource-aware node selection (#12)
 - [ ] Orchestrator: server lifecycle event handling (#13)
