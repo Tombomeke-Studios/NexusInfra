@@ -1,0 +1,93 @@
+/* Animation primitives. Enter animations use ease-out curves and short durations
+   (200–320ms). The global prefers-reduced-motion rule in index.css collapses all
+   of these to ~0ms, so motion is opt-out for free. */
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Standard easing: a gentle overshoot-free ease-out. */
+:root {
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --stagger-step: 45ms;
+}
+
+.anim-fade {
+  animation: fade-in 200ms var(--ease-out) both;
+}
+.anim-rise {
+  animation: fade-in-up 300ms var(--ease-out) both;
+}
+.anim-scale {
+  animation: scale-in 200ms var(--ease-out) both;
+}
+
+/* Route view: replays on navigation (the wrapper is keyed by pathname). */
+.route-view {
+  animation: route-in 260ms var(--ease-out) both;
+}
+@keyframes route-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Staggered children: each child sets --i (its index); delay scales with it. */
+.stagger > * {
+  animation: fade-in-up 320ms var(--ease-out) both;
+  animation-delay: calc(var(--stagger-step) * var(--i, 0));
+}
+
+/* ── Micro-interactions ─────────────────────────────────────────────────── */
+/* Cards that represent objects lift on hover. */
+.stat,
+.grid-cards > .card {
+  transition: transform var(--transition), box-shadow var(--transition);
+  will-change: transform;
+}
+.stat:hover,
+.grid-cards > .card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+/* Press feedback: a subtle scale on active for buttons and icon buttons. */
+.btn:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
+}
+.icon-btn:active {
+  transform: scale(0.94);
+}
+.name-btn:active {
+  transform: translateY(1px);
+}

@@ -4,6 +4,7 @@ import { App } from './App';
 import { initTheme } from './theme';
 import './index.css';
 import './components.css';
+import './motion.css';
 
 initTheme();
 

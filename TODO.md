@@ -41,9 +41,21 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > **Ports** — Control Room `9000` · Node Agent `9100` · Orchestrator `9200` · dashboard `8095`
 > (Docker) / `5173` (Vite dev).
 >
-> **Next up:** no active feature branch. Candidates: the **Billing Bridge** (Phase 4), the
-> **API Gateway / real FinVault JWT** (#20), or **live log streaming** (#17). Promote a group to a
-> `feature/<topic>` branch before starting.
+> **Active work:** UI motion & micro-interactions polish (see below).
+
+---
+
+## Active — `feature/ui-animations`
+
+Add tasteful, performant motion (transform/opacity, 150–300ms, `prefers-reduced-motion` respected).
+Small units, one issue + one commit each.
+
+- [x] UI motion: foundation — keyframes, utilities, `motionEnabled()` helper (#57)
+- [x] UI motion: animated route/page transitions (#58)
+- [x] UI motion: Overview — count-up stats + staggered node tiles (#59)
+- [x] UI motion: Servers — staggered row entrance + row transitions (#60)
+- [x] UI motion: toast enter/exit + drawer polish (#61)
+- [x] UI motion: card hover lift + interactive micro-interactions (#62)
 
 ---
 

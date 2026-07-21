@@ -443,6 +443,23 @@
     opacity: 1;
   }
 }
+.drawer__scrim--closing {
+  animation: fade-out 180ms ease forwards;
+}
+.drawer__panel--closing {
+  animation: slide-out 180ms ease forwards;
+}
+@keyframes slide-out {
+  to {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
 @keyframes fade-in {
   from {
     opacity: 0;
@@ -527,7 +544,16 @@
   box-shadow: var(--shadow-lg);
   font-size: 0.9rem;
   cursor: pointer;
-  animation: toast-in 200ms ease;
+  animation: toast-in 220ms var(--ease-out, ease);
+}
+.toast--leaving {
+  animation: toast-out 180ms ease forwards;
+}
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateX(16px);
+  }
 }
 .toast--success {
   border-left-color: var(--color-success);
@@ -541,11 +567,11 @@
 @keyframes toast-in {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateX(16px);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateX(0);
   }
 }
 

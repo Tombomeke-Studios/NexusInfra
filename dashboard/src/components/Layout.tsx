@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { logout } from '../session';
 import { ThemeToggle } from './ThemeToggle';
 import { IconHexagon, IconLogout } from './Icons';
@@ -8,6 +8,7 @@ import { IconHexagon, IconLogout } from './Icons';
 // <Outlet/>.
 export function Layout() {
   const navigate = useNavigate();
+  const location = useLocation();
 
   const signOut = () => {
     logout();
@@ -39,7 +40,9 @@ export function Layout() {
         </button>
       </header>
       <main>
-        <Outlet />
+        <div key={location.pathname} className="route-view">
+          <Outlet />
+        </div>
       </main>
     </div>
   );

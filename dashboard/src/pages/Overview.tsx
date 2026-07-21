@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { listNodes, listDeployments, type NodeView, type DeploymentView } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
+import { CountUp } from '../components/CountUp';
 
 // Overview: at-a-glance fleet health — running-server / node counts and a tile
 // per node with its health and resource usage.
@@ -34,7 +35,7 @@ export function Overview() {
 
       {error && <p role="alert" className="alert alert--error">{error}</p>}
 
-      <div className="row" style={{ marginBottom: 'var(--space-6)' }}>
+      <div className="row anim-rise" style={{ marginBottom: 'var(--space-6)' }}>
         <Stat label="Running servers" value={running} loading={loading} />
         <Stat label="Registered nodes" value={nodes?.length ?? 0} loading={loading} />
       </div>
@@ -54,9 +55,9 @@ export function Overview() {
           ))}
         </div>
       ) : nodes && nodes.length > 0 ? (
-        <div className="grid-cards">
-          {nodes.map((n) => (
-            <NodeTile key={n.id} node={n} />
+        <div className="grid-cards stagger">
+          {nodes.map((n, i) => (
+            <NodeTile key={n.id} node={n} index={i} />
           ))}
         </div>
       ) : (
@@ -76,20 +77,22 @@ function Stat({ label, value, loading }: { label: string; value: number; loading
       {loading ? (
         <div className="skeleton" style={{ height: 32, width: 48, marginBottom: 6 }} />
       ) : (
-        <div className="stat__value tnum">{value}</div>
+        <div className="stat__value tnum">
+          <CountUp value={value} />
+        </div>
       )}
       <div className="stat__label">{label}</div>
     </div>
   );
 }
 
-function NodeTile({ node }: { node: NodeView }) {
+function NodeTile({ node, index }: { node: NodeView; index: number }) {
   const ramPct =
     node.ramUsedMb != null && node.ramTotalMb ? Math.round((node.ramUsedMb / node.ramTotalMb) * 100) : null;
   const cpuPct = node.cpuPercent != null ? Math.round(node.cpuPercent) : null;
 
   return (
-    <article className="card">
+    <article className="card" style={{ ['--i']: index } as CSSProperties}>
       <div className="card__body">
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
           <strong>{node.name}</strong>
