@@ -17,7 +17,7 @@ Small units, one issue + one commit each.
 - [x] Orchestrator: stub JWT `/auth/login` endpoint + `requireAuth` middleware (#26)
 - [x] Dashboard: app shell — routing + nav layout (#29)
 - [x] Dashboard: login page + token storage + auth guard (#30)
-- [ ] Dashboard: server overview page — node health tiles + active count (#16)
+- [x] Dashboard: server overview page — node health tiles + active count (#16)
 - [ ] Dashboard: New Deployment form page (#31)
 - [ ] Dashboard: Servers list page with status polling + stop (#32)
 - [ ] Dashboard: Dockerfile + docker-compose service (#33)

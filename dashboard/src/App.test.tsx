@@ -22,12 +22,12 @@ describe('app shell', () => {
     expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
   });
 
-  it('renders the nav and the overview page when authenticated', () => {
+  it('renders the nav shell when authenticated', () => {
     setToken('tok');
     renderAt('/');
     expect(screen.getByRole('link', { name: 'Overview' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'New Deployment' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Overview' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Servers' })).toBeInTheDocument();
   });
 
   it('routes to the servers page', () => {
