@@ -35,15 +35,15 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > `docker-compose up` brings up RabbitMQ + Control Room + Node Agent + Orchestrator + dashboard; the
 > dashboard is at **http://localhost:8095** (`admin` / `admin`). The UI has a full design system
 > (light/dark theme), restyled pages, plus **restart**, a **deployment detail drawer**, and **toasts**.
-> Verified live: deploying `nginx` starts a real container (**running**), **Restart**/**Stop** work, and
-> an in-use host port surfaces as **crashed** with the exact Docker reason.
+> Verified live end to end: **deploy → running → stop (container removed) → start again → running**,
+> plus **restart**; an in-use host port surfaces as **crashed** with the exact Docker reason.
 >
 > **Ports** — Control Room `9000` · Node Agent `9100` · Orchestrator `9200` · dashboard `8095`
 > (Docker) / `5173` (Vite dev).
 >
 > **Next up:** no active feature branch. Candidates: the **Billing Bridge** (Phase 4), the
-> **API Gateway / real FinVault JWT** (#20), **live log streaming** (#17), or the node-agent
-> container-name fix (#52). Promote a group to a `feature/<topic>` branch before starting.
+> **API Gateway / real FinVault JWT** (#20), or **live log streaming** (#17). Promote a group to a
+> `feature/<topic>` branch before starting.
 
 ---
 
@@ -72,7 +72,6 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 
 ### Phase 5 — Production hardening (`feature/production`)
 
-- [ ] Node Agent: remove stopped containers / unique names to avoid redeploy name conflicts (#52)
 - [ ] Multi-node: run several node agents; verify resource-aware placement across them (#21)
 - [ ] Node Agent: auto-restart on crash + offline command queue / replay on reconnect
 - [ ] Control Room: uptime % / history + alerting via the Notification/Mail service + DLQ monitoring
@@ -84,6 +83,11 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 ---
 
 ## Done
+
+### `feature/start-server` — merged in #55
+
+- [x] Start (re-run) a stopped/crashed deployment from the panel — `POST /deployments/:id/start` + action (#54)
+- [x] Node Agent removes the container on stop (frees name/ports, enables clean start) (#52)
 
 ### 🐛 Fixes
 
