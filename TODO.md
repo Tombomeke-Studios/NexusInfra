@@ -28,7 +28,8 @@ Small units, one issue + one commit each.
 > Now on **Part B**, branch **`feature/dashboard`** (off `dev`).
 >
 > **Part B is code-complete** — all 11 units done and pushed (#15, #27, #28, #26, #29, #30, #16, #31,
-> #32, #33, #34). Full `build + lint + test` green (60 tests). **PR to `dev` opened; awaiting review.**
+> #32, #33, #34). Full `build + lint + test` green (60 tests). **PR #35 → `dev` is CI-green and
+> awaiting human review/merge** (the agent is not authorized to self-merge into `dev`).
 >
 > **Next up (resume here):** review + merge the `feature/dashboard` PR → move this group to Done.
 > Then the MVP server panel is complete; pick the next slice from the backlog (billing, gateway, logs).
