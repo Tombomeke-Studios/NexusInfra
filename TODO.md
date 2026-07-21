@@ -40,10 +40,30 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > **Ports** — Control Room `9000` · Node Agent `9100` · Orchestrator `9200` · dashboard `8095`
 > (Docker) / `5173` (Vite dev).
 >
-> **Next up:** no active feature branch. Pick the next slice from the backlog — the natural
-> candidates are the **Billing Bridge** (Phase 4), the **API Gateway / real FinVault JWT** (#20), or
-> **live log streaming** (#17). Promote a group to a `feature/<topic>` branch and ensure each item has
-> an issue before starting.
+> **Active work:** the MVP is functional; current focus is a **UI overhaul + UX features** (see below).
+
+---
+
+## Active — `feature/ui-overhaul`
+
+Make the panel look and feel professional: a real design system (tokens + light/dark theme), polished
+components and pages, plus a couple of UX features. Small units, one issue + one commit each.
+
+**Design system & components**
+- [x] UI: design tokens + global stylesheet (light/dark theme) (#41)
+- [x] UI: base component styles — buttons, inputs, cards, badges, table (#42)
+
+**Pages & shell**
+- [x] UI: restyle the app shell — top nav, brand, theme toggle, sign out (#43)
+- [x] UI: restyle the Login page (#44)
+- [x] UI: restyle the Overview page — stat cards + node tiles (#45)
+- [x] UI: restyle the New Deployment form (#46)
+- [x] UI: restyle the Servers table + row actions (#47)
+
+**Features**
+- [x] feat: restart endpoint (#48) + dashboard restart action
+- [x] feat: deployment detail view with the event/audit trail (#49)
+- [x] UI: toast notifications for actions (#50)
 
 ---
 
@@ -56,8 +76,6 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 
 - [ ] Real-time container log streaming via WebSocket (#17)
 - [ ] API Gateway: JWT validation, routing, WebSocket proxy (#20)
-- [ ] Dashboard: server restart action (emit `infra.server.restart`)
-- [ ] Dashboard: deployment detail view with the event/audit trail
 - [ ] Dashboard: node detail view (resource history)
 - [ ] Replace stub login with real FinVault JWT via the Gateway
 

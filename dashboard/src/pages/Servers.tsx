@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { listDeployments, stopDeployment, type DeploymentView } from '../api';
-import { deploymentColor } from '../health';
+import { listDeployments, stopDeployment, restartDeployment, type DeploymentView } from '../api';
+import { StatusBadge } from '../components/StatusBadge';
+import { DeploymentDrawer } from '../components/DeploymentDrawer';
+import { IconStop, IconRestart } from '../components/Icons';
+import { useToast } from '../components/Toast';
+import { formatRelative, shortId } from '../format';
 
 // Servers: the live list of deployments. It polls the Orchestrator so status
 // transitions (pending → running → stopped/crashed) show up on their own, and
@@ -10,6 +14,9 @@ const POLL_MS = 3000;
 export function Servers() {
   const [deployments, setDeployments] = useState<DeploymentView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const { toast } = useToast();
 
   const load = useCallback(async () => {
     try {
@@ -26,73 +33,113 @@ export function Servers() {
     return () => clearInterval(handle);
   }, [load]);
 
-  const onStop = async (id: string) => {
+  const runAction = async (id: string, action: (id: string) => Promise<unknown>, verb: string) => {
+    setPendingId(id);
     try {
-      await stopDeployment(id);
+      await action(id);
+      toast(`Deployment ${verb} requested`, 'success');
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to stop deployment');
+      const message = e instanceof Error ? e.message : `Failed to ${verb} deployment`;
+      setError(message);
+      toast(message, 'error');
+    } finally {
+      setPendingId(null);
     }
   };
 
+  const onStop = (id: string) => runAction(id, stopDeployment, 'stop');
+  const onRestart = (id: string) => runAction(id, restartDeployment, 'restart');
+
   return (
-    <section style={{ padding: '1.5rem' }}>
-      <h2>Servers</h2>
-      {error ? (
-        <p role="alert" style={{ color: '#dc2626' }}>{error}</p>
-      ) : !deployments ? (
-        <p>Loading…</p>
-      ) : deployments.length === 0 ? (
-        <p style={{ color: '#64748b' }}>No deployments yet. Create one from “New Deployment”.</p>
-      ) : (
-        <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>
-              <th style={cell}>Name</th>
-              <th style={cell}>Image</th>
-              <th style={cell}>Node</th>
-              <th style={cell}>Status</th>
-              <th style={cell}>Container</th>
-              <th style={cell}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {deployments.map((d) => (
-              <tr key={d.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                <td style={cell}>{d.name}</td>
-                <td style={cell}>{d.dockerImage}</td>
-                <td style={cell}>{d.nodeId ?? '—'}</td>
-                <td style={cell}>
-                  <span
-                    aria-hidden
-                    style={{
-                      display: 'inline-block',
-                      width: 9,
-                      height: 9,
-                      borderRadius: '50%',
-                      background: deploymentColor(d.status),
-                      marginRight: 6,
-                    }}
-                  />
-                  {d.status}
-                </td>
-                <td style={{ ...cell, fontFamily: 'monospace' }}>
-                  {d.containerId ? d.containerId.slice(0, 12) : '—'}
-                </td>
-                <td style={cell}>
-                  {d.status === 'running' && (
-                    <button onClick={() => onStop(d.id)} aria-label={`Stop ${d.name}`}>
-                      Stop
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <div className="page">
+      <div className="page__head">
+        <h1 className="page__title">Servers</h1>
+        <span className="live">
+          <span className="live__dot" />
+          Live
+        </span>
+      </div>
+
+      {error && (
+        <p role="alert" className="alert alert--error" style={{ marginBottom: 'var(--space-4)' }}>
+          {error}
+        </p>
       )}
-    </section>
+
+      {!deployments ? (
+        <div className="table-wrap">
+          <div className="empty">Loading…</div>
+        </div>
+      ) : deployments.length === 0 ? (
+        <div className="table-wrap">
+          <div className="empty">
+            No deployments yet. Create one from <strong>New Deployment</strong>.
+          </div>
+        </div>
+      ) : (
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Image</th>
+                <th>Node</th>
+                <th>Status</th>
+                <th>Container</th>
+                <th>Created</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {deployments.map((d) => (
+                <tr key={d.id}>
+                  <td>
+                    <button className="name-btn" onClick={() => setDetailId(d.id)}>
+                      {d.name}
+                    </button>
+                  </td>
+                  <td className="mono">{d.dockerImage}</td>
+                  <td>{d.nodeId ?? '—'}</td>
+                  <td>
+                    <StatusBadge status={d.status} />
+                  </td>
+                  <td className="mono subtle">{shortId(d.containerId)}</td>
+                  <td className="subtle tnum">{formatRelative(d.createdAt)}</td>
+                  <td>
+                    <span className="actions">
+                      {d.status === 'running' && (
+                        <>
+                          <button
+                            className="btn btn--secondary btn--sm"
+                            onClick={() => onRestart(d.id)}
+                            disabled={pendingId === d.id}
+                            aria-label={`Restart ${d.name}`}
+                          >
+                            <IconRestart size={15} />
+                            Restart
+                          </button>
+                          <button
+                            className="btn btn--danger btn--sm"
+                            onClick={() => onStop(d.id)}
+                            disabled={pendingId === d.id}
+                            aria-label={`Stop ${d.name}`}
+                          >
+                            {pendingId === d.id ? <span className="spinner" /> : <IconStop size={15} />}
+                            Stop
+                          </button>
+                        </>
+                      )}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {detailId && <DeploymentDrawer deploymentId={detailId} onClose={() => setDetailId(null)} />}
+    </div>
   );
 }
-
-const cell = { padding: '0.5rem 0.75rem' };

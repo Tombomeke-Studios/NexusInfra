@@ -12,6 +12,7 @@ import type { NodeRecord, Repository } from './types.js';
 
 const KEY_START = 'infra.server.start';
 const KEY_STOP = 'infra.server.stop';
+const KEY_RESTART = 'infra.server.restart';
 
 export type PublishFn = (routingKey: string, envelope: EventEnvelope) => Promise<boolean>;
 export type SelectNodeFn = (nodes: NodeRecord[], now: number) => NodeRecord | null;
@@ -102,6 +103,23 @@ export function createApiRouter(deps: ApiDeps): Router {
       payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId },
     });
     return res.status(202).json({ status: 'stopping', deploymentId: detail.id });
+  });
+
+  // Request a running deployment be restarted — the agent restarts the container
+  // and reports server.started back.
+  router.post('/deployments/:id/restart', async (req: Request, res: Response) => {
+    const detail = await repo.getDeployment(req.params.id);
+    if (!detail) return res.status(404).json({ error: 'deployment not found' });
+    if (!detail.containerId || !detail.nodeId) {
+      return res.status(409).json({ error: 'deployment is not running' });
+    }
+
+    await repo.appendDeploymentEvent(detail.id, 'restart-requested', 'restart requested by user');
+    await emit(KEY_RESTART, {
+      type: 'server.restart',
+      payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId },
+    });
+    return res.status(202).json({ status: 'restarting', deploymentId: detail.id });
   });
 
   router.get('/nodes', async (_req: Request, res: Response) => {

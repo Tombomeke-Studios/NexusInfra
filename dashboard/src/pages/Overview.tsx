@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { listNodes, listDeployments, type NodeView, type DeploymentView } from '../api';
-import { healthColor } from '../health';
+import { StatusBadge } from '../components/StatusBadge';
 
-// Overview: at-a-glance fleet health — one tile per registered node plus a count
-// of currently running servers.
+// Overview: at-a-glance fleet health — running-server / node counts and a tile
+// per node with its health and resource usage.
 export function Overview() {
   const [nodes, setNodes] = useState<NodeView[] | null>(null);
   const [deployments, setDeployments] = useState<DeploymentView[] | null>(null);
@@ -23,57 +23,95 @@ export function Overview() {
     };
   }, []);
 
-  if (error) return <p role="alert" style={{ color: '#dc2626', padding: '1.5rem' }}>{error}</p>;
-  if (!nodes || !deployments) return <p style={{ padding: '1.5rem' }}>Loading…</p>;
-
-  const running = deployments.filter((d) => d.status === 'running').length;
+  const loading = !error && (!nodes || !deployments);
+  const running = deployments?.filter((d) => d.status === 'running').length ?? 0;
 
   return (
-    <section style={{ padding: '1.5rem' }}>
-      <h2>Overview</h2>
-
-      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
-        <Stat label="Running servers" value={running} />
-        <Stat label="Registered nodes" value={nodes.length} />
+    <div className="page">
+      <div className="page__head">
+        <h1 className="page__title">Overview</h1>
       </div>
 
-      <h3>Nodes</h3>
-      {nodes.length === 0 ? (
-        <p style={{ color: '#64748b' }}>No nodes have reported in yet.</p>
-      ) : (
-        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-          {nodes.map((n) => (
-            <article
-              key={n.id}
-              style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: '1rem', minWidth: 200 }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span
-                  aria-hidden
-                  style={{ width: 10, height: 10, borderRadius: '50%', background: healthColor(n.health) }}
-                />
-                <strong>{n.name}</strong>
+      {error && <p role="alert" className="alert alert--error">{error}</p>}
+
+      <div className="row" style={{ marginBottom: 'var(--space-6)' }}>
+        <Stat label="Running servers" value={running} loading={loading} />
+        <Stat label="Registered nodes" value={nodes?.length ?? 0} loading={loading} />
+      </div>
+
+      <h3 style={{ marginBottom: 'var(--space-4)' }}>Nodes</h3>
+
+      {loading ? (
+        <div className="grid-cards">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="card">
+              <div className="card__body">
+                <div className="skeleton" style={{ height: 18, width: '55%', marginBottom: 12 }} />
+                <div className="skeleton" style={{ height: 6, marginBottom: 10 }} />
+                <div className="skeleton" style={{ height: 6, width: '80%' }} />
               </div>
-              <p style={{ margin: '0.5rem 0 0', color: '#64748b', fontSize: '0.9rem' }}>
-                {n.health}
-                {n.cpuPercent != null && <> · CPU {Math.round(n.cpuPercent)}%</>}
-                {n.ramUsedMb != null && n.ramTotalMb ? (
-                  <> · RAM {Math.round((n.ramUsedMb / n.ramTotalMb) * 100)}%</>
-                ) : null}
-              </p>
-            </article>
+            </div>
           ))}
         </div>
+      ) : nodes && nodes.length > 0 ? (
+        <div className="grid-cards">
+          {nodes.map((n) => (
+            <NodeTile key={n.id} node={n} />
+          ))}
+        </div>
+      ) : (
+        !error && (
+          <div className="card">
+            <div className="empty">No nodes have reported in yet.</div>
+          </div>
+        )
       )}
-    </section>
+    </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function Stat({ label, value, loading }: { label: string; value: number; loading: boolean }) {
   return (
-    <div style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: '1rem 1.5rem', minWidth: 160 }}>
-      <div style={{ fontSize: '2rem', fontWeight: 700 }}>{value}</div>
-      <div style={{ color: '#64748b' }}>{label}</div>
+    <div className="stat" style={{ minWidth: 170 }}>
+      {loading ? (
+        <div className="skeleton" style={{ height: 32, width: 48, marginBottom: 6 }} />
+      ) : (
+        <div className="stat__value tnum">{value}</div>
+      )}
+      <div className="stat__label">{label}</div>
+    </div>
+  );
+}
+
+function NodeTile({ node }: { node: NodeView }) {
+  const ramPct =
+    node.ramUsedMb != null && node.ramTotalMb ? Math.round((node.ramUsedMb / node.ramTotalMb) * 100) : null;
+  const cpuPct = node.cpuPercent != null ? Math.round(node.cpuPercent) : null;
+
+  return (
+    <article className="card">
+      <div className="card__body">
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
+          <strong>{node.name}</strong>
+          <StatusBadge status={node.health} />
+        </div>
+        <Meter label="CPU" pct={cpuPct} />
+        <Meter label="RAM" pct={ramPct} />
+      </div>
+    </article>
+  );
+}
+
+function Meter({ label, pct }: { label: string; pct: number | null }) {
+  return (
+    <div style={{ marginBottom: 'var(--space-3)' }}>
+      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 4 }}>
+        <span className="subtle" style={{ fontSize: '0.8rem' }}>{label}</span>
+        <span className="subtle tnum" style={{ fontSize: '0.8rem' }}>{pct != null ? `${pct}%` : '—'}</span>
+      </div>
+      <div className="meter">
+        <div className="meter__fill" style={{ width: `${pct ?? 0}%` }} />
+      </div>
     </div>
   );
 }

@@ -1,15 +1,11 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { logout } from '../session';
+import { ThemeToggle } from './ThemeToggle';
+import { IconHexagon, IconLogout } from './Icons';
 
-// App shell: brand + primary navigation, with the active page rendered in the
-// <Outlet/>. Shown only inside the authenticated area.
-const linkStyle = ({ isActive }: { isActive: boolean }) => ({
-  marginRight: '1rem',
-  fontWeight: isActive ? 700 : 400,
-  color: isActive ? '#1d4ed8' : '#334155',
-  textDecoration: 'none',
-});
-
+// App shell: sticky top bar with brand, primary nav, theme toggle, and a
+// sign-out action kept separate from navigation. The routed page renders in the
+// <Outlet/>.
 export function Layout() {
   const navigate = useNavigate();
 
@@ -20,28 +16,27 @@ export function Layout() {
 
   return (
     <div>
-      <header
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '1rem',
-          padding: '1rem 1.5rem',
-          borderBottom: '1px solid #e2e8f0',
-        }}
-      >
-        <strong style={{ fontSize: '1.1rem' }}>NexusInfra</strong>
-        <nav style={{ flex: 1 }}>
-          <NavLink to="/" end style={linkStyle}>
+      <header className="appbar">
+        <span className="appbar__brand">
+          <IconHexagon size={20} />
+          NexusInfra
+        </span>
+        <nav className="appbar__nav" aria-label="Primary">
+          <NavLink to="/" end className="navlink">
             Overview
           </NavLink>
-          <NavLink to="/new" style={linkStyle}>
+          <NavLink to="/new" className="navlink">
             New Deployment
           </NavLink>
-          <NavLink to="/servers" style={linkStyle}>
+          <NavLink to="/servers" className="navlink">
             Servers
           </NavLink>
         </nav>
-        <button onClick={signOut}>Sign out</button>
+        <ThemeToggle />
+        <button className="btn btn--ghost btn--sm" onClick={signOut}>
+          <IconLogout size={16} />
+          Sign out
+        </button>
       </header>
       <main>
         <Outlet />

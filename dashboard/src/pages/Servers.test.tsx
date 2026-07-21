@@ -14,8 +14,8 @@ describe('Servers', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', fetchMock);
     fetchMock.mockImplementation((url: string, options?: RequestInit) => {
-      if (typeof url === 'string' && url.endsWith('/stop')) {
-        return Promise.resolve({ ok: true, status: 202, json: async () => ({ status: 'stopping' }) } as Response);
+      if (typeof url === 'string' && (url.endsWith('/stop') || url.endsWith('/restart'))) {
+        return Promise.resolve({ ok: true, status: 202, json: async () => ({ status: 'ok' }) } as Response);
       }
       return Promise.resolve({ ok: true, status: 200, json: async () => deployments } as Response);
       void options;
@@ -44,5 +44,17 @@ describe('Servers', () => {
       ([u, o]) => typeof u === 'string' && u.includes('/deployments/d1/stop') && o?.method === 'POST'
     );
     expect(stopCall).toBeDefined();
+  });
+
+  it('restarts a running deployment via the restart endpoint', async () => {
+    render(<Servers />);
+    await screen.findByText('my-nginx');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Restart my-nginx' }));
+
+    const restartCall = fetchMock.mock.calls.find(
+      ([u, o]) => typeof u === 'string' && u.includes('/deployments/d1/restart') && o?.method === 'POST'
+    );
+    expect(restartCall).toBeDefined();
   });
 });
