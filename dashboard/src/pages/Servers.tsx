@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { listDeployments, stopDeployment, restartDeployment, type DeploymentView } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
+import { DeploymentDrawer } from '../components/DeploymentDrawer';
 import { IconStop, IconRestart } from '../components/Icons';
 import { useToast } from '../components/Toast';
 import { formatRelative, shortId } from '../format';
@@ -14,6 +15,7 @@ export function Servers() {
   const [deployments, setDeployments] = useState<DeploymentView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
   const { toast } = useToast();
 
   const load = useCallback(async () => {
@@ -93,7 +95,9 @@ export function Servers() {
               {deployments.map((d) => (
                 <tr key={d.id}>
                   <td>
-                    <strong>{d.name}</strong>
+                    <button className="name-btn" onClick={() => setDetailId(d.id)}>
+                      {d.name}
+                    </button>
                   </td>
                   <td className="mono">{d.dockerImage}</td>
                   <td>{d.nodeId ?? '—'}</td>
@@ -134,6 +138,8 @@ export function Servers() {
           </table>
         </div>
       )}
+
+      {detailId && <DeploymentDrawer deploymentId={detailId} onClose={() => setDetailId(null)} />}
     </div>
   );
 }
