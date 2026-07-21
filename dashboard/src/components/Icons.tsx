@@ -40,6 +40,11 @@ export const IconStop = (p: IconProps) => (
     <rect x="6" y="6" width="12" height="12" rx="2" />
   </Base>
 );
+export const IconPlay = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M6 4l14 8-14 8V4Z" />
+  </Base>
+);
 export const IconRestart = (p: IconProps) => (
   <Base {...p}>
     <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />

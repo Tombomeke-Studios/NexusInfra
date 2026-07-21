@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { listDeployments, stopDeployment, restartDeployment, type DeploymentView } from '../api';
+import { listDeployments, stopDeployment, restartDeployment, startDeployment, type DeploymentView } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
 import { DeploymentDrawer } from '../components/DeploymentDrawer';
-import { IconStop, IconRestart } from '../components/Icons';
+import { IconStop, IconRestart, IconPlay } from '../components/Icons';
 import { useToast } from '../components/Toast';
 import { formatRelative, shortId } from '../format';
 
@@ -50,6 +50,7 @@ export function Servers() {
 
   const onStop = (id: string) => runAction(id, stopDeployment, 'stop');
   const onRestart = (id: string) => runAction(id, restartDeployment, 'restart');
+  const onStart = (id: string) => runAction(id, startDeployment, 'start');
 
   return (
     <div className="page">
@@ -108,7 +109,7 @@ export function Servers() {
                   <td className="subtle tnum">{formatRelative(d.createdAt)}</td>
                   <td>
                     <span className="actions">
-                      {d.status === 'running' && (
+                      {d.status === 'running' ? (
                         <>
                           <button
                             className="btn btn--secondary btn--sm"
@@ -129,7 +130,17 @@ export function Servers() {
                             Stop
                           </button>
                         </>
-                      )}
+                      ) : d.status !== 'pending' ? (
+                        <button
+                          className="btn btn--secondary btn--sm"
+                          onClick={() => onStart(d.id)}
+                          disabled={pendingId === d.id}
+                          aria-label={`Start ${d.name}`}
+                        >
+                          {pendingId === d.id ? <span className="spinner" /> : <IconPlay size={15} />}
+                          Start
+                        </button>
+                      ) : null}
                     </span>
                   </td>
                 </tr>

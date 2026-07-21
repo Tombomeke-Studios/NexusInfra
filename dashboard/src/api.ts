@@ -120,3 +120,7 @@ export function stopDeployment(id: string): Promise<{ status: string; deployment
 export function restartDeployment(id: string): Promise<{ status: string; deploymentId: string }> {
   return request(`/deployments/${id}/restart`, { method: 'POST' });
 }
+
+export function startDeployment(id: string): Promise<{ status: string; deploymentId: string }> {
+  return request(`/deployments/${id}/start`, { method: 'POST' });
+}

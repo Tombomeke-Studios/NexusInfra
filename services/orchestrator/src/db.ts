@@ -181,6 +181,14 @@ export class PrismaRepository implements Repository {
     }));
   }
 
+  async getDeploymentConfig(deploymentId: string): Promise<ServerConfigRecord | null> {
+    const d = await this.client.deployment.findUnique({
+      where: { id: deploymentId },
+      include: { serverConfig: true },
+    });
+    return d ? toConfigRecord(d.serverConfig) : null;
+  }
+
   async getDeployment(id: string): Promise<DeploymentDetail | null> {
     const d = await this.client.deployment.findUnique({
       where: { id },
