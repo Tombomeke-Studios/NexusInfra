@@ -47,6 +47,21 @@
   animation: scale-in 200ms var(--ease-out) both;
 }
 
+/* Route view: replays on navigation (the wrapper is keyed by pathname). */
+.route-view {
+  animation: route-in 260ms var(--ease-out) both;
+}
+@keyframes route-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* Staggered children: each child sets --i (its index); delay scales with it. */
 .stagger > * {
   animation: fade-in-up 320ms var(--ease-out) both;

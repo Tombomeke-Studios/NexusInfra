@@ -51,7 +51,7 @@ Add tasteful, performant motion (transform/opacity, 150–300ms, `prefers-reduce
 Small units, one issue + one commit each.
 
 - [ ] UI motion: foundation — keyframes, utilities, `motionEnabled()` helper (#57)
-- [ ] UI motion: animated route/page transitions (#58)
+- [x] UI motion: animated route/page transitions (#58)
 - [ ] UI motion: Overview — count-up stats + staggered node tiles (#59)
 - [ ] UI motion: Servers — staggered row entrance + row transitions (#60)
 - [ ] UI motion: toast enter/exit + drawer polish (#61)
