@@ -58,7 +58,7 @@ components and pages, plus a couple of UX features. Small units, one issue + one
 - [x] UI: restyle the Login page (#44)
 - [x] UI: restyle the Overview page — stat cards + node tiles (#45)
 - [x] UI: restyle the New Deployment form (#46)
-- [ ] UI: restyle the Servers table + row actions (#47)
+- [x] UI: restyle the Servers table + row actions (#47)
 
 **Features**
 - [ ] feat: restart endpoint (#48) + dashboard restart action

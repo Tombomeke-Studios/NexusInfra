@@ -398,6 +398,42 @@
   color: var(--color-primary);
 }
 
+/* ── Live indicator ─────────────────────────────────────────────────────── */
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--color-text-subtle);
+}
+.live__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-success);
+  box-shadow: 0 0 0 0 var(--color-success-soft);
+  animation: pulse 1.8s ease-out infinite;
+}
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--color-success-soft);
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* Row action group */
+.actions {
+  display: inline-flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  width: 100%;
+}
+
 /* ── Empty state & skeletons ────────────────────────────────────────────── */
 .empty {
   text-align: center;
