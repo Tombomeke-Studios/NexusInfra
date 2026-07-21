@@ -143,7 +143,7 @@ That brings up RabbitMQ, the Control Room, a local Node Agent, the Orchestrator,
 
 | What | URL | Notes |
 |---|---|---|
-| **Web dashboard** | **http://localhost:8090** | Sign in with **`admin` / `admin`** |
+| **Web dashboard** | **http://localhost:8095** | Sign in with **`admin` / `admin`** |
 | Orchestrator API | http://localhost:9200 | See [docs/api.md](docs/api.md) |
 | Control Room status | http://localhost:9000/status | Live heartbeat view |
 | RabbitMQ management | http://localhost:15672 | `guest` / `guest` |

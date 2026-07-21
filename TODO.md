@@ -33,11 +33,11 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 
 > **The MVP server panel is complete and verified running end to end.**
 > `docker-compose up` brings up RabbitMQ + Control Room + Node Agent + Orchestrator + dashboard; the
-> dashboard is at **http://localhost:8090** (`admin` / `admin`). Verified live: deploying `nginx`
+> dashboard is at **http://localhost:8095** (`admin` / `admin`). Verified live: deploying `nginx`
 > starts a real container (**running**), and **Stop** removes it (**stopped**); an in-use host port
 > is reported as **crashed** with the exact Docker reason.
 >
-> **Ports** — Control Room `9000` · Node Agent `9100` · Orchestrator `9200` · dashboard `8090`
+> **Ports** — Control Room `9000` · Node Agent `9100` · Orchestrator `9200` · dashboard `8095`
 > (Docker) / `5173` (Vite dev).
 >
 > **Next up:** no active feature branch. Pick the next slice from the backlog — the natural
