@@ -50,8 +50,8 @@ Make the panel look and feel professional: a real design system (tokens + light/
 components and pages, plus a couple of UX features. Small units, one issue + one commit each.
 
 **Design system & components**
-- [ ] UI: design tokens + global stylesheet (light/dark theme) (#41)
-- [ ] UI: base component styles — buttons, inputs, cards, badges, table (#42)
+- [x] UI: design tokens + global stylesheet (light/dark theme) (#41)
+- [x] UI: base component styles — buttons, inputs, cards, badges, table (#42)
 
 **Pages & shell**
 - [ ] UI: restyle the app shell — top nav, brand, theme toggle, sign out (#43)
