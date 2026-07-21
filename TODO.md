@@ -41,25 +41,29 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > **Ports** — Control Room `9000` · Node Agent `9100` · Orchestrator `9200` · dashboard `8095`
 > (Docker) / `5173` (Vite dev).
 >
-> **Active work:** UI motion & micro-interactions polish (see below).
-
----
-
-## Active — `feature/ui-animations`
-
-Add tasteful, performant motion (transform/opacity, 150–300ms, `prefers-reduced-motion` respected).
-Small units, one issue + one commit each.
-
-- [x] UI motion: foundation — keyframes, utilities, `motionEnabled()` helper (#57)
-- [x] UI motion: animated route/page transitions (#58)
-- [x] UI motion: Overview — count-up stats + staggered node tiles (#59)
-- [x] UI motion: Servers — staggered row entrance + row transitions (#60)
-- [x] UI motion: toast enter/exit + drawer polish (#61)
-- [x] UI motion: card hover lift + interactive micro-interactions (#62)
+> **Next up:** no active feature branch. The big next feature is the **live server console**
+> (logs + terminal + per-server stats) — see the group below. Other candidates: the Billing Bridge
+> (Phase 4) or the API Gateway (#20). Promote a group to a `feature/<topic>` branch before starting.
 
 ---
 
 ## Backlog
+
+### Phase 3+ — Live server console (logs · terminal · stats)
+
+A per-server console like other panels: live logs, an interactive terminal, and CPU/RAM/network.
+Needs a WebSocket transport (not the RabbitMQ command bus) authenticated by JWT. Big group; build
+after picking it up. Depends on / overlaps the API Gateway (#20).
+
+- [ ] Node Agent: stream container logs (docker logs --follow) (#66)
+- [ ] Node Agent: per-container resource stats (docker stats) (#67)
+- [ ] Node Agent: interactive exec/console into a container (#68)
+- [ ] WebSocket transport for logs/stats/console (gateway, JWT) (#69)
+- [ ] Dashboard: live logs viewer in the deployment detail (#70, supersedes #17)
+- [ ] Dashboard: interactive terminal (xterm.js) for a server (#71)
+- [ ] Dashboard: live per-server CPU/RAM/network stats (#72)
+
+### Phase 3+ — Dashboard, other slices
 
 Backlog items get their own GitHub issue at the latest when their group is promoted to an active
 `feature/<topic>` branch (bugs get one immediately). Items without a `(#N)` still need one created.
@@ -95,6 +99,15 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 ---
 
 ## Done
+
+### `feature/ui-animations` — merged in #65
+
+- [x] Motion foundation (#57) · route transitions (#58) · Overview count-up + stagger (#59)
+- [x] Servers row stagger (#60) · toast + drawer enter/exit (#61) · hover/press micro-interactions (#62)
+
+### 🐛 Fixes (recent)
+
+- [x] Node Agent removes a leftover same-named container before start (idempotent) (#63, merged #64)
 
 ### `feature/start-server` — merged in #55
 
