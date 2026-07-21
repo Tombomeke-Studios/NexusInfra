@@ -21,23 +21,24 @@ Small units, one issue + one commit each.
 - [x] Dashboard: New Deployment form page (#31)
 - [x] Dashboard: Servers list page with status polling + stop (#32)
 - [x] Dashboard: Dockerfile + docker-compose service (#33)
-- [ ] Dashboard: run docs — README, api.md auth, CLAUDE map (#34)
+- [x] Dashboard: run docs — README, api.md auth, CLAUDE map (#34)
 
 > **▶ Resume marker (MVP: Orchestrator + Dashboard, plan `i-want-you-to-binary-flame`)**
 > Building the MVP server panel. **Part A (Orchestrator) is DONE and merged** (PR #25 → `dev`).
 > Now on **Part B**, branch **`feature/dashboard`** (off `dev`).
 >
-> **Part B units (each = its own issue + its own small commit; see the checklist above):**
-> #15 scaffold → #27 tooling → #28 API client → #26 orchestrator auth (`src/auth.ts`,
-> `POST /auth/login` + `requireAuth` on `/deployments*`+`/nodes`) → #29 app shell → #30 login page →
-> #16 overview → #31 deployment form → #32 servers list (poll + stop) → #33 Dockerfile/compose →
-> #34 docs. Finish: build+lint+test green → PR to `dev` (one `Closes #N` per unit) → CI → merge.
+> **Part B is code-complete** — all 11 units done and pushed (#15, #27, #28, #26, #29, #30, #16, #31,
+> #32, #33, #34). Full `build + lint + test` green (60 tests). **PR to `dev` opened; awaiting review.**
 >
-> Ports: control-room 9000, node-agent 9100, orchestrator **9200**, dashboard (Vite) **5173**.
+> **Next up (resume here):** review + merge the `feature/dashboard` PR → move this group to Done.
+> Then the MVP server panel is complete; pick the next slice from the backlog (billing, gateway, logs).
 >
-> **Verify loop:** `docker-compose up rabbitmq control-room node-agent orchestrator` +
-> `npm --workspace dashboard run dev` → login → deploy `nginx` `8080:80` → `docker ps` shows it,
-> Servers page = running, `curl :8080` works, Stop flips it to stopped.
+> Ports: control-room 9000, node-agent 9100, orchestrator **9200**, dashboard (Vite) **5173** /
+> (Docker/nginx) **8090**.
+>
+> **Verify loop:** `docker-compose up` (rabbitmq + control-room + node-agent + orchestrator + dashboard)
+> → open the dashboard → login `admin`/`admin` → deploy `nginx` `8080:80` → Servers page shows it
+> running, `docker ps` + `curl :8080` confirm, Stop flips it to stopped.
 
 > Out of MVP scope (stay in backlog): real-time log streaming (#17), API Gateway + FinVault JWT (#20).
 

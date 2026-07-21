@@ -146,8 +146,10 @@ is the migrations directory.
 | Dev watch: shared + control-room | `npm run dev` |
 | Start stack (RabbitMQ + services, Docker) | `docker-compose up` |
 | Start only the broker | `docker-compose up rabbitmq` |
+| Run the dashboard (dev) | `npm --workspace dashboard run dev` (http://localhost:5173) |
 | RabbitMQ management UI | http://localhost:15672 (guest/guest) |
 | Control Room health / status | http://localhost:9000/health · /status |
+| Orchestrator API | http://localhost:9200 (login `admin`/`admin`) |
 
 ## 7. Codebase map — where is what
 
@@ -188,10 +190,23 @@ is the migrations directory.
 | `src/*.test.ts` | Unit tests with the in-memory repo + captured publisher (no Docker/broker/DB needed) |
 | `Dockerfile` | Multi-stage build; runtime applies `prisma migrate deploy` then starts |
 
+### dashboard (React web panel)
+| Path | Contents |
+|---|---|
+| `src/api.ts` | Typed Orchestrator client (login, nodes, deployments, create, stop); attaches the JWT; `ApiError` on non-2xx |
+| `src/session.ts` | Token get/set/clear + `isAuthenticated` (single place that touches localStorage) |
+| `src/routes.tsx` · `src/App.tsx` | Route table (public `/login`; the rest behind `RequireAuth` + `Layout`) wrapped in the router |
+| `src/components/{Layout,RequireAuth}.tsx` | Nav shell + auth-guard route wrapper |
+| `src/pages/{Login,Overview,NewDeployment,Servers}.tsx` | Login, node health/overview, deployment form, live server list + stop |
+| `src/health.ts` | Status → colour helpers shared across pages |
+| `src/test/setup.ts` · `vitest.config.ts` | jsdom + Testing Library setup; in-memory localStorage |
+| `Dockerfile` · `nginx.conf` | Static build served by nginx, which proxies `/api` to the orchestrator |
+
 ### Infrastructure
 | Path | Contents |
 |---|---|
-| `docker-compose.yml` | RabbitMQ + control-room + node-agent + orchestrator stack |
+| `docker-compose.yml` | RabbitMQ + control-room + node-agent + orchestrator + dashboard stack |
+| `vitest.workspace.ts` | Splits tests into `backend` (node) and `dashboard` (jsdom) projects |
 | `.env.example` | Env contract — documents the FinVault-shared vars (`RABBITMQ_URL`, `FINVAULT_MESSAGE_KEY`) |
 | `.github/workflows/ci.yml` | CI: npm ci → build → lint (if present) → test, on PRs and pushes to dev/staging/main |
 | `eslint.config.js` | Flat ESLint config (typescript-eslint recommended) covering all workspaces |

@@ -15,9 +15,10 @@ event contracts, or infra topology.
 | `services/control-room` | ✅ Built | Heartbeat monitoring, status thresholds, HTTP status API |
 | `services/node-agent` | ✅ Built | Docker container lifecycle + node heartbeat/resource reporting |
 | `services/orchestrator` | ✅ Built | Node registry, deployment API + least-loaded node selection, lifecycle events |
+| `dashboard` | ✅ Built (MVP) | React/Vite panel: login, overview, deployment form, live server list + stop |
 | `services/billing-bridge` | Planned (#18, #19) | Runtime tracking → FinVault payments |
 | `services/gateway` | Planned (#20) | JWT validation, routing, WebSocket proxy |
-| `apps/web-dashboard` | Planned (#15–#17) | React dashboard |
+| Real-time container logs | Planned (#17) | WebSocket log streaming in the dashboard |
 
 ## Event bus
 
