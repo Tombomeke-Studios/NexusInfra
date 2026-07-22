@@ -41,9 +41,40 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > **Ports** — Control Room `9000` · Node Agent `9100` · Orchestrator `9200` · dashboard `8095`
 > (Docker) / `5173` (Vite dev).
 >
-> **Next up:** no active feature branch. The big next feature is the **live server console**
-> (logs + terminal + per-server stats) — see the group below. Other candidates: the Billing Bridge
-> (Phase 4) or the API Gateway (#20). Promote a group to a `feature/<topic>` branch before starting.
+> **Active work:** porting the redesigned UI/UX from the Claude Design project
+> ("NexusInfra UI animations") into the React dashboard — see below. Copy the look & feel faithfully;
+> extra features (console, files, databases, backups, etc.) are **UI-only for now** and wired up later.
+
+---
+
+## Active — `feature/design-copy`
+
+Reproduce the redesign ([[design-source]], `NexusInfra.dc.html`) screen by screen. One issue + one
+commit each. The live server console (#66–#72) is delivered as UI here (#82) and wired up afterward.
+
+**Foundation**
+- [ ] Design port: foundation CSS — keyframes, aurora tokens, range sliders (#74)
+- [ ] Design port: animated aurora + grid background (#75)
+- [ ] Design port: toasts + micro-interactions — magnetic, ripple, burst (#91)
+
+**Screens**
+- [ ] Design port: Login screen (#76)
+- [ ] Design port: app shell / top nav (#77)
+- [ ] Design port: Overview — stats, nodes, recent activity (#78)
+- [ ] Design port: New Deployment — rich form (#79)
+- [ ] Design port: Servers list (#80)
+- [ ] Design port: Server detail shell + tab sidebar (#81)
+
+**Server detail tabs (UI only)**
+- [ ] Design port: Console tab (#82)
+- [ ] Design port: Files tab (#83)
+- [ ] Design port: Databases tab (#84)
+- [ ] Design port: Backups tab (#85)
+- [ ] Design port: Network tab (#86)
+- [ ] Design port: Schedules tab (#87)
+- [ ] Design port: Subusers tab (#88)
+- [ ] Design port: Startup tab (#89)
+- [ ] Design port: Settings tab (#90)
 
 ---
 
