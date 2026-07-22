@@ -58,7 +58,7 @@ commit each. The live server console (#66–#72) is delivered as UI here (#82) a
 - [ ] Design port: toasts + micro-interactions — magnetic, ripple, burst (#91)
 
 **Screens**
-- [ ] Design port: Login screen (#76)
+- [x] Design port: Login screen (#76)
 - [ ] Design port: app shell / top nav (#77)
 - [ ] Design port: Overview — stats, nodes, recent activity (#78)
 - [ ] Design port: New Deployment — rich form (#79)
