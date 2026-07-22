@@ -54,7 +54,7 @@ commit each. The live server console (#66–#72) is delivered as UI here (#82) a
 
 **Foundation**
 - [x] Design port: foundation CSS — keyframes, aurora tokens, range sliders (#74)
-- [ ] Design port: animated aurora + grid background (#75)
+- [x] Design port: animated aurora + grid background (#75)
 - [ ] Design port: toasts + micro-interactions — magnetic, ripple, burst (#91)
 
 **Screens**

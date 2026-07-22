@@ -1,6 +1,76 @@
 /* Reusable component classes built on the design tokens (index.css). Keep visual
    decisions here so pages stay markup-only. */
 
+/* ── Ambient background (aurora + grid + cursor glow) ───────────────────── */
+.bg-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.bg-grid {
+  position: absolute;
+  inset: -10%;
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 56px 56px;
+  animation: gridDrift 14s linear infinite;
+  opacity: 0.9;
+}
+.aurora {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(64px);
+}
+.aurora--1 {
+  top: -18%;
+  left: -8%;
+  width: 52vw;
+  height: 52vw;
+  background: radial-gradient(circle, var(--aurora-1), transparent 62%);
+  opacity: 0.42;
+  animation: aurora1 18s ease-in-out infinite;
+}
+.aurora--2 {
+  bottom: -22%;
+  right: -10%;
+  width: 48vw;
+  height: 48vw;
+  background: radial-gradient(circle, var(--aurora-2), transparent 62%);
+  opacity: 0.36;
+  animation: aurora2 21s ease-in-out infinite;
+}
+.aurora--3 {
+  top: 20%;
+  right: 16%;
+  width: 34vw;
+  height: 34vw;
+  background: radial-gradient(circle, var(--aurora-3), transparent 62%);
+  filter: blur(74px);
+  opacity: 0.3;
+  animation: aurora3 25s ease-in-out infinite;
+}
+.cursor-aura {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 340px;
+  height: 340px;
+  margin: -170px 0 0 -170px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--color-primary) 22%, transparent), transparent 60%);
+  z-index: 9997;
+  pointer-events: none;
+  will-change: transform;
+  opacity: 0;
+  transition: opacity 400ms;
+}
+.app-content {
+  position: relative;
+  z-index: 1;
+}
+
 /* ── Layout helpers ─────────────────────────────────────────────────────── */
 .page {
   max-width: 1080px;
