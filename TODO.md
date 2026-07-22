@@ -53,7 +53,7 @@ Reproduce the redesign ([[design-source]], `NexusInfra.dc.html`) screen by scree
 commit each. The live server console (#66–#72) is delivered as UI here (#82) and wired up afterward.
 
 **Foundation**
-- [ ] Design port: foundation CSS — keyframes, aurora tokens, range sliders (#74)
+- [x] Design port: foundation CSS — keyframes, aurora tokens, range sliders (#74)
 - [ ] Design port: animated aurora + grid background (#75)
 - [ ] Design port: toasts + micro-interactions — magnetic, ripple, burst (#91)
 
