@@ -17,6 +17,8 @@ export function ThemeToggle() {
     <button
       className="icon-btn"
       onClick={toggle}
+      data-magnetic
+      data-ripple
       aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
       title="Toggle theme"
     >

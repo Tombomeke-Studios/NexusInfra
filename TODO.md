@@ -59,7 +59,7 @@ commit each. The live server console (#66–#72) is delivered as UI here (#82) a
 
 **Screens**
 - [x] Design port: Login screen (#76)
-- [ ] Design port: app shell / top nav (#77)
+- [x] Design port: app shell / top nav (#77)
 - [ ] Design port: Overview — stats, nodes, recent activity (#78)
 - [ ] Design port: New Deployment — rich form (#79)
 - [ ] Design port: Servers list (#80)
