@@ -1,0 +1,413 @@
+import { useCallback, useEffect, useState, type CSSProperties } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import {
+  getDeployment,
+  startDeployment,
+  stopDeployment,
+  restartDeployment,
+  type DeploymentDetail,
+} from '../api';
+import { StatusBadge } from '../components/StatusBadge';
+import { useToast } from '../components/Toast';
+
+// Server detail — ported from the redesign. The header/status/actions are real;
+// the resource stats and every tab's content are UI/mock for now and get wired
+// up later (console → #66–#72, files/databases/backups/etc. → their own work).
+const TABS = ['console', 'files', 'databases', 'backups', 'network', 'schedules', 'subusers', 'startup', 'settings'] as const;
+type Tab = (typeof TABS)[number];
+
+export function ServerDetail() {
+  const { id = '' } = useParams();
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  const [d, setD] = useState<DeploymentDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>('console');
+
+  const load = useCallback(async () => {
+    try {
+      setD(await getDeployment(id));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load');
+    }
+  }, [id]);
+
+  useEffect(() => {
+    void load();
+    const h = setInterval(() => void load(), 3000);
+    return () => clearInterval(h);
+  }, [load]);
+
+  const act = async (fn: (id: string) => Promise<unknown>, verb: string) => {
+    try {
+      await fn(id);
+      toast(`Deployment ${verb} requested`, 'success');
+      await load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : `Failed to ${verb}`, 'error');
+    }
+  };
+
+  if (error) return <div className="page"><p role="alert" className="alert alert--error">{error}</p></div>;
+  if (!d) return <div className="page"><div className="empty">Loading…</div></div>;
+
+  const isGame = d.dockerImage.startsWith('nexusinfra/');
+  const running = d.status === 'running';
+
+  return (
+    <div style={{ maxWidth: 1080, margin: '0 auto', padding: '24px 24px 48px', animation: 'rise 300ms var(--ease-out) both' }}>
+      <button className="btn btn--ghost btn--sm" data-ripple onClick={() => navigate('/servers')} style={{ marginBottom: 18 }}>
+        ← All servers
+      </button>
+
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 22 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <h1 style={{ fontSize: '1.5rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.name}</h1>
+            <StatusBadge status={d.status} />
+          </div>
+          <div className="mono" style={{ marginTop: 5, fontSize: '.85rem', color: 'var(--color-text-subtle)' }}>
+            {isGame ? d.dockerImage.replace('nexusinfra/', '') : 'application'} · {d.dockerImage}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {running ? (
+            <>
+              <button className="btn btn--secondary" data-ripple onClick={() => act(restartDeployment, 'restart')}>Restart</button>
+              <button className="btn btn--danger" data-ripple data-burst="danger" onClick={() => act(stopDeployment, 'stop')}>Stop</button>
+              <button className="btn btn--secondary" data-ripple onClick={() => toast('Kill is not wired yet', 'info')}>Kill</button>
+            </>
+          ) : (
+            <button className="btn btn--secondary" data-ripple data-burst="success" onClick={() => act(startDeployment, 'start')}>Start</button>
+          )}
+        </div>
+      </div>
+
+      {/* Resource stats (mock) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12, marginBottom: 24 }}>
+        <StatBox label="CPU" value={running ? '34%' : '0%'} />
+        <StatBox label="Memory" value={running ? '58%' : '0%'} />
+        <StatBox label="Disk" value="22%" />
+        <StatBox label="Network" value={running ? '1.2 MB/s' : '—'} />
+        <StatBox label="Uptime" value={running ? '2h 14m' : '—'} />
+        {isGame && <StatBox label="Players · TPS" value="7/20 · 19.9" />}
+      </div>
+
+      {/* Tab bar */}
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', borderBottom: '1px solid var(--color-border)', marginBottom: 22 }}>
+        {TABS.map((t) => {
+          const active = tab === t;
+          return (
+            <button
+              key={t}
+              data-ripple
+              onClick={() => setTab(t)}
+              style={{
+                padding: '9px 15px',
+                border: 'none',
+                borderBottom: `2px solid ${active ? 'var(--color-primary)' : 'transparent'}`,
+                background: 'transparent',
+                color: active ? 'var(--color-primary)' : 'var(--color-text-muted)',
+                fontWeight: 600,
+                fontSize: '.88rem',
+                textTransform: 'capitalize',
+                cursor: 'pointer',
+                marginBottom: -1,
+                transition: 'color 150ms, border-color 150ms',
+              }}
+            >
+              {t}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Tab content */}
+      {tab === 'console' && <ConsoleTab running={running} />}
+      {tab === 'files' && <FilesTab />}
+      {tab === 'databases' && <DatabasesTab />}
+      {tab === 'backups' && <BackupsTab />}
+      {tab === 'network' && <NetworkTab />}
+      {tab === 'schedules' && <SchedulesTab />}
+      {tab === 'subusers' && <SubusersTab />}
+      {tab === 'startup' && <StartupTab image={d.dockerImage} isGame={isGame} envs={d.events.length} />}
+      {tab === 'settings' && <SettingsTab onDelete={() => toast('Delete is not wired yet', 'info')} />}
+    </div>
+  );
+}
+
+function StatBox({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', padding: '13px 16px' }}>
+      <div style={{ fontSize: '.74rem', textTransform: 'uppercase', letterSpacing: '.04em', color: 'var(--color-text-subtle)', marginBottom: 4 }}>{label}</div>
+      <div className="tnum" style={{ fontSize: '1.3rem', fontWeight: 700 }}>{value}</div>
+    </div>
+  );
+}
+
+// ── Console (UI only; live logs/exec wired via #66–#72) ───────────────────
+const MOCK_LOG: { time: string; text: string; color: string }[] = [
+  { time: '12:00:01', text: '[Server] Starting nexusinfra runtime…', color: '#9aa4b3' },
+  { time: '12:00:02', text: '[Info] Loading configuration', color: '#9aa4b3' },
+  { time: '12:00:03', text: '[Info] Bound to 0.0.0.0:8080', color: '#4ade80' },
+  { time: '12:00:04', text: '[Info] Done. Ready to accept connections.', color: '#4ade80' },
+  { time: '12:00:12', text: '[Warn] High memory usage (78%)', color: '#fbbf24' },
+];
+function ConsoleTab({ running }: { running: boolean }) {
+  const [cmd, setCmd] = useState('');
+  const { toast } = useToast();
+  const send = () => {
+    if (!cmd.trim()) return;
+    toast('Console is not wired yet', 'info');
+    setCmd('');
+  };
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <strong style={{ fontSize: '.92rem' }}>Console</strong>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '.76rem', color: 'var(--color-text-subtle)' }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: running ? 'var(--color-success)' : 'var(--color-neutral)', animation: running ? 'pulse 1.8s ease-out infinite' : 'none' }} />
+          {running ? 'streaming' : 'offline'}
+        </span>
+      </div>
+      <div style={{ background: '#0a0e16', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', padding: '12px 14px', fontFamily: 'var(--font-mono)', fontSize: '.8rem', lineHeight: 1.7, height: 340, overflowY: 'auto', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+        {MOCK_LOG.map((l, i) => (
+          <div key={i} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            <span style={{ color: '#5a6473' }}>{l.time}</span> <span style={{ color: l.color }}>{l.text}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+        <span className="mono" style={{ display: 'inline-flex', alignItems: 'center', paddingLeft: 12, color: 'var(--color-text-subtle)', border: '1px solid var(--color-border-strong)', borderRight: 'none', borderRadius: 'var(--radius) 0 0 var(--radius)', background: 'var(--color-surface)' }}>$</span>
+        <input className="input mono" value={cmd} onChange={(e) => setCmd(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && send()} placeholder="type a command and press Enter" style={{ borderLeft: 'none', borderRadius: 0, fontSize: '.85rem' }} />
+        <button className="btn btn--primary" data-ripple onClick={send} style={{ borderRadius: '0 var(--radius) var(--radius) 0' }}>Send</button>
+      </div>
+    </>
+  );
+}
+
+// ── The remaining tabs are static/mock UI, wired up later ─────────────────
+function TabHeader({ title, action, onAction }: { title: string; action?: string; onAction?: () => void }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+      <strong style={{ fontSize: '.92rem' }}>{title}</strong>
+      {action && <button className="btn btn--primary btn--sm" data-ripple data-burst="primary" onClick={onAction}>{action}</button>}
+    </div>
+  );
+}
+const listCard: CSSProperties = { border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface)', overflow: 'hidden' };
+const rowCss: CSSProperties = { display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', borderBottom: '1px solid var(--color-border)' };
+
+function FilesTab() {
+  const files = [
+    { icon: '📁', name: 'plugins', size: '—' },
+    { icon: '📁', name: 'world', size: '—' },
+    { icon: '📄', name: 'server.properties', size: '1.2 KB' },
+    { icon: '📄', name: 'eula.txt', size: '154 B' },
+    { icon: '📄', name: 'start.sh', size: '320 B' },
+  ];
+  const { toast } = useToast();
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <span className="mono" style={{ fontSize: '.88rem', color: 'var(--color-primary)' }}>/ home / container</span>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn--secondary btn--sm" data-ripple onClick={() => toast('Not wired yet', 'info')}>New folder</button>
+          <button className="btn btn--primary btn--sm" data-ripple onClick={() => toast('Not wired yet', 'info')}>Upload</button>
+        </div>
+      </div>
+      <div style={listCard}>
+        {files.map((f) => (
+          <button key={f.name} data-ripple onClick={() => toast('File browser is not wired yet', 'info')} style={{ ...rowCss, width: '100%', textAlign: 'left', border: 'none', borderBottom: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', font: 'inherit' }}>
+            <span style={{ flex: 'none' }}>{f.icon}</span>
+            <span style={{ flex: 1, minWidth: 0, fontSize: '.9rem' }}>{f.name}</span>
+            <span className="subtle tnum" style={{ fontSize: '.8rem' }}>{f.size}</span>
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function DatabasesTab() {
+  const { toast } = useToast();
+  const dbs = [{ name: 's1_main', user: 'u_s1', host: 'db.nexusinfra.local:3306' }];
+  return (
+    <>
+      <TabHeader title="Databases" action="New database" onAction={() => toast('Not wired yet', 'info')} />
+      <div style={listCard}>
+        {dbs.map((db) => (
+          <div key={db.name} style={rowCss}>
+            <span className="mono" style={{ flex: 1, minWidth: 0, fontSize: '.86rem', fontWeight: 600 }}>{db.name}</span>
+            <span className="mono subtle" style={{ fontSize: '.8rem' }}>{db.user}</span>
+            <span className="mono subtle" style={{ fontSize: '.8rem' }}>{db.host}</span>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function BackupsTab() {
+  const { toast } = useToast();
+  const backups = [
+    { name: 'auto-2026-07-24', size: '184 MB', rel: '3h ago', locked: false },
+    { name: 'pre-update', size: '172 MB', rel: '2d ago', locked: true },
+  ];
+  return (
+    <>
+      <TabHeader title="Backups" action="Create backup" onAction={() => toast('Not wired yet', 'info')} />
+      <div style={listCard}>
+        {backups.map((b) => (
+          <div key={b.name} style={rowCss}>
+            <span className="mono" style={{ flex: 1, minWidth: 0, fontSize: '.86rem', fontWeight: 600 }}>{b.name}</span>
+            {b.locked && <span className="badge badge--warning">🔒 locked</span>}
+            <span className="subtle tnum" style={{ fontSize: '.8rem' }}>{b.size}</span>
+            <span className="subtle" style={{ fontSize: '.8rem' }}>{b.rel}</span>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function NetworkTab() {
+  const allocs = [
+    { ip: '0.0.0.0', port: 8080, primary: true },
+    { ip: '0.0.0.0', port: 8081, primary: false },
+  ];
+  return (
+    <>
+      <div className="card" style={{ padding: '20px 22px', marginBottom: 18 }}>
+        <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6 }}>SFTP / FTP access</strong>
+        <p className="subtle" style={{ margin: '0 0 16px', fontSize: '.84rem' }}>Connect with any SFTP client. Password is your account password.</p>
+        <dl style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '10px 16px', fontSize: '.88rem', margin: 0 }}>
+          <dt className="muted">Host</dt><dd className="mono" style={{ margin: 0, wordBreak: 'break-all' }}>sftp.nexusinfra.local</dd>
+          <dt className="muted">Port</dt><dd className="mono" style={{ margin: 0 }}>2022</dd>
+          <dt className="muted">Username</dt><dd className="mono" style={{ margin: 0 }}>admin.s1</dd>
+        </dl>
+      </div>
+      <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 12 }}>Port allocations</strong>
+      <div style={listCard}>
+        {allocs.map((a) => (
+          <div key={a.port} style={rowCss}>
+            <span className="mono" style={{ flex: 1, fontSize: '.86rem' }}>{a.ip}:{a.port}</span>
+            {a.primary && <span className="badge badge--info">primary</span>}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function SchedulesTab() {
+  const { toast } = useToast();
+  const [schedules, setSchedules] = useState([
+    { name: 'Nightly backup', cron: '0 4 * * *', human: 'every day at 04:00', action: 'create backup', enabled: true },
+    { name: 'Weekly restart', cron: '0 6 * * 1', human: 'Mondays at 06:00', action: 'restart', enabled: false },
+  ]);
+  return (
+    <>
+      <TabHeader title="Schedules" action="New schedule" onAction={() => toast('Not wired yet', 'info')} />
+      <div className="stack">
+        {schedules.map((s, i) => (
+          <div key={s.name} style={{ ...rowCss, border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface)' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 3 }}>
+                <strong style={{ fontSize: '.9rem' }}>{s.name}</strong>
+                <span style={{ fontSize: '.72rem', fontWeight: 600, color: s.enabled ? 'var(--color-success)' : 'var(--color-text-subtle)' }}>{s.enabled ? 'active' : 'paused'}</span>
+              </div>
+              <div className="subtle" style={{ fontSize: '.8rem' }}>
+                <span className="mono muted">{s.cron}</span> · {s.human} · {s.action}
+              </div>
+            </div>
+            <button className="btn btn--secondary btn--sm" data-ripple onClick={() => toast('Not wired yet', 'info')}>Run now</button>
+            <button role="switch" aria-checked={s.enabled} aria-label="Toggle schedule" onClick={() => setSchedules((xs) => xs.map((x, j) => (j === i ? { ...x, enabled: !x.enabled } : x)))} style={{ flex: 'none', width: 44, height: 26, borderRadius: 'var(--radius-full)', border: 'none', cursor: 'pointer', padding: 3, transition: 'background 200ms', background: s.enabled ? 'var(--color-primary)' : 'var(--color-border-strong)' }}>
+              <span style={{ display: 'block', width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'transform 200ms var(--ease-out)', transform: s.enabled ? 'translateX(18px)' : 'translateX(0)' }} />
+            </button>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function SubusersTab() {
+  const { toast } = useToast();
+  const users = [
+    { email: 'owner@nexusinfra.dev', initial: 'O', perms: 'Full access', role: 'owner', soft: 'var(--color-primary-soft)', color: 'var(--color-primary)', canRemove: false },
+    { email: 'ops@nexusinfra.dev', initial: 'P', perms: 'Console, files, backups', role: 'admin', soft: 'var(--color-success-soft)', color: 'var(--color-success)', canRemove: true },
+    { email: 'viewer@nexusinfra.dev', initial: 'V', perms: 'Read-only', role: 'viewer', soft: 'var(--color-neutral-soft)', color: 'var(--color-neutral)', canRemove: true },
+  ];
+  return (
+    <>
+      <TabHeader title="Subusers" action="Invite user" onAction={() => toast('Not wired yet', 'info')} />
+      <div style={listCard}>
+        {users.map((u) => (
+          <div key={u.email} style={rowCss}>
+            <span style={{ flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: '50%', background: 'var(--color-primary-soft)', color: 'var(--color-primary)', fontWeight: 700, fontSize: '.85rem' }}>{u.initial}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: '.88rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email}</div>
+              <div className="subtle" style={{ fontSize: '.78rem' }}>{u.perms}</div>
+            </div>
+            <span style={{ flex: 'none', fontSize: '.72rem', fontWeight: 600, padding: '3px 10px', borderRadius: 'var(--radius-full)', background: u.soft, color: u.color }}>{u.role}</span>
+            {u.canRemove && <button className="icon-btn" data-ripple aria-label="Revoke access" onClick={() => toast('Not wired yet', 'info')}>✕</button>}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function StartupTab({ image, isGame }: { image: string; isGame: boolean; envs: number }) {
+  const vars = [
+    { k: 'SERVER_PORT', v: '8080' },
+    { k: 'MAX_MEMORY', v: '2048M' },
+    { k: 'EULA', v: 'true' },
+  ];
+  return (
+    <>
+      <div className="card" style={{ padding: '20px 22px', marginBottom: 18 }}>
+        <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 12 }}>Startup command</strong>
+        <div className="mono" style={{ fontSize: '.84rem', background: '#0a0e16', color: '#c9d1d9', padding: '12px 14px', borderRadius: 'var(--radius)', wordBreak: 'break-all' }}>
+          docker run {image} --port 8080
+        </div>
+        {isGame && (
+          <div style={{ marginTop: 14, display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: '.86rem' }}>
+            <span><span className="muted">Software:</span> <strong style={{ textTransform: 'capitalize' }}>paper</strong></span>
+            <span><span className="muted">Version:</span> <strong className="mono">1.20.4</strong></span>
+          </div>
+        )}
+      </div>
+      <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 12 }}>Environment variables</strong>
+      <div style={listCard}>
+        {vars.map((e) => (
+          <div key={e.k} style={rowCss}>
+            <span className="mono" style={{ flex: 'none', minWidth: 160, fontSize: '.84rem', fontWeight: 600 }}>{e.k}</span>
+            <span className="mono muted" style={{ fontSize: '.84rem' }}>{e.v}</span>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function SettingsTab({ onDelete }: { onDelete: () => void }) {
+  const { toast } = useToast();
+  return (
+    <>
+      <div className="card" style={{ padding: '20px 22px', marginBottom: 18 }}>
+        <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6 }}>Reinstall server</strong>
+        <p className="subtle" style={{ margin: '0 0 14px', fontSize: '.84rem' }}>Re-run the install script. Your data files are preserved.</p>
+        <button className="btn btn--secondary btn--sm" data-ripple onClick={() => toast('Not wired yet', 'info')}>Reinstall</button>
+      </div>
+      <div className="card" style={{ padding: '20px 22px', borderColor: 'var(--color-danger-soft)' }}>
+        <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6, color: 'var(--color-danger)' }}>Delete server</strong>
+        <p className="subtle" style={{ margin: '0 0 14px', fontSize: '.84rem' }}>Permanently removes this server and all of its files. This cannot be undone.</p>
+        <button className="btn btn--primary btn--sm" data-ripple data-burst="danger" onClick={onDelete} style={{ background: 'var(--color-danger)' }}>Delete server</button>
+      </div>
+    </>
+  );
+}

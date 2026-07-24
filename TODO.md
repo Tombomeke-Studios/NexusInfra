@@ -63,18 +63,18 @@ commit each. The live server console (#66–#72) is delivered as UI here (#82) a
 - [x] Design port: Overview — stats, nodes, recent activity (#78)
 - [x] Design port: New Deployment — rich form (#79)
 - [x] Design port: Servers list (#80)
-- [ ] Design port: Server detail shell + tab sidebar (#81)
+- [x] Design port: Server detail shell + tab sidebar (#81)
 
 **Server detail tabs (UI only)**
-- [ ] Design port: Console tab (#82)
-- [ ] Design port: Files tab (#83)
-- [ ] Design port: Databases tab (#84)
-- [ ] Design port: Backups tab (#85)
-- [ ] Design port: Network tab (#86)
-- [ ] Design port: Schedules tab (#87)
-- [ ] Design port: Subusers tab (#88)
-- [ ] Design port: Startup tab (#89)
-- [ ] Design port: Settings tab (#90)
+- [x] Design port: Console tab (#82)
+- [x] Design port: Files tab (#83)
+- [x] Design port: Databases tab (#84)
+- [x] Design port: Backups tab (#85)
+- [x] Design port: Network tab (#86)
+- [x] Design port: Schedules tab (#87)
+- [x] Design port: Subusers tab (#88)
+- [x] Design port: Startup tab (#89)
+- [x] Design port: Settings tab (#90)
 
 ---
 

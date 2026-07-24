@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { listDeployments, stopDeployment, restartDeployment, startDeployment, type DeploymentView } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
-import { DeploymentDrawer } from '../components/DeploymentDrawer';
 import { IconStop, IconRestart, IconPlay } from '../components/Icons';
 import { useToast } from '../components/Toast';
 import { formatRelative, shortId } from '../format';
@@ -15,8 +15,8 @@ export function Servers() {
   const [deployments, setDeployments] = useState<DeploymentView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
-  const [detailId, setDetailId] = useState<string | null>(null);
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   const load = useCallback(async () => {
     try {
@@ -98,7 +98,7 @@ export function Servers() {
                 <tr key={d.id} style={{ ['--i']: Math.min(i, 12) } as CSSProperties}>
                   <td>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                      <button className="name-btn" onClick={() => setDetailId(d.id)}>
+                      <button className="name-btn" onClick={() => navigate(`/servers/${d.id}`)}>
                         {d.name}
                       </button>
                       <span
@@ -172,8 +172,6 @@ export function Servers() {
           </table>
         </div>
       )}
-
-      {detailId && <DeploymentDrawer deploymentId={detailId} onClose={() => setDetailId(null)} />}
     </div>
   );
 }
