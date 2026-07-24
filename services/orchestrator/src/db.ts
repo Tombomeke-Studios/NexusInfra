@@ -9,12 +9,15 @@ import type {
   DeploymentView,
   CreateServerBackupInput,
   CreateServerDatabaseInput,
+  CreateServerScheduleInput,
   NodeRecord,
   Repository,
   ResourceLimits,
   ServerBackupRecord,
   ServerConfigRecord,
   ServerDatabaseRecord,
+  ServerScheduleRecord,
+  UpdateServerScheduleInput,
   UpsertNodeInput,
 } from './types.js';
 
@@ -35,6 +38,7 @@ type PrismaConfig = Awaited<ReturnType<PrismaClient['serverConfig']['findFirstOr
 type PrismaDeployment = Awaited<ReturnType<PrismaClient['deployment']['findFirstOrThrow']>>;
 type PrismaDatabase = Awaited<ReturnType<PrismaClient['serverDatabase']['findFirstOrThrow']>>;
 type PrismaBackup = Awaited<ReturnType<PrismaClient['serverBackup']['findFirstOrThrow']>>;
+type PrismaSchedule = Awaited<ReturnType<PrismaClient['serverSchedule']['findFirstOrThrow']>>;
 
 function iso(date: Date | null): string | null {
   return date ? date.toISOString() : null;
@@ -112,6 +116,19 @@ function toBackupRecord(b: PrismaBackup): ServerBackupRecord {
     sizeBytes: b.sizeBytes,
     status: b.status,
     createdAt: b.createdAt.toISOString(),
+  };
+}
+
+function toScheduleRecord(s: PrismaSchedule): ServerScheduleRecord {
+  return {
+    id: s.id,
+    deploymentId: s.deploymentId,
+    name: s.name,
+    cron: s.cron,
+    action: s.action,
+    enabled: s.enabled,
+    lastRunAt: iso(s.lastRunAt),
+    createdAt: s.createdAt.toISOString(),
   };
 }
 
@@ -272,6 +289,46 @@ export class PrismaRepository implements Repository {
 
   async deleteBackup(id: string): Promise<void> {
     await this.client.serverBackup.delete({ where: { id } });
+  }
+
+  async createSchedule(input: CreateServerScheduleInput): Promise<ServerScheduleRecord> {
+    const s = await this.client.serverSchedule.create({ data: { id: randomUUID(), ...input } });
+    return toScheduleRecord(s);
+  }
+
+  async listSchedules(deploymentId: string): Promise<ServerScheduleRecord[]> {
+    const rows = await this.client.serverSchedule.findMany({ where: { deploymentId }, orderBy: { createdAt: 'asc' } });
+    return rows.map(toScheduleRecord);
+  }
+
+  async listAllSchedules(): Promise<ServerScheduleRecord[]> {
+    const rows = await this.client.serverSchedule.findMany();
+    return rows.map(toScheduleRecord);
+  }
+
+  async getSchedule(id: string): Promise<ServerScheduleRecord | null> {
+    const s = await this.client.serverSchedule.findUnique({ where: { id } });
+    return s ? toScheduleRecord(s) : null;
+  }
+
+  async updateSchedule(id: string, patch: UpdateServerScheduleInput): Promise<ServerScheduleRecord | null> {
+    const exists = await this.client.serverSchedule.findUnique({ where: { id } });
+    if (!exists) return null;
+    const s = await this.client.serverSchedule.update({
+      where: { id },
+      data: {
+        ...(patch.name !== undefined ? { name: patch.name } : {}),
+        ...(patch.cron !== undefined ? { cron: patch.cron } : {}),
+        ...(patch.action !== undefined ? { action: patch.action } : {}),
+        ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+        ...(patch.lastRunAt !== undefined ? { lastRunAt: patch.lastRunAt ? new Date(patch.lastRunAt) : null } : {}),
+      },
+    });
+    return toScheduleRecord(s);
+  }
+
+  async deleteSchedule(id: string): Promise<void> {
+    await this.client.serverSchedule.delete({ where: { id } });
   }
 
   async getDeployment(id: string): Promise<DeploymentDetail | null> {

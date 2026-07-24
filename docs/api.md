@@ -149,6 +149,20 @@ not running, `502` if the node operation fails.
 | `POST /deployments/:id/backups/:backupId/restore` | Extract the snapshot back into the running container |
 | `DELETE /deployments/:id/backups/:backupId` | Delete the stored tar and drop the record → `204` |
 
+### Schedules
+
+Recurring tasks the Orchestrator runs on a 5-field cron (minute hour day-of-month month day-of-week, UTC);
+actions are `restart` or `backup` (#111). The scheduler polls once a minute. `404` if the deployment/schedule
+is unknown, `400` on a bad cron or action.
+
+| Method + path | Purpose |
+|---|---|
+| `GET /deployments/:id/schedules` | List the server's schedules |
+| `POST /deployments/:id/schedules` | Create one — body `{ name, cron, action }` → `201` |
+| `PATCH /deployments/:id/schedules/:sid` | Update fields (e.g. `{ enabled: false }` to pause) |
+| `POST /deployments/:id/schedules/:sid/run` | Run the schedule's action immediately |
+| `DELETE /deployments/:id/schedules/:sid` | Remove the schedule → `204` |
+
 ### `POST /deployments/:id/stop`
 
 Request a running deployment be stopped — emits `infra.server.stop`; the agent stops **and removes**

@@ -3,6 +3,7 @@ import type {
   CreateServerBackupInput,
   CreateServerConfigInput,
   CreateServerDatabaseInput,
+  CreateServerScheduleInput,
   DeploymentDetail,
   DeploymentEventRecord,
   DeploymentRecord,
@@ -13,6 +14,8 @@ import type {
   ServerBackupRecord,
   ServerConfigRecord,
   ServerDatabaseRecord,
+  ServerScheduleRecord,
+  UpdateServerScheduleInput,
   UpsertNodeInput,
 } from './types.js';
 
@@ -30,6 +33,7 @@ export class InMemoryRepository implements Repository {
   private events: DeploymentEventRecord[] = [];
   private databases = new Map<string, ServerDatabaseRecord>();
   private backups = new Map<string, ServerBackupRecord>();
+  private schedules = new Map<string, ServerScheduleRecord>();
 
   async upsertNode(input: UpsertNodeInput): Promise<NodeRecord> {
     const existing = this.nodes.get(input.id);
@@ -192,6 +196,54 @@ export class InMemoryRepository implements Repository {
 
   async deleteBackup(id: string): Promise<void> {
     this.backups.delete(id);
+  }
+
+  async createSchedule(input: CreateServerScheduleInput): Promise<ServerScheduleRecord> {
+    const schedule: ServerScheduleRecord = {
+      id: randomUUID(),
+      deploymentId: input.deploymentId,
+      name: input.name,
+      cron: input.cron,
+      action: input.action,
+      enabled: input.enabled ?? true,
+      lastRunAt: null,
+      createdAt: new Date().toISOString(),
+    };
+    this.schedules.set(schedule.id, schedule);
+    return schedule;
+  }
+
+  async listSchedules(deploymentId: string): Promise<ServerScheduleRecord[]> {
+    return Array.from(this.schedules.values())
+      .filter((s) => s.deploymentId === deploymentId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async listAllSchedules(): Promise<ServerScheduleRecord[]> {
+    return Array.from(this.schedules.values());
+  }
+
+  async getSchedule(id: string): Promise<ServerScheduleRecord | null> {
+    return this.schedules.get(id) ?? null;
+  }
+
+  async updateSchedule(id: string, patch: UpdateServerScheduleInput): Promise<ServerScheduleRecord | null> {
+    const current = this.schedules.get(id);
+    if (!current) return null;
+    const updated: ServerScheduleRecord = {
+      ...current,
+      name: patch.name ?? current.name,
+      cron: patch.cron ?? current.cron,
+      action: patch.action ?? current.action,
+      enabled: patch.enabled ?? current.enabled,
+      lastRunAt: patch.lastRunAt !== undefined ? patch.lastRunAt : current.lastRunAt,
+    };
+    this.schedules.set(id, updated);
+    return updated;
+  }
+
+  async deleteSchedule(id: string): Promise<void> {
+    this.schedules.delete(id);
   }
 
   private toView(d: DeploymentRecord): DeploymentView | null {

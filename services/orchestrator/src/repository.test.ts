@@ -129,4 +129,21 @@ describe('InMemoryRepository', () => {
     await repo.deleteBackup(b.id);
     expect(await repo.getBackup(b.id)).toBeNull();
   });
+
+  it('creates, updates, lists and deletes schedules', async () => {
+    const s = await repo.createSchedule({ deploymentId: 'dep-1', name: 'Nightly', cron: '0 4 * * *', action: 'backup' });
+    expect(s.enabled).toBe(true);
+    expect(s.lastRunAt).toBeNull();
+
+    const off = await repo.updateSchedule(s.id, { enabled: false, lastRunAt: '2026-07-24T04:00:00.000Z' });
+    expect(off?.enabled).toBe(false);
+    expect(off?.lastRunAt).toBe('2026-07-24T04:00:00.000Z');
+    expect(off?.name).toBe('Nightly'); // untouched fields preserved
+
+    expect(await repo.listSchedules('dep-1')).toHaveLength(1);
+    expect(await repo.listAllSchedules()).toHaveLength(1);
+
+    await repo.deleteSchedule(s.id);
+    expect(await repo.getSchedule(s.id)).toBeNull();
+  });
 });

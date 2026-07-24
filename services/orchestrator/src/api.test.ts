@@ -302,4 +302,41 @@ describe('deployment API', () => {
     expect((await request(app).post(`/deployments/${created.body.id}/backups`).send({})).status).toBe(409);
     expect((await request(app).get('/deployments/nope/backups')).status).toBe(404);
   });
+
+  it('creates, validates, toggles, runs and deletes a schedule', async () => {
+    const ran: string[] = [];
+    const schedApp = express();
+    schedApp.use(express.json());
+    schedApp.use(
+      createApiRouter({
+        repo,
+        publish: async (key, envelope) => (published.push({ key, envelope }), true),
+        scheduleActions: { restart: async (id) => void ran.push(`restart:${id}`), backup: async (id) => void ran.push(`backup:${id}`) },
+      })
+    );
+
+    await seedHealthyNode(repo);
+    const created = await request(schedApp).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+
+    // Bad cron / action are rejected.
+    expect((await request(schedApp).post(`/deployments/${created.body.id}/schedules`).send({ name: 'x', cron: 'nope', action: 'backup' })).status).toBe(400);
+    expect((await request(schedApp).post(`/deployments/${created.body.id}/schedules`).send({ name: 'x', cron: '0 4 * * *', action: 'launch' })).status).toBe(400);
+
+    const make = await request(schedApp).post(`/deployments/${created.body.id}/schedules`).send({ name: 'Nightly', cron: '0 4 * * *', action: 'backup' });
+    expect(make.status).toBe(201);
+    expect(make.body.enabled).toBe(true);
+
+    // Toggle off via PATCH.
+    const patched = await request(schedApp).patch(`/deployments/${created.body.id}/schedules/${make.body.id}`).send({ enabled: false });
+    expect(patched.body.enabled).toBe(false);
+
+    // Run now triggers the action.
+    const run = await request(schedApp).post(`/deployments/${created.body.id}/schedules/${make.body.id}/run`);
+    expect(run.status).toBe(200);
+    expect(ran).toEqual([`backup:${created.body.id}`]);
+
+    expect((await request(schedApp).get(`/deployments/${created.body.id}/schedules`)).body).toHaveLength(1);
+    expect((await request(schedApp).delete(`/deployments/${created.body.id}/schedules/${make.body.id}`)).status).toBe(204);
+    expect((await request(schedApp).get(`/deployments/${created.body.id}/schedules`)).body).toEqual([]);
+  });
 });
