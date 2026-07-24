@@ -16,10 +16,15 @@ import {
   listDatabases,
   createDatabase,
   deleteDatabase,
+  listBackups,
+  createBackup,
+  restoreBackup,
+  deleteBackup,
   type DeploymentDetail,
   type FileEntry,
   type ServerDatabase,
   type DatabaseEngine,
+  type ServerBackup,
 } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
 import { useToast } from '../components/Toast';
@@ -117,7 +122,7 @@ export function ServerDetail() {
       {tab === 'console' && <ConsoleTab id={d.id} running={running} isGame={isGame} containerId={d.containerId} />}
       {tab === 'files' && <FilesTab id={d.id} running={running} />}
       {tab === 'databases' && <DatabasesTab id={d.id} running={running} />}
-      {tab === 'backups' && <BackupsTab />}
+      {tab === 'backups' && <BackupsTab id={d.id} running={running} />}
       {tab === 'network' && <NetworkTab />}
       {tab === 'schedules' && <SchedulesTab />}
       {tab === 'subusers' && <SubusersTab />}
@@ -598,29 +603,82 @@ function DatabasesTab({ id, running }: { id: string; running: boolean }) {
   );
 }
 
-function BackupsTab() {
+// ── Backups — real tar snapshots of the server's data volume (#110) ─────────
+function BackupsTab({ id, running }: { id: string; running: boolean }) {
   const { toast } = useToast();
-  const [backups, setBackups] = useState([
-    { name: 'auto-2026-07-24', size: '184 MB', rel: '3h ago', locked: false },
-    { name: 'pre-update', size: '172 MB', rel: '2d ago', locked: true },
-  ]);
-  const create = () => {
-    const name = `manual-${Date.now().toString().slice(-6)}`;
-    setBackups((xs) => [{ name, size: `${150 + ((Math.random() * 80) | 0)} MB`, rel: 'just now', locked: false }, ...xs]);
-    toast(`Backup ${name} started`, 'success', 'Backup');
+  const [backups, setBackups] = useState<ServerBackup[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setBackups(await listBackups(id));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load backups');
+    }
+  }, [id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const create = async () => {
+    setBusy(true);
+    try {
+      const b = await createBackup(id);
+      toast(`Backup ${b.name} created`, 'success', 'Backup');
+      await load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Backup failed', 'error', 'Backup');
+    } finally {
+      setBusy(false);
+    }
   };
+
+  const restore = async (b: ServerBackup) => {
+    if (!window.confirm(`Restore ${b.name}? This overwrites ${b.path} in the running server.`)) return;
+    try {
+      await restoreBackup(id, b.id);
+      toast(`Restored ${b.name}`, 'success', 'Backup');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Restore failed', 'error', 'Backup');
+    }
+  };
+
+  const remove = async (b: ServerBackup) => {
+    if (!window.confirm(`Delete ${b.name}? This cannot be undone.`)) return;
+    try {
+      await deleteBackup(id, b.id);
+      toast('Backup deleted', 'error', 'Backup');
+      await load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Delete failed', 'error', 'Backup');
+    }
+  };
+
   return (
     <>
-      <TabHeader title="Backups" action="Create backup" onAction={create} />
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, gap: 12 }}>
+        <strong style={{ fontSize: '.92rem' }}>Backups<InfoHint text="A backup is a tar snapshot of the server's data directory, stored on its node. Restore extracts it back into the running container. Requires the server to be running." label="Backups help" /></strong>
+        <button className="btn btn--primary btn--sm" data-ripple data-burst="primary" onClick={create} disabled={busy || !running} title={running ? '' : 'Start the server first'}>
+          {busy ? 'Snapshotting…' : 'Create backup'}
+        </button>
+      </div>
+      {!running && <p className="subtle" style={{ fontSize: '.84rem', marginBottom: 12 }}>Start the server to snapshot or restore its data.</p>}
+      {error && <p role="alert" className="alert alert--error" style={{ marginBottom: 12 }}>{error}</p>}
       <div style={listCard}>
         {backups.map((b) => (
-          <div key={b.name} style={rowCss}>
-            <span className="mono" style={{ flex: 1, minWidth: 0, fontSize: '.86rem', fontWeight: 600 }}>{b.name}</span>
-            {b.locked && <span className="badge badge--warning">🔒 locked</span>}
-            <span className="subtle tnum" style={{ fontSize: '.8rem' }}>{b.size}</span>
-            <span className="subtle" style={{ fontSize: '.8rem' }}>{b.rel}</span>
+          <div key={b.id} style={{ ...rowCss, gap: 12 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="mono" style={{ fontSize: '.84rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</div>
+              <div className="subtle" style={{ fontSize: '.76rem', marginTop: 2 }}>{fmtSize(b.sizeBytes)} · <span className="mono">{b.path}</span></div>
+            </div>
+            <button className="btn btn--secondary btn--sm" data-ripple onClick={() => restore(b)} disabled={!running}>Restore</button>
+            <button className="icon-btn" data-ripple aria-label={`Delete ${b.name}`} onClick={() => remove(b)}>🗑</button>
           </div>
         ))}
+        {backups.length === 0 && <div className="empty">No backups yet.</div>}
       </div>
     </>
   );

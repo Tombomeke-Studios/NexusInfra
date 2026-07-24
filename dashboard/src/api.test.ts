@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { createDeployment, listDeployments, login, streamLogs, streamStats, listFiles, writeFile, createDatabase, ApiError, TOKEN_KEY, type ContainerStats } from './api';
+import { createDeployment, listDeployments, login, streamLogs, streamStats, listFiles, writeFile, createDatabase, createBackup, ApiError, TOKEN_KEY, type ContainerStats } from './api';
 
 // The client is verified against a mocked fetch: it attaches the Bearer token,
 // posts JSON, and surfaces API errors with their status.
@@ -95,6 +95,14 @@ describe('api client', () => {
     expect(url).toContain('/deployments/d1/databases');
     expect(options.method).toBe('POST');
     expect(JSON.parse(options.body as string)).toEqual({ engine: 'postgres' });
+  });
+
+  it('creates a backup with a POST to the deployment', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ id: 'bk1', name: 'backup-x', sizeBytes: 2048 }, 201));
+    await createBackup('d1');
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toContain('/deployments/d1/backups');
+    expect(options.method).toBe('POST');
   });
 
   it('parses JSON stats samples from the stats stream', async () => {
