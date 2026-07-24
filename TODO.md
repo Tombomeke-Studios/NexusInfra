@@ -55,7 +55,7 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 
 Each mock behavior in the ported design becomes real, one issue + branch at a time.
 
-- [ ] Persist full deployment config (limits, restart, env, kind) (#106)
+- [x] Persist full deployment config (limits, restart, env, kind) (#106)
 - [ ] Enforce resource limits / restart policy / OOM at container start (#107)
 - [ ] File management API + real Files tab (#108)
 - [ ] Server databases — provision real DBs (#109)

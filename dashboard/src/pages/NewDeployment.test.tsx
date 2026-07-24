@@ -46,11 +46,24 @@ describe('NewDeployment', () => {
       ([u, o]) => typeof u === 'string' && u.includes('/deployments') && o?.method === 'POST'
     );
     expect(call).toBeDefined();
+    // The full config is sent: parsed ports/env plus the kind, restart flag and
+    // the resource limits at their default control values (#106).
     expect(JSON.parse(call![1].body as string)).toEqual({
       name: 'my-nginx',
       dockerImage: 'nginx',
       ports: { '8080': '80' },
       env: {},
+      type: 'app',
+      autoRestart: true,
+      resourceLimits: {
+        cpuPercent: 50,
+        ramPercent: 50,
+        diskPercent: 50,
+        swapPercent: 0,
+        ioPriority: 'normal',
+        restartPolicy: 'on-failure',
+        oomKill: false,
+      },
     });
   });
 
