@@ -15,7 +15,7 @@ export type NexusInfraEvent =
   | { type: 'heartbeat.service'; payload: { name: string; status: 'healthy'; timestamp: string } }
   | { type: 'heartbeat.node'; payload: { nodeId: string; status: 'healthy'; timestamp: string; resources?: NodeResources } }
   // ── Server lifecycle — commands (Orchestrator → Node Agent) ──────────
-  | { type: 'server.start'; payload: { deploymentId: string; nodeId: string; dockerImage: string; containerName?: string; env?: Record<string, string>; ports?: Record<string, string> } }
+  | { type: 'server.start'; payload: { deploymentId: string; nodeId: string; dockerImage: string; containerName?: string; env?: Record<string, string>; ports?: Record<string, string>; resourceLimits?: ResourceLimits } }
   | { type: 'server.stop'; payload: { deploymentId: string; nodeId: string; containerId: string } }
   | { type: 'server.restart'; payload: { deploymentId: string; nodeId: string; containerId: string } }
   // ── Server lifecycle — reports (Node Agent → Orchestrator) ───────────
@@ -35,6 +35,21 @@ export interface NodeResources {
   ramTotalMb: number;
   diskUsedGb: number;
   diskTotalGb: number;
+}
+
+/**
+ * Resource caps + runtime behaviour chosen for a server, persisted with its config
+ * (#106) and carried on server.start so the Node Agent enforces them at container
+ * start (#107). Percentages are of the host node; every field is optional.
+ */
+export interface ResourceLimits {
+  cpuPercent?: number;
+  ramPercent?: number;
+  diskPercent?: number;
+  swapPercent?: number;
+  ioPriority?: 'low' | 'normal' | 'high';
+  restartPolicy?: 'no' | 'on-failure' | 'always';
+  oomKill?: boolean;
 }
 
 export interface EventEnvelope<T extends NexusInfraEvent = NexusInfraEvent> {

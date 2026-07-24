@@ -83,6 +83,7 @@ export function createApiRouter(deps: ApiDeps): Router {
         containerName: config.name,
         env: config.env,
         ports: config.ports,
+        resourceLimits: config.resourceLimits,
       },
     });
 
@@ -148,6 +149,7 @@ export function createApiRouter(deps: ApiDeps): Router {
         containerName: config.name,
         env: config.env,
         ports: config.ports,
+        resourceLimits: config.resourceLimits,
       },
     });
     return res.status(202).json({ status: 'starting', deploymentId: detail.id });
