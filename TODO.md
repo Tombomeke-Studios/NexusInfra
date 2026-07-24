@@ -4,7 +4,7 @@
 
 ![MVP](https://img.shields.io/badge/MVP-complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/current-Phase_2_·_Core-3b82f6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-124_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-127_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -179,6 +179,7 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 
 ### 🐛 Fixes (recent)
 
+- [x] Port the missing background node-network canvas from the design (#128, merged #129)
 - [x] Node Agent removes a leftover same-named container before start (idempotent) (#63, merged #64)
 
 ### `feature/start-server` — merged in #55
