@@ -23,18 +23,18 @@ export function Layout() {
           NexusInfra
         </span>
         <nav className="appbar__nav" aria-label="Primary">
-          <NavLink to="/" end className="navlink">
+          <NavLink to="/" end className="navlink" data-ripple>
             Overview
           </NavLink>
-          <NavLink to="/new" className="navlink">
+          <NavLink to="/new" className="navlink" data-ripple>
             New Deployment
           </NavLink>
-          <NavLink to="/servers" className="navlink">
+          <NavLink to="/servers" className="navlink" data-ripple>
             Servers
           </NavLink>
         </nav>
         <ThemeToggle />
-        <button className="btn btn--ghost btn--sm" onClick={signOut}>
+        <button className="btn btn--ghost btn--sm" onClick={signOut} data-ripple>
           <IconLogout size={16} />
           Sign out
         </button>

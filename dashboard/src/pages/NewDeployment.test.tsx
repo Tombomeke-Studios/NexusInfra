@@ -22,7 +22,12 @@ describe('NewDeployment', () => {
 
   beforeEach(() => {
     vi.stubGlobal('fetch', fetchMock);
-    fetchMock.mockResolvedValue({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
+    // The form fetches nodes on mount (placement options); answer that with [].
+    fetchMock.mockImplementation((url: string) =>
+      typeof url === 'string' && url.includes('/nodes')
+        ? Promise.resolve({ ok: true, status: 200, json: async () => [] } as Response)
+        : Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response)
+    );
   });
   afterEach(() => vi.unstubAllGlobals());
 
@@ -37,9 +42,11 @@ describe('NewDeployment', () => {
 
     expect(await screen.findByText('Servers page')).toBeInTheDocument();
 
-    const [url, options] = fetchMock.mock.calls[0];
-    expect(url).toContain('/deployments');
-    expect(JSON.parse(options.body as string)).toEqual({
+    const call = fetchMock.mock.calls.find(
+      ([u, o]) => typeof u === 'string' && u.includes('/deployments') && o?.method === 'POST'
+    );
+    expect(call).toBeDefined();
+    expect(JSON.parse(call![1].body as string)).toEqual({
       name: 'my-nginx',
       dockerImage: 'nginx',
       ports: { '8080': '80' },

@@ -5,6 +5,7 @@ import { Login } from './pages/Login';
 import { Overview } from './pages/Overview';
 import { NewDeployment } from './pages/NewDeployment';
 import { Servers } from './pages/Servers';
+import { ServerDetail } from './pages/ServerDetail';
 
 // Route table: /login is public; everything else sits behind RequireAuth inside
 // the app shell (Layout). Split from App so tests can mount it in a MemoryRouter.
@@ -17,6 +18,7 @@ export function AppRoutes() {
           <Route path="/" element={<Overview />} />
           <Route path="/new" element={<NewDeployment />} />
           <Route path="/servers" element={<Servers />} />
+          <Route path="/servers/:id" element={<ServerDetail />} />
         </Route>
       </Route>
     </Routes>

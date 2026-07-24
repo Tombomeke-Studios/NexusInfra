@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { Servers } from './Servers';
+
+const renderServers = () => render(<Servers />, { wrapper: MemoryRouter });
 
 const deployments = [
   { id: 'd1', name: 'my-nginx', dockerImage: 'nginx', nodeId: 'node-local', containerId: 'abcdef123456', status: 'running', startedAt: '', stoppedAt: null, createdAt: '' },
@@ -24,14 +27,14 @@ describe('Servers', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('lists deployments with status and container id', async () => {
-    render(<Servers />);
+    renderServers();
     expect(await screen.findByText('my-nginx')).toBeInTheDocument();
     expect(screen.getByText('running')).toBeInTheDocument();
     expect(screen.getByText('abcdef123456')).toBeInTheDocument();
   });
 
   it('shows Stop only for running deployments and calls the stop endpoint', async () => {
-    render(<Servers />);
+    renderServers();
     await screen.findByText('my-nginx');
 
     // Only the running deployment (d1) has a Stop button.
@@ -47,7 +50,7 @@ describe('Servers', () => {
   });
 
   it('restarts a running deployment via the restart endpoint', async () => {
-    render(<Servers />);
+    renderServers();
     await screen.findByText('my-nginx');
 
     await userEvent.click(screen.getByRole('button', { name: 'Restart my-nginx' }));
@@ -59,7 +62,7 @@ describe('Servers', () => {
   });
 
   it('shows Start for a stopped deployment and calls the start endpoint', async () => {
-    render(<Servers />);
+    renderServers();
     await screen.findByText('idle');
 
     await userEvent.click(screen.getByRole('button', { name: 'Start idle' }));

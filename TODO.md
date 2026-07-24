@@ -41,9 +41,10 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > **Ports** — Control Room `9000` · Node Agent `9100` · Orchestrator `9200` · dashboard `8095`
 > (Docker) / `5173` (Vite dev).
 >
-> **Next up:** no active feature branch. The big next feature is the **live server console**
-> (logs + terminal + per-server stats) — see the group below. Other candidates: the Billing Bridge
-> (Phase 4) or the API Gateway (#20). Promote a group to a `feature/<topic>` branch before starting.
+> **Latest:** the full Claude Design redesign is ported ([[design-source]]) — aurora background,
+> every screen, and the server-detail tabs (incl. a Console UI). Extra features are UI-only pending
+> wiring. **Next up:** wire the **live server console** (#66–#72), or start the **Billing Bridge**
+> (Phase 4). No active feature branch; promote a group before starting.
 
 ---
 
@@ -99,6 +100,14 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 ---
 
 ## Done
+
+### `feature/design-copy` — merged in #92
+
+- [x] Foundation: aurora/grid tokens + keyframes + range sliders (#74) · aurora background (#75)
+- [x] Interaction layer — ripple/burst/spotlight/magnetic + richer toasts (#91)
+- [x] Screens: Login (#76), shell (#77), Overview (#78), New Deployment (#79), Servers (#80)
+- [x] Server detail (#81) + tabs: Console (#82), Files (#83), Databases (#84), Backups (#85),
+      Network (#86), Schedules (#87), Subusers (#88), Startup (#89), Settings (#90)
 
 ### `feature/ui-animations` — merged in #65
 

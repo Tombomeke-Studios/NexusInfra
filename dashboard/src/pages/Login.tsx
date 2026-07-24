@@ -3,9 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { login } from '../api';
 import { setToken } from '../session';
 import { IconHexagon } from '../components/Icons';
+import { ThemeToggle } from '../components/ThemeToggle';
 
-// Login form for the stub auth: exchange credentials for a JWT, store it, and
-// enter the app. Credentials default to the seeded dev user for convenience.
+// Login screen — ported from the redesign (NexusInfra.dc.html): aurora backdrop
+// (App-level), a spotlight card with a floaty brand, and a magnetic/ripple
+// primary button (FX activated by the interaction layer).
 export function Login() {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('admin');
@@ -30,65 +32,84 @@ export function Login() {
   };
 
   return (
-    <div className="auth-wrap">
-      <div className="card auth-card">
-        <div className="card__body">
-          <span className="auth-brand">
-            <IconHexagon size={22} />
-            NexusInfra
-          </span>
-          <h1 style={{ fontSize: '1.4rem' }}>Sign in</h1>
-          <p className="muted" style={{ marginTop: 4, marginBottom: 'var(--space-5)' }}>
-            Server management panel
-          </p>
+    <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>
+      <div style={{ width: '100%', maxWidth: 392, animation: 'rise 520ms var(--ease-out) both' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
+          <ThemeToggle />
+        </div>
 
-          <form onSubmit={onSubmit}>
-            <label className="field">
-              <span className="field__label">Username</span>
-              <input
-                className="input"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                autoComplete="username"
-              />
-            </label>
+        <div className="card spotlight" data-spotlight style={{ overflow: 'hidden' }}>
+          <div style={{ padding: '28px 26px' }}>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 9,
+                fontWeight: 700,
+                color: 'var(--color-primary)',
+                marginBottom: 18,
+                fontSize: '1.05rem',
+              }}
+            >
+              <span style={{ display: 'inline-flex', animation: 'floaty 4s ease-in-out infinite' }}>
+                <IconHexagon size={22} />
+              </span>
+              NexusInfra
+            </span>
 
-            <label className="field">
-              <span className="field__label">Password</span>
-              <span className="input-wrap">
+            <h1 style={{ fontSize: '1.4rem' }}>Sign in</h1>
+            <p style={{ color: 'var(--color-text-muted)', margin: '4px 0 22px' }}>Server management panel</p>
+
+            <form onSubmit={onSubmit}>
+              <label className="field">
+                <span className="field__label">Username</span>
                 <input
                   className="input"
-                  type={showPw ? 'text' : 'password'}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="current-password"
+                  aria-label="Username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  autoComplete="username"
                 />
-                <button
-                  type="button"
-                  className="btn btn--ghost btn--sm input-affix"
-                  onClick={() => setShowPw((v) => !v)}
-                  aria-label={showPw ? 'Hide password' : 'Show password'}
-                >
-                  {showPw ? 'Hide' : 'Show'}
-                </button>
-              </span>
-            </label>
+              </label>
 
-            {error && (
-              <p role="alert" className="alert alert--error" style={{ marginBottom: 'var(--space-4)' }}>
-                {error}
-              </p>
-            )}
+              <label className="field">
+                <span className="field__label">Password</span>
+                <span className="input-wrap">
+                  <input
+                    className="input"
+                    aria-label="Password"
+                    type={showPw ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="current-password"
+                  />
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--sm input-affix"
+                    onClick={() => setShowPw((v) => !v)}
+                    aria-label={showPw ? 'Hide password' : 'Show password'}
+                  >
+                    {showPw ? 'Hide' : 'Show'}
+                  </button>
+                </span>
+              </label>
 
-            <button type="submit" className="btn btn--primary btn--block" disabled={busy}>
-              {busy && <span className="spinner" />}
-              {busy ? 'Signing in…' : 'Sign in'}
-            </button>
-          </form>
+              {error && (
+                <p role="alert" className="alert alert--error" style={{ marginBottom: 'var(--space-4)' }}>
+                  {error}
+                </p>
+              )}
 
-          <p className="subtle" style={{ marginTop: 'var(--space-4)', fontSize: '0.82rem' }}>
-            Dev credentials: <span className="mono">admin / admin</span>
-          </p>
+              <button type="submit" className="btn btn--primary btn--block" data-magnetic data-ripple data-burst="primary" disabled={busy}>
+                {busy && <span className="spinner" />}
+                {busy ? 'Signing in…' : 'Sign in'}
+              </button>
+            </form>
+
+            <p className="subtle" style={{ marginTop: 16, fontSize: '0.82rem' }}>
+              Dev credentials: <span className="mono">admin / admin</span>
+            </p>
+          </div>
         </div>
       </div>
     </div>
