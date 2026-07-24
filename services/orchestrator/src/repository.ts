@@ -54,6 +54,7 @@ export class InMemoryRepository implements Repository {
       dockerImage: input.dockerImage,
       ports: input.ports ?? {},
       env: input.env ?? {},
+      resourceLimits: input.resourceLimits ?? {},
       autoRestart: input.autoRestart ?? false,
       type: input.type ?? 'generic',
       createdAt: new Date().toISOString(),

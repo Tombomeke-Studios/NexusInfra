@@ -49,6 +49,30 @@ describe('InMemoryRepository', () => {
     expect(list[0].status).toBe('pending');
   });
 
+  it('persists the full server config and round-trips it via getDeploymentConfig', async () => {
+    const config = await repo.createServerConfig({
+      userId: 'dev-user',
+      name: 'capped',
+      dockerImage: 'nginx',
+      env: { LOG_LEVEL: 'debug' },
+      type: 'game',
+      autoRestart: true,
+      resourceLimits: { cpuPercent: 40, ramPercent: 60, restartPolicy: 'on-failure', oomKill: true },
+    });
+    const deployment = await repo.createDeployment(config.id, 'node-1');
+
+    const saved = await repo.getDeploymentConfig(deployment.id);
+    expect(saved?.type).toBe('game');
+    expect(saved?.autoRestart).toBe(true);
+    expect(saved?.env).toEqual({ LOG_LEVEL: 'debug' });
+    expect(saved?.resourceLimits).toEqual({ cpuPercent: 40, ramPercent: 60, restartPolicy: 'on-failure', oomKill: true });
+  });
+
+  it('defaults resourceLimits to an empty object when omitted', async () => {
+    const config = await repo.createServerConfig({ userId: 'u', name: 'svc', dockerImage: 'nginx' });
+    expect(config.resourceLimits).toEqual({});
+  });
+
   it('updates deployment status and records events on the detail view', async () => {
     const config = await repo.createServerConfig({ userId: 'u', name: 'svc', dockerImage: 'nginx' });
     const deployment = await repo.createDeployment(config.id, 'node-1');

@@ -50,7 +50,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   // Create a deployment: persist config, place it on the least-loaded node, and
   // command the agent to start it.
   router.post('/deployments', async (req: Request, res: Response) => {
-    const { name, dockerImage, ports, env, autoRestart, type } = req.body ?? {};
+    const { name, dockerImage, ports, env, resourceLimits, autoRestart, type } = req.body ?? {};
     if (typeof name !== 'string' || typeof dockerImage !== 'string' || !name || !dockerImage) {
       return res.status(400).json({ error: 'name and dockerImage are required' });
     }
@@ -66,6 +66,7 @@ export function createApiRouter(deps: ApiDeps): Router {
       dockerImage,
       ports: ports ?? {},
       env: env ?? {},
+      resourceLimits: resourceLimits && typeof resourceLimits === 'object' ? resourceLimits : {},
       autoRestart: Boolean(autoRestart),
       type: typeof type === 'string' ? type : 'generic',
     });
