@@ -208,4 +208,54 @@ describe('deployment API', () => {
     // Unknown deployment → 404.
     expect((await request(app).get('/deployments/nope/files')).status).toBe(404);
   });
+
+  it('provisions, lists and deletes a managed database', async () => {
+    // Wire a fake provisioner/deprovisioner so no node agent is needed.
+    const provisioned: Array<{ engine: string; name: string }> = [];
+    const deprovisioned: string[] = [];
+    const dbApp = express();
+    dbApp.use(express.json());
+    dbApp.use(
+      createApiRouter({
+        repo,
+        publish: async (key, envelope) => (published.push({ key, envelope }), true),
+        provisionDatabase: async (req) => {
+          provisioned.push({ engine: req.engine, name: req.name });
+          return { containerId: 'db-c1', port: 33060 };
+        },
+        deprovisionDatabase: async (id) => void deprovisioned.push(id),
+      })
+    );
+
+    await seedHealthyNode(repo);
+    const created = await request(dbApp).post('/deployments').send({ name: 'my-app', dockerImage: 'nginx' });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'abc', nodeId: 'node-local' });
+
+    const make = await request(dbApp).post(`/deployments/${created.body.id}/databases`).send({ engine: 'mysql' });
+    expect(make.status).toBe(201);
+    expect(make.body.engine).toBe('mysql');
+    expect(make.body.name).toBe('my_app_db1');
+    expect(make.body.host).toBe('localhost');
+    expect(make.body.port).toBe(33060);
+    expect(provisioned).toEqual([{ engine: 'mysql', name: 'my_app_db1' }]);
+
+    const list = await request(dbApp).get(`/deployments/${created.body.id}/databases`);
+    expect(list.body).toHaveLength(1);
+
+    const del = await request(dbApp).delete(`/deployments/${created.body.id}/databases/${make.body.id}`);
+    expect(del.status).toBe(204);
+    expect(deprovisioned).toEqual(['db-c1']);
+    expect((await request(dbApp).get(`/deployments/${created.body.id}/databases`)).body).toEqual([]);
+  });
+
+  it('rejects a database on a stopped deployment or with a bad engine', async () => {
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    // Not running → 409.
+    expect((await request(app).post(`/deployments/${created.body.id}/databases`).send({ engine: 'mysql' })).status).toBe(409);
+
+    await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'abc', nodeId: 'node-local' });
+    // Running but unknown engine → 400.
+    expect((await request(app).post(`/deployments/${created.body.id}/databases`).send({ engine: 'mongo' })).status).toBe(400);
+  });
 });

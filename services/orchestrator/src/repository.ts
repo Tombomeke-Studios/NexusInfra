@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import type {
   CreateServerConfigInput,
+  CreateServerDatabaseInput,
   DeploymentDetail,
   DeploymentEventRecord,
   DeploymentRecord,
@@ -9,6 +10,7 @@ import type {
   NodeRecord,
   Repository,
   ServerConfigRecord,
+  ServerDatabaseRecord,
   UpsertNodeInput,
 } from './types.js';
 
@@ -24,6 +26,7 @@ export class InMemoryRepository implements Repository {
   private configs = new Map<string, ServerConfigRecord>();
   private deployments = new Map<string, DeploymentRecord>();
   private events: DeploymentEventRecord[] = [];
+  private databases = new Map<string, ServerDatabaseRecord>();
 
   async upsertNode(input: UpsertNodeInput): Promise<NodeRecord> {
     const existing = this.nodes.get(input.id);
@@ -125,6 +128,38 @@ export class InMemoryRepository implements Repository {
     const deployment = this.deployments.get(deploymentId);
     if (!deployment) return null;
     return this.configs.get(deployment.serverConfigId) ?? null;
+  }
+
+  async createDatabase(input: CreateServerDatabaseInput): Promise<ServerDatabaseRecord> {
+    const db: ServerDatabaseRecord = {
+      id: randomUUID(),
+      deploymentId: input.deploymentId,
+      engine: input.engine,
+      name: input.name,
+      username: input.username,
+      password: input.password,
+      host: input.host,
+      port: input.port,
+      containerId: input.containerId,
+      status: 'running',
+      createdAt: new Date().toISOString(),
+    };
+    this.databases.set(db.id, db);
+    return db;
+  }
+
+  async listDatabases(deploymentId: string): Promise<ServerDatabaseRecord[]> {
+    return Array.from(this.databases.values())
+      .filter((d) => d.deploymentId === deploymentId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async getDatabase(id: string): Promise<ServerDatabaseRecord | null> {
+    return this.databases.get(id) ?? null;
+  }
+
+  async deleteDatabase(id: string): Promise<void> {
+    this.databases.delete(id);
   }
 
   private toView(d: DeploymentRecord): DeploymentView | null {

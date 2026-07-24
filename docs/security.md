@@ -40,6 +40,14 @@ Cross-project security design: [`../../CONCEPTS/integration/security.md`](../../
   network, which gates them on a running deployment. User-facing authorisation rides on the same JWT
   as the rest of the API; per-server subuser scoping is a later slice (#112).
 
+## Managed databases (#109)
+
+- A database is provisioned as its **own engine container** with credentials the Orchestrator
+  generates; the agent's database endpoint is internal (proxy-only) and engine-whitelisted.
+- **Known gap:** the generated database password is currently stored in plaintext in the Orchestrator's
+  database. It should be encrypted at rest (the `FINVAULT_MESSAGE_KEY` primitives already exist) or
+  vaulted before production — tracked with the auth/secrets hardening (#21).
+
 ## Known gaps (foundation phase)
 
 - No auth on Control Room HTTP endpoints yet (localhost/dev only) — gated by the gateway later.

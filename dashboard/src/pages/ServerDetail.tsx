@@ -13,8 +13,13 @@ import {
   makeDir,
   renamePath,
   deletePath,
+  listDatabases,
+  createDatabase,
+  deleteDatabase,
   type DeploymentDetail,
   type FileEntry,
+  type ServerDatabase,
+  type DatabaseEngine,
 } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
 import { useToast } from '../components/Toast';
@@ -109,7 +114,7 @@ export function ServerDetail() {
       {/* Tab content */}
       {tab === 'console' && <ConsoleTab id={d.id} running={running} isGame={isGame} containerId={d.containerId} />}
       {tab === 'files' && <FilesTab id={d.id} running={running} />}
-      {tab === 'databases' && <DatabasesTab />}
+      {tab === 'databases' && <DatabasesTab id={d.id} running={running} />}
       {tab === 'backups' && <BackupsTab />}
       {tab === 'network' && <NetworkTab />}
       {tab === 'schedules' && <SchedulesTab />}
@@ -507,23 +512,82 @@ function FileEditor({ id, file, onClose, onSaved }: { id: string; file: { path: 
   );
 }
 
-function DatabasesTab() {
+// ── Databases — real per-server engine containers (#109) ────────────────────
+const DB_ENGINES: DatabaseEngine[] = ['mysql', 'mariadb', 'postgres'];
+
+function DatabasesTab({ id, running }: { id: string; running: boolean }) {
   const { toast } = useToast();
-  const [dbs, setDbs] = useState([{ name: 's1_main', user: 'u_s1', host: 'db.fra.nexusinfra.io:3306' }]);
-  const create = () => {
-    const name = `s1_db${dbs.length + 1}`;
-    setDbs((xs) => [...xs, { name, user: 'u' + Math.random().toString(16).slice(2, 8), host: 'db.fra.nexusinfra.io:3306' }]);
-    toast(`Database ${name} created`, 'success', 'Database');
+  const [dbs, setDbs] = useState<ServerDatabase[]>([]);
+  const [engine, setEngine] = useState<DatabaseEngine>('mysql');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setDbs(await listDatabases(id));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load databases');
+    }
+  }, [id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const create = async () => {
+    setBusy(true);
+    try {
+      const db = await createDatabase(id, engine);
+      toast(`Database ${db.name} provisioned`, 'success', 'Database');
+      await load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Provisioning failed', 'error', 'Database');
+    } finally {
+      setBusy(false);
+    }
   };
+
+  const remove = async (db: ServerDatabase) => {
+    if (!window.confirm(`Delete database ${db.name}? This destroys its data.`)) return;
+    try {
+      await deleteDatabase(id, db.id);
+      toast('Database deleted', 'error', 'Database');
+      await load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Delete failed', 'error', 'Database');
+    }
+  };
+
   return (
     <>
-      <TabHeader title="Databases" action="New database" onAction={create} />
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+        <strong style={{ fontSize: '.92rem' }}>Databases</strong>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {DB_ENGINES.map((e) => (
+              <button key={e} type="button" data-ripple onClick={() => setEngine(e)} className={`opt${engine === e ? ' is-active' : ''}`} style={{ textTransform: 'capitalize' }}>
+                {e}
+              </button>
+            ))}
+          </div>
+          <button className="btn btn--primary btn--sm" data-ripple data-burst="primary" onClick={create} disabled={busy || !running} title={running ? '' : 'Start the server first'}>
+            {busy ? 'Provisioning…' : 'New database'}
+          </button>
+        </div>
+      </div>
+      {!running && <p className="subtle" style={{ fontSize: '.84rem', marginBottom: 12 }}>Start the server to provision a database.</p>}
+      {error && <p role="alert" className="alert alert--error" style={{ marginBottom: 12 }}>{error}</p>}
       <div style={listCard}>
         {dbs.map((db) => (
-          <div key={db.name} style={rowCss}>
-            <span className="mono" style={{ flex: 1, minWidth: 0, fontSize: '.86rem', fontWeight: 600 }}>{db.name}</span>
-            <span className="mono subtle" style={{ fontSize: '.8rem' }}>{db.user}</span>
-            <span className="mono subtle" style={{ fontSize: '.8rem' }}>{db.host}</span>
+          <div key={db.id} style={{ ...rowCss, gap: 12 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="mono" style={{ fontSize: '.86rem', fontWeight: 600 }}>{db.name} <span className="badge badge--info" style={{ marginLeft: 6 }}>{db.engine}</span></div>
+              <div className="mono subtle" style={{ fontSize: '.78rem', marginTop: 3, wordBreak: 'break-all' }}>
+                {db.username}@{db.host}:{db.port} · pw {db.password}
+              </div>
+            </div>
+            <button className="icon-btn" data-ripple aria-label={`Delete ${db.name}`} onClick={() => remove(db)}>🗑</button>
           </div>
         ))}
         {dbs.length === 0 && <div className="empty">No databases yet.</div>}

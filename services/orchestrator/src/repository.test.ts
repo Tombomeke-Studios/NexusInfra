@@ -97,4 +97,25 @@ describe('InMemoryRepository', () => {
     expect(await repo.updateDeploymentStatus('nope', { status: 'running' })).toBeNull();
     expect(await repo.getDeployment('nope')).toBeNull();
   });
+
+  it('creates, lists and deletes managed databases per deployment', async () => {
+    const db = await repo.createDatabase({
+      deploymentId: 'dep-1',
+      engine: 'mysql',
+      name: 'app_db1',
+      username: 'u_app',
+      password: 'secret',
+      host: 'localhost',
+      port: 33060,
+      containerId: 'db-c1',
+    });
+    // Scoped to the deployment; a different deployment sees none.
+    expect(await repo.listDatabases('dep-1')).toHaveLength(1);
+    expect(await repo.listDatabases('other')).toEqual([]);
+    expect((await repo.getDatabase(db.id))?.name).toBe('app_db1');
+
+    await repo.deleteDatabase(db.id);
+    expect(await repo.getDatabase(db.id)).toBeNull();
+    expect(await repo.listDatabases('dep-1')).toEqual([]);
+  });
 });
