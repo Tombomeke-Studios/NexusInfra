@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AppRoutes } from './routes';
 import { setToken, logout } from './session';
+import { markIntroSeen } from './prefs';
 
 // Shell behaviour: unauthenticated users are bounced to /login; authenticated
 // users see the nav and the routed page.
@@ -18,6 +19,7 @@ describe('app shell', () => {
   // Routed pages fetch on mount; stub fetch so their async state updates settle.
   beforeEach(() => {
     logout();
+    markIntroSeen(); // keep the first-run intro out of the shell assertions
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => [] } as Response));
   });
   afterEach(() => vi.unstubAllGlobals());

@@ -405,6 +405,71 @@
   animation: pop 140ms var(--ease-out);
 }
 
+/* ── First-run intro tour ───────────────────────────────────────────────── */
+.intro-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--color-bg) 55%, transparent);
+  backdrop-filter: blur(3px);
+  animation: fade 160ms var(--ease-out);
+}
+.intro-card {
+  width: 100%;
+  max-width: 460px;
+  padding: 26px;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  box-shadow: var(--shadow-lg, var(--shadow));
+  animation: pop 200ms var(--ease-out);
+}
+.intro-card__step {
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-primary);
+  margin-bottom: 8px;
+}
+.intro-card__title {
+  font-size: 1.25rem;
+  margin: 0 0 10px;
+}
+.intro-card__body {
+  margin: 0 0 20px;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+.intro-dots {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 22px;
+}
+.intro-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-border-strong);
+  transition: background var(--transition), width var(--transition);
+}
+.intro-dot.is-active {
+  width: 20px;
+  border-radius: var(--radius-full);
+  background: var(--color-primary);
+}
+.intro-card__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 /* ── Option / segmented buttons (with hover + active) ───────────────────── */
 .opt {
   position: relative;
