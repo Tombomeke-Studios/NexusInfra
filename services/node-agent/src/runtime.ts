@@ -49,6 +49,12 @@ export interface ContainerRuntime {
   renamePath(containerId: string, from: string, to: string): Promise<void>;
   /** Delete a file or directory (recursively). */
   deletePath(containerId: string, path: string): Promise<void>;
+
+  // ── Backups (#110) — tar snapshot/restore of a container path ────────────────
+  /** Snapshot a container path to a tar buffer. */
+  snapshotPath(containerId: string, path: string): Promise<Buffer>;
+  /** Restore a tar buffer into a container path. */
+  restoreArchive(containerId: string, path: string, tar: Buffer): Promise<void>;
 }
 
 /**
@@ -216,6 +222,21 @@ export class DockerodeRuntime implements ContainerRuntime {
     if (target === '/') throw new Error('refusing to delete the container root');
     const { stderr, exitCode } = await this.exec(containerId, ['rm', '-rf', target]);
     if (exitCode !== 0) throw new Error(stderr.trim() || `cannot delete ${target}`);
+  }
+
+  async snapshotPath(containerId: string, path: string): Promise<Buffer> {
+    const stream = await this.docker.getContainer(containerId).getArchive({ path: normalizeContainerPath(path) });
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      stream.on('data', (c: Buffer) => chunks.push(Buffer.from(c)));
+      stream.on('end', () => resolve());
+      stream.on('error', reject);
+    });
+    return Buffer.concat(chunks);
+  }
+
+  async restoreArchive(containerId: string, path: string, tar: Buffer): Promise<void> {
+    await this.docker.getContainer(containerId).putArchive(tar, { path: normalizeContainerPath(path) });
   }
 
   // Run a command in the container, collecting demuxed stdout/stderr and the exit

@@ -43,6 +43,10 @@ class FakeRuntime implements ContainerRuntime {
   async makeDir(): Promise<void> {}
   async renamePath(): Promise<void> {}
   async deletePath(): Promise<void> {}
+  async snapshotPath(): Promise<Buffer> {
+    return Buffer.alloc(0);
+  }
+  async restoreArchive(): Promise<void> {}
 }
 
 const NODE_ID = 'node-1';
