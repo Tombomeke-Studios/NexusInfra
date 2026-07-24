@@ -267,6 +267,40 @@ export function deleteBackup(id: string, backupId: string): Promise<void> {
   return request(`/deployments/${id}/backups/${backupId}`, { method: 'DELETE' });
 }
 
+// ── Schedules (#111) ──────────────────────────────────────────────────────────
+export type ScheduleAction = 'restart' | 'backup';
+
+export interface ServerSchedule {
+  id: string;
+  deploymentId: string;
+  name: string;
+  cron: string;
+  action: string;
+  enabled: boolean;
+  lastRunAt: string | null;
+  createdAt: string;
+}
+
+export function listSchedules(id: string): Promise<ServerSchedule[]> {
+  return request(`/deployments/${id}/schedules`);
+}
+
+export function createSchedule(id: string, input: { name: string; cron: string; action: ScheduleAction }): Promise<ServerSchedule> {
+  return request(`/deployments/${id}/schedules`, { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function updateSchedule(id: string, sid: string, patch: Partial<{ name: string; cron: string; action: ScheduleAction; enabled: boolean }>): Promise<ServerSchedule> {
+  return request(`/deployments/${id}/schedules/${sid}`, { method: 'PATCH', body: JSON.stringify(patch) });
+}
+
+export function deleteSchedule(id: string, sid: string): Promise<void> {
+  return request(`/deployments/${id}/schedules/${sid}`, { method: 'DELETE' });
+}
+
+export function runSchedule(id: string, sid: string): Promise<{ status: string }> {
+  return request(`/deployments/${id}/schedules/${sid}/run`, { method: 'POST' });
+}
+
 /** Streams a deployment's container logs (SSE). See {@link streamSse}. */
 export function streamLogs(id: string, onLine: (line: string) => void, signal: AbortSignal): Promise<void> {
   return streamSse(`/deployments/${id}/logs`, onLine, signal);

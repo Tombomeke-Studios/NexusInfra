@@ -3,7 +3,11 @@ import { buildEnvelope, publishRabbitEvent, type EventEnvelope, type NexusInfraE
 import { nodeHealth } from './nodeRegistry.js';
 import { selectNode as defaultSelectNode } from './nodeSelection.js';
 import { generateDatabaseCredentials, isDatabaseEngine } from './dbProvision.js';
+import { isValidCron } from './cron.js';
+import { runScheduleAction, type ScheduleActions } from './scheduler.js';
 import type { DeploymentDetail, NodeRecord, Repository } from './types.js';
+
+const SCHEDULE_ACTIONS = ['restart', 'backup'];
 
 // Where the (single, local) Node Agent's internal HTTP lives. Multi-node will
 // resolve this per node from the registry.
@@ -47,7 +51,10 @@ export interface ApiDeps {
   snapshotBackup?: SnapshotBackupFn;
   restoreBackup?: RestoreBackupFn;
   removeBackup?: RemoveBackupFn;
+  scheduleActions?: ScheduleActions;
 }
+
+const noopScheduleActions: ScheduleActions = { restart: async () => {}, backup: async () => {} };
 
 // Default provisioning talks to the Node Agent's internal database HTTP.
 const defaultProvisionDatabase: ProvisionDatabaseFn = async (req) => {
@@ -94,6 +101,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   const snapshotBackup = deps.snapshotBackup ?? defaultSnapshotBackup;
   const restoreBackup = deps.restoreBackup ?? defaultRestoreBackup;
   const removeBackup = deps.removeBackup ?? defaultRemoveBackup;
+  const scheduleActions = deps.scheduleActions ?? noopScheduleActions;
   const router = Router();
 
   const emit = (routingKey: string, event: NexusInfraEvent) =>
@@ -391,6 +399,54 @@ export function createApiRouter(deps: ApiDeps): Router {
     }
     await repo.deleteBackup(backup.id);
     return res.status(204).end();
+  });
+
+  // ── Schedules (#111) — recurring restart/backup on a cron ───────────────────
+  router.get('/deployments/:id/schedules', async (req: Request, res: Response) => {
+    const detail = await repo.getDeployment(req.params.id);
+    if (!detail) return res.status(404).json({ error: 'deployment not found' });
+    res.json(await repo.listSchedules(detail.id));
+  });
+
+  router.post('/deployments/:id/schedules', async (req: Request, res: Response) => {
+    const detail = await repo.getDeployment(req.params.id);
+    if (!detail) return res.status(404).json({ error: 'deployment not found' });
+    const { name, cron, action, enabled } = req.body ?? {};
+    if (typeof name !== 'string' || !name) return res.status(400).json({ error: 'name is required' });
+    if (typeof cron !== 'string' || !isValidCron(cron)) return res.status(400).json({ error: 'a valid 5-field cron expression is required' });
+    if (!SCHEDULE_ACTIONS.includes(action)) return res.status(400).json({ error: 'action must be restart or backup' });
+    const schedule = await repo.createSchedule({ deploymentId: detail.id, name, cron, action, enabled: enabled !== false });
+    return res.status(201).json(schedule);
+  });
+
+  router.patch('/deployments/:id/schedules/:sid', async (req: Request, res: Response) => {
+    const s = await repo.getSchedule(req.params.sid);
+    if (!s || s.deploymentId !== req.params.id) return res.status(404).json({ error: 'schedule not found' });
+    const { name, cron, action, enabled } = req.body ?? {};
+    if (cron !== undefined && (typeof cron !== 'string' || !isValidCron(cron))) return res.status(400).json({ error: 'invalid cron expression' });
+    if (action !== undefined && !SCHEDULE_ACTIONS.includes(action)) return res.status(400).json({ error: 'action must be restart or backup' });
+    const updated = await repo.updateSchedule(s.id, { name, cron, action, enabled });
+    return res.json(updated);
+  });
+
+  router.delete('/deployments/:id/schedules/:sid', async (req: Request, res: Response) => {
+    const s = await repo.getSchedule(req.params.sid);
+    if (!s || s.deploymentId !== req.params.id) return res.status(404).json({ error: 'schedule not found' });
+    await repo.deleteSchedule(s.id);
+    return res.status(204).end();
+  });
+
+  // Run a schedule immediately ("Run now").
+  router.post('/deployments/:id/schedules/:sid/run', async (req: Request, res: Response) => {
+    const s = await repo.getSchedule(req.params.sid);
+    if (!s || s.deploymentId !== req.params.id) return res.status(404).json({ error: 'schedule not found' });
+    try {
+      await runScheduleAction(scheduleActions, s);
+      await repo.updateSchedule(s.id, { lastRunAt: new Date().toISOString() });
+      return res.status(200).json({ status: 'ran', scheduleId: s.id });
+    } catch (err) {
+      return res.status(502).json({ error: err instanceof Error ? err.message : 'schedule run failed' });
+    }
   });
 
   return router;

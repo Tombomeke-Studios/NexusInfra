@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { createDeployment, listDeployments, login, streamLogs, streamStats, listFiles, writeFile, createDatabase, createBackup, ApiError, TOKEN_KEY, type ContainerStats } from './api';
+import { createDeployment, listDeployments, login, streamLogs, streamStats, listFiles, writeFile, createDatabase, createBackup, createSchedule, ApiError, TOKEN_KEY, type ContainerStats } from './api';
 
 // The client is verified against a mocked fetch: it attaches the Bearer token,
 // posts JSON, and surfaces API errors with their status.
@@ -103,6 +103,15 @@ describe('api client', () => {
     const [url, options] = fetchMock.mock.calls[0];
     expect(url).toContain('/deployments/d1/backups');
     expect(options.method).toBe('POST');
+  });
+
+  it('creates a schedule with the cron/action in the POST body', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ id: 's1' }, 201));
+    await createSchedule('d1', { name: 'Nightly', cron: '0 4 * * *', action: 'backup' });
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toContain('/deployments/d1/schedules');
+    expect(options.method).toBe('POST');
+    expect(JSON.parse(options.body as string)).toEqual({ name: 'Nightly', cron: '0 4 * * *', action: 'backup' });
   });
 
   it('parses JSON stats samples from the stats stream', async () => {

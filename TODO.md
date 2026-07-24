@@ -60,7 +60,7 @@ Each mock behavior in the ported design becomes real, one issue + branch at a ti
 - [x] File management API + real Files tab (#108)
 - [x] Server databases — provision real DBs (#109)
 - [x] Server backups — snapshot & restore volumes (#110)
-- [ ] Server schedules — cron tasks (#111)
+- [x] Server schedules — cron tasks (#111)
 - [ ] Subusers — per-server access control (#112, needs #20)
 - [ ] Node provisioning — register/deregister real nodes (#113)
 - [ ] Game servers — real game images + startup (#114)

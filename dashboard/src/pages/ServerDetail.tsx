@@ -20,11 +20,18 @@ import {
   createBackup,
   restoreBackup,
   deleteBackup,
+  listSchedules,
+  createSchedule,
+  updateSchedule,
+  deleteSchedule,
+  runSchedule,
   type DeploymentDetail,
   type FileEntry,
   type ServerDatabase,
   type DatabaseEngine,
   type ServerBackup,
+  type ServerSchedule,
+  type ScheduleAction,
 } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
 import { useToast } from '../components/Toast';
@@ -124,7 +131,7 @@ export function ServerDetail() {
       {tab === 'databases' && <DatabasesTab id={d.id} running={running} />}
       {tab === 'backups' && <BackupsTab id={d.id} running={running} />}
       {tab === 'network' && <NetworkTab />}
-      {tab === 'schedules' && <SchedulesTab />}
+      {tab === 'schedules' && <SchedulesTab id={d.id} />}
       {tab === 'subusers' && <SubusersTab />}
       {tab === 'startup' && <StartupTab image={d.dockerImage} isGame={isGame} envs={d.events.length} />}
       {tab === 'settings' && <SettingsTab onDelete={() => toast('Delete is not wired yet', 'info')} />}
@@ -713,37 +720,118 @@ function NetworkTab() {
   );
 }
 
-function SchedulesTab() {
+// ── Schedules — real cron tasks run by the orchestrator (#111) ──────────────
+function SchedulesTab({ id }: { id: string }) {
   const { toast } = useToast();
-  const [schedules, setSchedules] = useState([
-    { name: 'Nightly backup', cron: '0 4 * * *', human: 'every day at 04:00', action: 'create backup', enabled: true },
-    { name: 'Weekly restart', cron: '0 6 * * 1', human: 'Mondays at 06:00', action: 'restart', enabled: false },
-  ]);
-  const create = () => {
-    setSchedules((xs) => [...xs, { name: `Task ${xs.length + 1}`, cron: '0 3 * * *', human: 'every day at 03:00', action: 'restart', enabled: true }]);
-    toast('Schedule created', 'success', 'Schedule');
+  const [schedules, setSchedules] = useState<ServerSchedule[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [name, setName] = useState('');
+  const [cron, setCron] = useState('0 4 * * *');
+  const [action, setAction] = useState<ScheduleAction>('backup');
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setSchedules(await listSchedules(id));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load schedules');
+    }
+  }, [id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const create = async () => {
+    if (!name.trim()) return toast('Give the schedule a name', 'error', 'Schedule');
+    setBusy(true);
+    try {
+      await createSchedule(id, { name: name.trim(), cron: cron.trim(), action });
+      toast('Schedule created', 'success', 'Schedule');
+      setName('');
+      await load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Create failed', 'error', 'Schedule');
+    } finally {
+      setBusy(false);
+    }
   };
+
+  const toggle = async (s: ServerSchedule) => {
+    try {
+      await updateSchedule(id, s.id, { enabled: !s.enabled });
+      await load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Update failed', 'error', 'Schedule');
+    }
+  };
+  const runNow = async (s: ServerSchedule) => {
+    try {
+      await runSchedule(id, s.id);
+      toast(`Ran “${s.name}”`, 'success', 'Schedule');
+      await load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Run failed', 'error', 'Schedule');
+    }
+  };
+  const remove = async (s: ServerSchedule) => {
+    try {
+      await deleteSchedule(id, s.id);
+      toast('Schedule deleted', 'error', 'Schedule');
+      await load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Delete failed', 'error', 'Schedule');
+    }
+  };
+
   return (
     <>
-      <TabHeader title="Schedules" action="New schedule" onAction={create} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+        <strong style={{ fontSize: '.92rem' }}>Schedules<InfoHint text="Recurring tasks the orchestrator runs on a 5-field cron (minute hour day-of-month month day-of-week, UTC). Actions: restart the server, or snapshot a backup." label="Schedules help" /></strong>
+      </div>
+
+      <div className="card" style={{ padding: 16, marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <label style={{ flex: '1 1 140px', minWidth: 0 }}>
+          <span className="field__label" style={{ fontSize: '.78rem' }}>Name</span>
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nightly backup" />
+        </label>
+        <label style={{ flex: '1 1 120px', minWidth: 0 }}>
+          <span className="field__label" style={{ fontSize: '.78rem' }}>Cron (UTC)</span>
+          <input className="input mono" value={cron} onChange={(e) => setCron(e.target.value)} placeholder="0 4 * * *" />
+        </label>
+        <div>
+          <span className="field__label" style={{ fontSize: '.78rem' }}>Action</span>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {(['backup', 'restart'] as ScheduleAction[]).map((a) => (
+              <button key={a} type="button" data-ripple onClick={() => setAction(a)} className={`opt${action === a ? ' is-active' : ''}`} style={{ textTransform: 'capitalize' }}>{a}</button>
+            ))}
+          </div>
+        </div>
+        <button className="btn btn--primary btn--sm" data-ripple data-burst="primary" onClick={create} disabled={busy} style={{ minHeight: 40 }}>New schedule</button>
+      </div>
+
+      {error && <p role="alert" className="alert alert--error" style={{ marginBottom: 12 }}>{error}</p>}
       <div className="stack">
-        {schedules.map((s, i) => (
-          <div key={s.name} style={{ ...rowCss, border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface)' }}>
+        {schedules.map((s) => (
+          <div key={s.id} style={{ ...rowCss, border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface)', gap: 10 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 3 }}>
                 <strong style={{ fontSize: '.9rem' }}>{s.name}</strong>
                 <span style={{ fontSize: '.72rem', fontWeight: 600, color: s.enabled ? 'var(--color-success)' : 'var(--color-text-subtle)' }}>{s.enabled ? 'active' : 'paused'}</span>
               </div>
               <div className="subtle" style={{ fontSize: '.8rem' }}>
-                <span className="mono muted">{s.cron}</span> · {s.human} · {s.action}
+                <span className="mono muted">{s.cron}</span> · {s.action}{s.lastRunAt ? ` · last run ${new Date(s.lastRunAt).toLocaleString()}` : ''}
               </div>
             </div>
-            <button className="btn btn--secondary btn--sm" data-ripple onClick={() => toast(`Ran “${s.name}”`, 'success', 'Schedule')}>Run now</button>
-            <button role="switch" aria-checked={s.enabled} aria-label="Toggle schedule" onClick={() => setSchedules((xs) => xs.map((x, j) => (j === i ? { ...x, enabled: !x.enabled } : x)))} style={{ flex: 'none', width: 44, height: 26, borderRadius: 'var(--radius-full)', border: 'none', cursor: 'pointer', padding: 3, transition: 'background 200ms', background: s.enabled ? 'var(--color-primary)' : 'var(--color-border-strong)' }}>
+            <button className="btn btn--secondary btn--sm" data-ripple onClick={() => runNow(s)}>Run now</button>
+            <button role="switch" aria-checked={s.enabled} aria-label={`Toggle ${s.name}`} onClick={() => toggle(s)} style={{ flex: 'none', width: 44, height: 26, borderRadius: 'var(--radius-full)', border: 'none', cursor: 'pointer', padding: 3, transition: 'background 200ms', background: s.enabled ? 'var(--color-primary)' : 'var(--color-border-strong)' }}>
               <span style={{ display: 'block', width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'transform 200ms var(--ease-out)', transform: s.enabled ? 'translateX(18px)' : 'translateX(0)' }} />
             </button>
+            <button className="icon-btn" data-ripple aria-label={`Delete ${s.name}`} onClick={() => remove(s)}>🗑</button>
           </div>
         ))}
+        {schedules.length === 0 && <div className="empty">No schedules yet.</div>}
       </div>
     </>
   );

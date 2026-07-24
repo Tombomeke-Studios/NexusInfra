@@ -1,11 +1,12 @@
 import express from 'express';
 import cors from 'cors';
-import { consumeRabbitQueue, startHeartbeat, type EventEnvelope } from 'shared';
+import { buildEnvelope, consumeRabbitQueue, publishRabbitEvent, startHeartbeat, type EventEnvelope } from 'shared';
 import { PrismaRepository } from './db.js';
 import { createApiRouter } from './api.js';
 import { createAuthRouter, requireAuth } from './auth.js';
 import { createNodeRegistry } from './nodeRegistry.js';
 import { createLifecycle } from './lifecycle.js';
+import { startScheduler, type ScheduleActions } from './scheduler.js';
 
 // ── Orchestrator ────────────────────────────────────────────────────────────
 // Turns deployment requests into running containers. It keeps a node registry
@@ -14,10 +15,34 @@ import { createLifecycle } from './lifecycle.js';
 // agent's lifecycle reports.
 
 const PORT = Number(process.env.PORT) || 9200;
+const NODE_AGENT_URL = process.env.NODE_AGENT_URL || 'http://node-agent:9100';
 
 const repo = new PrismaRepository();
 const registry = createNodeRegistry(repo);
 const lifecycle = createLifecycle(repo);
+
+// Actions the schedule runner (#111) performs for a due schedule: restart the
+// server (over the bus) or snapshot a backup (via the owning node agent).
+const scheduleActions: ScheduleActions = {
+  async restart(deploymentId) {
+    const detail = await repo.getDeployment(deploymentId);
+    if (!detail?.containerId || !detail.nodeId) return;
+    await publishRabbitEvent(
+      'infra.server.restart',
+      buildEnvelope('orchestrator', { type: 'server.restart', payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId } })
+    );
+    await repo.appendDeploymentEvent(detail.id, 'schedule-restart', 'restarted by schedule');
+  },
+  async backup(deploymentId) {
+    const detail = await repo.getDeployment(deploymentId);
+    if (!detail?.containerId) return;
+    const r = await fetch(`${NODE_AGENT_URL}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ containerId: detail.containerId }) });
+    if (!r.ok) throw new Error('scheduled backup failed');
+    const snap = (await r.json()) as { ref: string; sizeBytes: number; path: string };
+    await repo.createBackup({ deploymentId: detail.id, name: `backup-${new Date().toISOString().replace(/[:.]/g, '-')}`, path: snap.path, ref: snap.ref, sizeBytes: snap.sizeBytes });
+    await repo.appendDeploymentEvent(detail.id, 'schedule-backup', 'snapshot created by schedule');
+  },
+};
 
 // ── HTTP: API + health probe ──────────────────────────────────────────────────
 const app = express();
@@ -29,8 +54,12 @@ app.get('/health', (_req, res) => {
 // Public login, then everything below requires a valid Bearer token.
 app.use(createAuthRouter());
 app.use(requireAuth);
-app.use(createApiRouter({ repo }));
+app.use(createApiRouter({ repo, scheduleActions }));
 app.listen(PORT, () => console.log(`[Orchestrator] HTTP listening on http://localhost:${PORT}`));
+
+// Evaluate schedules once a minute (restart/backup on a cron).
+startScheduler(repo, scheduleActions);
+console.log('[Orchestrator] Schedule runner started (1-minute tick)');
 
 // ── Event bus: node heartbeats + server lifecycle reports ─────────────────────
 async function start() {

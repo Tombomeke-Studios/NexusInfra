@@ -101,6 +101,35 @@ export interface CreateServerBackupInput {
   sizeBytes: number;
 }
 
+export type ScheduleAction = 'restart' | 'backup';
+
+export interface ServerScheduleRecord {
+  id: string;
+  deploymentId: string;
+  name: string;
+  cron: string;
+  action: string;
+  enabled: boolean;
+  lastRunAt: string | null;
+  createdAt: string;
+}
+
+export interface CreateServerScheduleInput {
+  deploymentId: string;
+  name: string;
+  cron: string;
+  action: string;
+  enabled?: boolean;
+}
+
+export interface UpdateServerScheduleInput {
+  name?: string;
+  cron?: string;
+  action?: string;
+  enabled?: boolean;
+  lastRunAt?: string | null;
+}
+
 export interface DeploymentEventRecord {
   id: string;
   deploymentId: string;
@@ -173,4 +202,12 @@ export interface Repository {
   listBackups(deploymentId: string): Promise<ServerBackupRecord[]>;
   getBackup(id: string): Promise<ServerBackupRecord | null>;
   deleteBackup(id: string): Promise<void>;
+
+  // Schedules (#111).
+  createSchedule(input: CreateServerScheduleInput): Promise<ServerScheduleRecord>;
+  listSchedules(deploymentId: string): Promise<ServerScheduleRecord[]>;
+  listAllSchedules(): Promise<ServerScheduleRecord[]>;
+  getSchedule(id: string): Promise<ServerScheduleRecord | null>;
+  updateSchedule(id: string, patch: UpdateServerScheduleInput): Promise<ServerScheduleRecord | null>;
+  deleteSchedule(id: string): Promise<void>;
 }
