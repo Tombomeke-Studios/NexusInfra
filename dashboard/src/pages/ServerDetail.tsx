@@ -85,15 +85,8 @@ export function ServerDetail() {
         </div>
       </div>
 
-      {/* Resource stats (mock) */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12, marginBottom: 24 }}>
-        <StatBox label="CPU" value={running ? '34%' : '0%'} />
-        <StatBox label="Memory" value={running ? '58%' : '0%'} />
-        <StatBox label="Disk" value="22%" />
-        <StatBox label="Network" value={running ? '1.2 MB/s' : '—'} />
-        <StatBox label="Uptime" value={running ? '2h 14m' : '—'} />
-        {isGame && <StatBox label="Players · TPS" value="7/20 · 19.9" />}
-      </div>
+      {/* Resource stats — drift live while running (mock) */}
+      <LiveStats running={running} isGame={isGame} />
 
       {/* Tab bar */}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', borderBottom: '1px solid var(--color-border)', marginBottom: 22 }}>
@@ -114,6 +107,42 @@ export function ServerDetail() {
       {tab === 'subusers' && <SubusersTab />}
       {tab === 'startup' && <StartupTab image={d.dockerImage} isGame={isGame} envs={d.events.length} />}
       {tab === 'settings' && <SettingsTab onDelete={() => toast('Delete is not wired yet', 'info')} />}
+    </div>
+  );
+}
+
+// Header resource stats that drift live while the server runs (mock; real
+// per-container stats are #67/#72).
+function LiveStats({ running, isGame }: { running: boolean; isGame: boolean }) {
+  const [s, setS] = useState({ cpu: 34, ram: 58, disk: 22, netKb: 1180, players: 7, tps: 19.9, since: Date.now() });
+  useEffect(() => {
+    if (!running) return;
+    const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+    const t = setInterval(() => {
+      setS((p) => ({
+        ...p,
+        cpu: Math.round(clamp(p.cpu + (Math.random() * 12 - 6), 3, 96)),
+        ram: Math.round(clamp(p.ram + (Math.random() * 8 - 4), 5, 97)),
+        netKb: Math.round(clamp(p.netKb + (Math.random() * 500 - 250), 60, 8000)),
+        players: isGame ? clamp(p.players + (Math.random() < 0.3 ? (Math.random() < 0.5 ? 1 : -1) : 0), 0, 20) : p.players,
+        tps: isGame ? +clamp(p.tps + (Math.random() * 0.6 - 0.3), 12, 20).toFixed(1) : p.tps,
+      }));
+    }, 1500);
+    return () => clearInterval(t);
+  }, [running, isGame]);
+
+  const mins = Math.floor((Date.now() - s.since) / 60000);
+  const uptime = running ? `${Math.floor(mins / 60)}h ${mins % 60}m` : '—';
+  const net = running ? (s.netKb >= 1024 ? `${(s.netKb / 1024).toFixed(1)} MB/s` : `${s.netKb} KB/s`) : '—';
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12, marginBottom: 24 }}>
+      <StatBox label="CPU" value={running ? `${s.cpu}%` : '0%'} />
+      <StatBox label="Memory" value={running ? `${s.ram}%` : '0%'} />
+      <StatBox label="Disk" value={`${s.disk}%`} />
+      <StatBox label="Network" value={net} />
+      <StatBox label="Uptime" value={uptime} />
+      {isGame && <StatBox label="Players · TPS" value={running ? `${s.players}/20 · ${s.tps}` : '—'} />}
     </div>
   );
 }
