@@ -1,6 +1,7 @@
 import { motionEnabled } from './motion';
 
 // Interaction layer from the design (NexusInfra.dc.html script):
+//  - the animated background node-network canvas (data-bg-net),
 //  - a cursor-follow aura that smoothly lerps toward the pointer and emits a
 //    fading trail of dots,
 //  - click ripples on [data-ripple] and particle bursts on [data-burst],
@@ -13,6 +14,7 @@ export function initInteractionFx(): () => void {
   const aura = document.getElementById('cursor-aura');
   const fxLayer = document.getElementById('fx-layer');
   const a = { x: window.innerWidth / 2, y: window.innerHeight / 2, tx: window.innerWidth / 2, ty: window.innerHeight / 2 };
+  const disposeNet = initNetwork(a);
   let lastTrail = 0;
   let raf = 0;
   let lastSpot: HTMLElement | null = null;
@@ -84,6 +86,163 @@ export function initInteractionFx(): () => void {
     document.removeEventListener('click', onClick);
     if (raf) cancelAnimationFrame(raf);
     cancelAnimationFrame(loopRaf);
+    disposeNet();
+  };
+}
+
+// `#rgb`/`#rrggbb` → the "r,g,b" string used in the canvas's rgba() strokes.
+export function hexToRgb(hex: string): string | null {
+  let h = (hex || '').trim().replace('#', '');
+  if (h.length === 3) h = h.split('').map((x) => x + x).join('');
+  if (h.length !== 6) return null;
+  const n = parseInt(h, 16);
+  if (Number.isNaN(n)) return null;
+  return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+}
+
+interface NetNode { x: number; y: number; vx: number; vy: number; r: number; ph: number }
+interface Packet { a: NetNode; b: NetNode; t: number; sp: number }
+
+// The background node-network (design: initNetwork). Drifting nodes link to nearby
+// neighbours, occasionally stream a "packet" along a link, and are repelled by /
+// wired to the cursor. Shares the aura's target position `a.tx/ty` as the pointer.
+// Returns a disposer; a no-op where there's no 2D canvas (e.g. jsdom in tests).
+function initNetwork(a: { tx: number; ty: number }): () => void {
+  const c = document.querySelector<HTMLCanvasElement>('canvas[data-bg-net]');
+  const ctx = c?.getContext('2d');
+  if (!c || !ctx) return () => {};
+
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  let W = 0;
+  let H = 0;
+  const resize = () => {
+    const w = c.clientWidth || window.innerWidth;
+    const h = c.clientHeight || window.innerHeight;
+    c.width = w * dpr;
+    c.height = h * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    W = w;
+    H = h;
+  };
+  resize();
+  window.addEventListener('resize', resize);
+
+  const rnd = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
+  const col = hexToRgb(getComputedStyle(document.documentElement).getPropertyValue('--color-primary')) || '99,102,241';
+  const N = Math.max(38, Math.min(84, Math.round((W * H) / 18000)));
+  const nodes: NetNode[] = Array.from({ length: N }, () => ({ x: rnd(0, W), y: rnd(0, H), vx: rnd(-0.26, 0.26), vy: rnd(-0.26, 0.26), r: rnd(1.2, 2.9), ph: rnd(0, 6.28) }));
+  const packets: Packet[] = [];
+  const LINK = 155;
+  const MOUSE = 210;
+  let raf = 0;
+
+  const draw = () => {
+    const mx = a.tx;
+    const my = a.ty;
+    const t = performance.now() / 1000;
+    ctx.clearRect(0, 0, W, H);
+
+    // Drift + wrap; repel from the cursor.
+    for (const p of nodes) {
+      p.x += p.vx;
+      p.y += p.vy;
+      if (p.x < -30) p.x = W + 30;
+      if (p.x > W + 30) p.x = -30;
+      if (p.y < -30) p.y = H + 30;
+      if (p.y > H + 30) p.y = -30;
+      const dxm = mx - p.x;
+      const dym = my - p.y;
+      const dm = Math.hypot(dxm, dym) || 1;
+      if (dm < MOUSE) {
+        p.x -= (dxm / dm) * 0.6;
+        p.y -= (dym / dm) * 0.6;
+      }
+    }
+    // Links between nearby nodes.
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const A = nodes[i];
+        const B = nodes[j];
+        const d = Math.hypot(A.x - B.x, A.y - B.y);
+        if (d < LINK) {
+          ctx.strokeStyle = `rgba(${col},${(1 - d / LINK) * 0.26})`;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(A.x, A.y);
+          ctx.lineTo(B.x, B.y);
+          ctx.stroke();
+        }
+      }
+    }
+    // Links from the cursor to nearby nodes.
+    for (const p of nodes) {
+      const d = Math.hypot(mx - p.x, my - p.y);
+      if (d < MOUSE) {
+        ctx.strokeStyle = `rgba(${col},${(1 - d / MOUSE) * 0.55})`;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(mx, my);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+      }
+    }
+    // Occasionally launch a packet toward the nearest neighbour.
+    if (Math.random() < 0.07 && nodes.length > 3) {
+      const A = nodes[(Math.random() * nodes.length) | 0];
+      let best: NetNode | null = null;
+      let bd = LINK;
+      for (const B of nodes) {
+        if (B === A) continue;
+        const d = Math.hypot(A.x - B.x, A.y - B.y);
+        if (d < bd) {
+          best = B;
+          bd = d;
+        }
+      }
+      if (best) packets.push({ a: A, b: best, t: 0, sp: rnd(0.01, 0.024) });
+    }
+    // Advance + draw packets.
+    for (let k = packets.length - 1; k >= 0; k--) {
+      const pk = packets[k];
+      pk.t += pk.sp;
+      if (pk.t >= 1) {
+        packets.splice(k, 1);
+        continue;
+      }
+      const x = pk.a.x + (pk.b.x - pk.a.x) * pk.t;
+      const y = pk.a.y + (pk.b.y - pk.a.y) * pk.t;
+      ctx.fillStyle = `rgba(${col},0.28)`;
+      ctx.beginPath();
+      ctx.arc(x, y, 5.5, 0, 6.29);
+      ctx.fill();
+      ctx.fillStyle = `rgba(${col},0.95)`;
+      ctx.beginPath();
+      ctx.arc(x, y, 2.3, 0, 6.29);
+      ctx.fill();
+    }
+    // Nodes: pulse, and glow larger near the cursor.
+    for (const p of nodes) {
+      const d = Math.hypot(mx - p.x, my - p.y);
+      const near = d < MOUSE;
+      const pulse = 0.55 + 0.45 * Math.sin(t * 1.5 + p.ph);
+      if (near) {
+        ctx.fillStyle = `rgba(${col},0.13)`;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r * 4.5, 0, 6.29);
+        ctx.fill();
+      }
+      ctx.fillStyle = `rgba(${col},${(near ? 0.95 : 0.5) * pulse})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r * (near ? 1.8 : 1), 0, 6.29);
+      ctx.fill();
+    }
+    raf = requestAnimationFrame(draw);
+  };
+  raf = requestAnimationFrame(draw);
+
+  return () => {
+    cancelAnimationFrame(raf);
+    window.removeEventListener('resize', resize);
   };
 }
 

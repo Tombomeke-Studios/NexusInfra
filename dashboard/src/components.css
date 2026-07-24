@@ -81,6 +81,13 @@
   animation: gridDrift 14s linear infinite;
   opacity: 0.9;
 }
+.bg-net {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.72;
+}
 .aurora {
   position: absolute;
   border-radius: 50%;
