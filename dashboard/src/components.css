@@ -1,6 +1,69 @@
 /* Reusable component classes built on the design tokens (index.css). Keep visual
    decisions here so pages stay markup-only. */
 
+/* ── Spotlight (glow follows cursor; wired by the interaction layer #91) ─── */
+.spotlight {
+  position: relative;
+  overflow: hidden;
+}
+.spotlight::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    200px circle at var(--mx, 50%) var(--my, 50%),
+    color-mix(in srgb, var(--color-primary) 16%, transparent),
+    transparent 62%
+  );
+  opacity: var(--spot, 0);
+  transition: opacity 200ms;
+}
+.spotlight > * {
+  position: relative;
+}
+
+/* Cards that lift on hover */
+.card--lift {
+  transition: transform var(--transition), box-shadow var(--transition);
+}
+.card--lift:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow);
+}
+
+/* Overview node card + add-node button */
+.node-card {
+  transition: transform 300ms var(--ease-out), box-shadow 300ms var(--ease-out), border-color 300ms var(--ease-out);
+}
+.node-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--color-primary) 55%, var(--color-border));
+  box-shadow: 0 12px 36px -12px color-mix(in srgb, var(--color-primary) 60%, transparent);
+}
+.node-add {
+  position: relative;
+  overflow: hidden;
+  min-height: 126px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1.5px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: border-color 220ms, color 220ms, background 220ms;
+}
+.node-add:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 7%, transparent);
+}
+
 /* ── Ambient background (aurora + grid + cursor glow) ───────────────────── */
 .bg-layer {
   position: fixed;
