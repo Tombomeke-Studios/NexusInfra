@@ -28,6 +28,9 @@ class FakeRuntime implements ContainerRuntime {
   logs(): () => void {
     return () => {};
   }
+  stats(): () => void {
+    return () => {};
+  }
 }
 
 const NODE_ID = 'node-1';

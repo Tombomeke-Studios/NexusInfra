@@ -34,6 +34,20 @@ app.get('/logs/:containerId', (req, res) => {
   req.on('close', () => stop());
 });
 
+// ── HTTP: container resource stats stream (SSE) ───────────────────────────────
+// Internal endpoint (reached only via the Orchestrator's proxy) that follows a
+// container's Docker stats and emits one SSE `data:` per JSON stats sample.
+app.get('/stats/:containerId', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  const stop = runtime.stats(req.params.containerId, (stats) => res.write(`data: ${JSON.stringify(stats)}\n\n`));
+  req.on('close', () => stop());
+});
+
 app.listen(PORT, () => console.log(`[Node Agent ${NODE_ID}] HTTP listening on http://localhost:${PORT}`));
 
 // ── Event bus: consume server lifecycle commands ──────────────────────────────
