@@ -91,6 +91,13 @@ Proxied from the owning Node Agent's internal `/logs/:containerId`. `404` if unk
 deployment is not running. The browser consumes it with a streaming `fetch` (so the JWT stays in the
 `Authorization` header, not the URL).
 
+### `GET /deployments/:id/stats`
+
+Server-Sent Events stream of the running container's resource stats — one `data:` line per sample, a
+JSON object `{ cpuPercent, memUsedMb, memLimitMb, memPercent, rxKb, txKb }` derived from `docker stats`.
+Proxied from the owning Node Agent's internal `/stats/:containerId`. `404` if unknown, `409` if the
+deployment is not running. Consumed with the same streaming `fetch` as logs.
+
 ### `POST /deployments/:id/stop`
 
 Request a running deployment be stopped — emits `infra.server.stop`; the agent stops **and removes**

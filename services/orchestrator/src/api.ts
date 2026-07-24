@@ -8,8 +8,8 @@ import type { DeploymentDetail, NodeRecord, Repository } from './types.js';
 // resolve this per node from the registry.
 const NODE_AGENT_URL = process.env.NODE_AGENT_URL || 'http://node-agent:9100';
 
-/** Decide whether a deployment's logs can be streamed, and from which container. */
-export function resolveLogTarget(detail: DeploymentDetail | null): { status: number; error?: string; containerId?: string } {
+/** Decide whether a deployment's container can be streamed from, and which one. */
+export function resolveContainerTarget(detail: DeploymentDetail | null): { status: number; error?: string; containerId?: string } {
   if (!detail) return { status: 404, error: 'deployment not found' };
   if (!detail.containerId) return { status: 409, error: 'deployment is not running' };
   return { status: 200, containerId: detail.containerId };
@@ -175,9 +175,10 @@ export function createApiRouter(deps: ApiDeps): Router {
     res.json(nodes.map((n) => ({ ...n, health: nodeHealth(n, now) })));
   });
 
-  // Stream a running deployment's logs (SSE), proxied from the owning Node Agent.
-  router.get('/deployments/:id/logs', async (req: Request, res: Response) => {
-    const target = resolveLogTarget(await repo.getDeployment(req.params.id));
+  // Pipe an SSE stream from the owning Node Agent's internal `/{kind}/:containerId`
+  // endpoint straight to the client, resolving the running container first.
+  const proxyContainerStream = (kind: 'logs' | 'stats') => async (req: Request, res: Response) => {
+    const target = resolveContainerTarget(await repo.getDeployment(req.params.id));
     if (target.status !== 200) return res.status(target.status).json({ error: target.error });
 
     res.writeHead(200, {
@@ -190,7 +191,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     const controller = new AbortController();
     req.on('close', () => controller.abort());
     try {
-      const upstream = await fetch(`${NODE_AGENT_URL}/logs/${target.containerId}`, { signal: controller.signal });
+      const upstream = await fetch(`${NODE_AGENT_URL}/${kind}/${target.containerId}`, { signal: controller.signal });
       if (!upstream.body) return res.end();
       const reader = upstream.body.getReader();
       for (;;) {
@@ -202,7 +203,12 @@ export function createApiRouter(deps: ApiDeps): Router {
       // client disconnected or upstream closed
     }
     res.end();
-  });
+  };
+
+  // Stream a running deployment's logs / resource stats (SSE), proxied from the
+  // owning Node Agent.
+  router.get('/deployments/:id/logs', proxyContainerStream('logs'));
+  router.get('/deployments/:id/stats', proxyContainerStream('stats'));
 
   return router;
 }

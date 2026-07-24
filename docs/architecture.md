@@ -18,7 +18,7 @@ event contracts, or infra topology.
 | `dashboard` | ✅ Built (MVP) | React/Vite panel: login, overview, deployment form, live server list + stop |
 | `services/billing-bridge` | Planned (#18, #19) | Runtime tracking → FinVault payments |
 | `services/gateway` | Planned (#20) | JWT validation, routing, WebSocket proxy |
-| Real-time container logs | Planned (#17) | WebSocket log streaming in the dashboard |
+| Live container console | ✅ Logs + stats (SSE) | Orchestrator proxies the agent's `/logs` + `/stats` SSE to the dashboard; interactive terminal planned (#68/#71) |
 
 ## Event bus
 
