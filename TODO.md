@@ -51,7 +51,7 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 Port the interactive UX from the design that the first pass simplified. Still UI/mock (wired later).
 
 - [x] Cursor aura trail + FX parity (#93)
-- [ ] Overview: live meters + full add-node form + node actions (#94)
+- [x] Overview: live meters + full add-node form + node actions (#94)
 - [x] New Deployment: placement headroom + game details (#95)
 - [x] Console: live streaming logs + CPU/RAM sparkline (#96)
 - [x] Files tab: navigable tree + breadcrumbs (#97)

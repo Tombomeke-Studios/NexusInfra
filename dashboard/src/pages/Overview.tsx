@@ -27,15 +27,19 @@ export function Overview() {
 
   useEffect(() => {
     let alive = true;
-    Promise.all([listNodes(), listDeployments()])
-      .then(([n, d]) => {
-        if (!alive) return;
-        setNodes(n);
-        setDeployments(d);
-      })
-      .catch((e) => alive && setError(e instanceof Error ? e.message : 'Failed to load'));
+    const load = (first: boolean) =>
+      Promise.all([listNodes(), listDeployments()])
+        .then(([n, d]) => {
+          if (!alive) return;
+          setNodes(n);
+          setDeployments(d);
+        })
+        .catch((e) => alive && first && setError(e instanceof Error ? e.message : 'Failed to load'));
+    void load(true);
+    const t = setInterval(() => void load(false), 5000); // live meters
     return () => {
       alive = false;
+      clearInterval(t);
     };
   }, []);
 
@@ -161,6 +165,15 @@ export function Overview() {
                       </span>
                       {n.health}
                     </span>
+                    <button
+                      className="icon-btn"
+                      data-ripple
+                      aria-label="Remove node"
+                      onClick={() => toast('Removing nodes is not wired yet', 'info')}
+                      style={{ width: 26, height: 26 }}
+                    >
+                      ✕
+                    </button>
                   </span>
                 </div>
                 <div style={{ display: 'flex', gap: 12, fontSize: '.76rem', color: 'var(--color-text-subtle)', fontFamily: 'var(--font-mono)', marginBottom: 14 }}>
@@ -232,10 +245,42 @@ function NodeMeter({ label, pct }: { label: string; pct: number }) {
 // Add-node form — UI only (create is a stub until node provisioning is wired).
 function AddNodeForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: () => void }) {
   const [name, setName] = useState('');
+  const [region, setRegion] = useState('fra');
+  const [cores, setCores] = useState(8);
+  const [mem, setMem] = useState(32);
+  const [disk, setDisk] = useState(200);
+  const [over, setOver] = useState(0);
+  const [maint, setMaint] = useState(false);
+  const numStyle: CSSProperties = { minHeight: 36 };
+
   return (
     <div style={{ border: '1px solid var(--color-primary)', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface)', boxShadow: 'var(--shadow)', padding: 16, animation: 'pop 220ms var(--ease-out)' }}>
       <div style={{ fontWeight: 600, marginBottom: 12 }}>New node</div>
-      <input className="input" placeholder="node-fra-2 (optional)" value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 12 }} />
+      <input className="input" placeholder="node-fra-2 (optional)" value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 10 }} />
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+        {['fra', 'nyc', 'sgp', 'ams'].map((r) => {
+          const active = region === r;
+          return (
+            <button key={r} type="button" onClick={() => setRegion(r)} style={{ flex: 1, minHeight: 32, borderRadius: 'var(--radius-sm)', border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-border-strong)'}`, background: active ? 'var(--color-primary-soft)' : 'var(--color-surface)', color: active ? 'var(--color-primary)' : 'var(--color-text)', fontWeight: 600, fontSize: '.76rem', textTransform: 'uppercase', cursor: 'pointer', transition: 'all 150ms' }}>
+              {r}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+        <label style={{ flex: 1, minWidth: 0 }}><span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>vCPU cores</span><input className="input mono" type="number" min={1} max={128} value={cores} onChange={(e) => setCores(Number(e.target.value))} style={numStyle} /></label>
+        <label style={{ flex: 1, minWidth: 0 }}><span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>Memory (GB)</span><input className="input mono" type="number" min={1} max={1024} value={mem} onChange={(e) => setMem(Number(e.target.value))} style={numStyle} /></label>
+      </div>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+        <label style={{ flex: 1, minWidth: 0 }}><span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>Disk (GB)</span><input className="input mono" type="number" min={10} max={10000} step={10} value={disk} onChange={(e) => setDisk(Number(e.target.value))} style={numStyle} /></label>
+        <label style={{ flex: 1, minWidth: 0 }}><span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>Mem overalloc %</span><input className="input mono" type="number" min={0} max={200} step={5} value={over} onChange={(e) => setOver(Number(e.target.value))} style={numStyle} /></label>
+      </div>
+      <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 14, padding: '9px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', cursor: 'pointer' }}>
+        <span style={{ fontSize: '.82rem', fontWeight: 550 }}>Start in maintenance mode</span>
+        <button type="button" role="switch" aria-checked={maint} aria-label="Start in maintenance" onClick={() => setMaint((v) => !v)} style={{ flex: 'none', width: 42, height: 24, borderRadius: 'var(--radius-full)', border: 'none', cursor: 'pointer', padding: 3, transition: 'background 200ms', background: maint ? 'var(--color-primary)' : 'var(--color-border-strong)' }}>
+          <span style={{ display: 'block', width: 18, height: 18, borderRadius: '50%', background: '#fff', transition: 'transform 200ms var(--ease-out)', transform: maint ? 'translateX(18px)' : 'translateX(0)' }} />
+        </button>
+      </label>
       <div style={{ display: 'flex', gap: 8 }}>
         <button className="btn btn--primary btn--sm" data-ripple data-burst="success" style={{ flex: 1 }} onClick={onCreate}>Create</button>
         <button className="btn btn--secondary btn--sm" data-ripple onClick={onCancel}>Cancel</button>
