@@ -753,6 +753,20 @@ input[type='range']::-moz-range-thumb {
   flex: 1;
   min-width: 0;
 }
+.toast__heading {
+  display: block;
+  font-weight: 650;
+  font-size: 0.9rem;
+  letter-spacing: -0.01em;
+}
+.toast__text {
+  display: block;
+  font-size: 0.83rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .toast__bar {
   position: absolute;
   left: 0;
