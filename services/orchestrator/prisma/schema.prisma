@@ -63,6 +63,21 @@ model Deployment {
   events         DeploymentEvent[]
   databases      ServerDatabase[]
   backups        ServerBackup[]
+  schedules      ServerSchedule[]
+}
+
+// A recurring task for a server, evaluated by the orchestrator's scheduler on a
+// 5-field cron expression (#111). Actions: restart the server or snapshot a backup.
+model ServerSchedule {
+  id           String     @id
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+  deploymentId String
+  name         String
+  cron         String
+  action       String
+  enabled      Boolean    @default(true)
+  lastRunAt    DateTime?
+  createdAt    DateTime   @default(now())
 }
 
 // A point-in-time snapshot of a server's data directory, stored as a tar on the
