@@ -23,6 +23,9 @@ export function Overview() {
   const [deployments, setDeployments] = useState<DeploymentView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [addingNode, setAddingNode] = useState(false);
+  const [localNodes, setLocalNodes] = useState<NodeView[]>([]); // mock nodes added in the UI
+  const [hidden, setHidden] = useState<string[]>([]);
+  const [maint, setMaint] = useState<string[]>([]);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -44,8 +47,30 @@ export function Overview() {
   }, []);
 
   const loading = !error && (!nodes || !deployments);
-  const ns = nodes ?? [];
+  // Real (polled) nodes + locally-added mock nodes, minus removed ones.
+  const ns = [...(nodes ?? []), ...localNodes].filter((n) => !hidden.includes(n.id));
   const ds = deployments ?? [];
+
+  const addNode = (cfg: { name: string; region: string; cores: number; mem: number; maint: boolean }) => {
+    const id = `local-${Date.now()}`;
+    const name = cfg.name.trim() || `node-${cfg.region}-${localNodes.length + 2}`;
+    setLocalNodes((xs) => [
+      ...xs,
+      { id, name, lastHeartbeat: new Date().toISOString(), cpuPercent: 4 + Math.random() * 10, ramUsedMb: cfg.mem * 1024 * 0.1, ramTotalMb: cfg.mem * 1024, diskUsedGb: 0, diskTotalGb: 0, health: 'healthy' },
+    ]);
+    if (cfg.maint) setMaint((m) => [...m, id]);
+    setAddingNode(false);
+    toast(`${name} provisioned`, 'success', 'Node');
+  };
+  const removeNode = (id: string, name: string) => {
+    setHidden((h) => [...h, id]);
+    toast(`${name} removed`, 'error', 'Node');
+  };
+  const toggleMaint = (id: string, name: string) => {
+    const on = !maint.includes(id);
+    setMaint((m) => (on ? [...m, id] : m.filter((x) => x !== id)));
+    toast(on ? `${name} entered maintenance` : `${name} back online`, on ? 'info' : 'success', 'Node');
+  };
   const running = ds.filter((d) => d.status === 'running').length;
   const healthy = ns.filter((n) => n.health === 'healthy').length;
   const stats = [
@@ -132,7 +157,9 @@ export function Overview() {
       <h3 style={{ marginBottom: 16 }}>Nodes</h3>
       <div className="stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(240px,1fr))', gap: 16 }}>
         {ns.map((n, i) => {
-          const hs = healthStyle(n.health);
+          const inMaint = maint.includes(n.id);
+          const hs = inMaint ? { color: 'var(--color-warning)', soft: 'var(--color-warning-soft)' } : healthStyle(n.health);
+          const healthLabel = inMaint ? 'maintenance' : n.health;
           const cpu = cpuOf(n);
           const ram = ramOf(n);
           const svCount = ds.filter((d) => d.nodeId === n.id).length;
@@ -163,13 +190,13 @@ export function Overview() {
                       <span style={{ position: 'relative', width: 7, height: 7, borderRadius: '50%', background: 'currentColor' }}>
                         <span style={{ position: 'absolute', inset: 0, borderRadius: '50%', background: 'currentColor', animation: 'ping 1.8s ease-out infinite' }} />
                       </span>
-                      {n.health}
+                      {healthLabel}
                     </span>
                     <button
                       className="icon-btn"
                       data-ripple
                       aria-label="Remove node"
-                      onClick={() => toast('Removing nodes is not wired yet', 'info')}
+                      onClick={() => removeNode(n.id, n.name)}
                       style={{ width: 26, height: 26 }}
                     >
                       ✕
@@ -191,8 +218,8 @@ export function Overview() {
                     <div className="meter" style={{ flex: 1, height: 5 }}><div className="meter__fill" style={{ width: `${allocRam}%`, background: 'oklch(0.72 0.13 180)' }} /></div>
                   </div>
                 </div>
-                <button className="btn btn--secondary btn--sm" data-ripple style={{ marginTop: 14, width: '100%' }} onClick={() => toast('Maintenance mode is not wired yet', 'info')}>
-                  Enter maintenance
+                <button className="btn btn--secondary btn--sm" data-ripple style={{ marginTop: 14, width: '100%' }} onClick={() => toggleMaint(n.id, n.name)}>
+                  {inMaint ? 'Exit maintenance' : 'Enter maintenance'}
                 </button>
               </div>
             </article>
@@ -205,7 +232,7 @@ export function Overview() {
             <span style={{ fontWeight: 600, fontSize: '.9rem' }}>New node</span>
           </button>
         ) : (
-          <AddNodeForm onCancel={() => setAddingNode(false)} onCreate={() => { setAddingNode(false); toast('Adding nodes is not wired yet', 'info'); }} />
+          <AddNodeForm onCancel={() => setAddingNode(false)} onCreate={addNode} />
         )}
       </div>
 
@@ -242,8 +269,9 @@ function NodeMeter({ label, pct }: { label: string; pct: number }) {
   );
 }
 
-// Add-node form — UI only (create is a stub until node provisioning is wired).
-function AddNodeForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: () => void }) {
+// Add-node form — adds a mock node with the configured region/size (real
+// provisioning is wired later).
+function AddNodeForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: (cfg: { name: string; region: string; cores: number; mem: number; maint: boolean }) => void }) {
   const [name, setName] = useState('');
   const [region, setRegion] = useState('fra');
   const [cores, setCores] = useState(8);
@@ -279,7 +307,7 @@ function AddNodeForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: (
         </button>
       </label>
       <div style={{ display: 'flex', gap: 8 }}>
-        <button className="btn btn--primary btn--sm" data-ripple data-burst="success" style={{ flex: 1 }} onClick={onCreate}>Create</button>
+        <button className="btn btn--primary btn--sm" data-ripple data-burst="success" style={{ flex: 1 }} onClick={() => onCreate({ name, region, cores, mem, maint })}>Create</button>
         <button className="btn btn--secondary btn--sm" data-ripple onClick={onCancel}>Cancel</button>
       </div>
     </div>
