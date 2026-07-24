@@ -92,24 +92,13 @@ export function NewDeployment() {
                 { v: 'app', label: 'Application', sub: 'Any Docker image' },
                 { v: 'game', label: 'Game server', sub: 'Minecraft, Valheim, …' },
               ].map((o) => {
-                const active = kind === o.v;
                 return (
                   <button
                     key={o.v}
                     type="button"
                     data-ripple
                     onClick={() => setKind(o.v as 'app' | 'game')}
-                    style={{
-                      flex: 1,
-                      textAlign: 'left',
-                      padding: '13px 15px',
-                      borderRadius: 'var(--radius)',
-                      border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-border-strong)'}`,
-                      background: active ? 'var(--color-primary-soft)' : 'var(--color-surface)',
-                      color: active ? 'var(--color-primary)' : 'var(--color-text)',
-                      cursor: 'pointer',
-                      transition: 'all 160ms',
-                    }}
+                    className={`opt opt--card opt--lg${kind === o.v ? ' is-active' : ''}`}
                   >
                     <span style={{ display: 'block', fontWeight: 650, fontSize: '.92rem' }}>{o.label}</span>
                     <span style={{ display: 'block', fontSize: '.76rem', opacity: 0.82 }}>{o.sub}</span>
@@ -173,24 +162,14 @@ export function NewDeployment() {
             </span>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {[{ id: 'auto', name: 'Auto', sub: 'emptiest node' }, ...nodes.map((n) => ({ id: n.id, name: n.name, sub: n.health }))].map((o) => {
-                const active = placement === o.id;
                 return (
                   <button
                     key={o.id}
                     type="button"
+                    data-ripple
                     onClick={() => setPlacement(o.id)}
-                    style={{
-                      flex: 1,
-                      minWidth: 112,
-                      textAlign: 'left',
-                      padding: '9px 12px',
-                      borderRadius: 'var(--radius)',
-                      border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-border-strong)'}`,
-                      background: active ? 'var(--color-primary-soft)' : 'var(--color-surface)',
-                      color: active ? 'var(--color-primary)' : 'var(--color-text)',
-                      cursor: 'pointer',
-                      transition: 'all 150ms',
-                    }}
+                    className={`opt opt--card${placement === o.id ? ' is-active' : ''}`}
+                    style={{ minWidth: 112 }}
                   >
                     <span style={{ display: 'block', fontWeight: 600, fontSize: '.86rem' }}>{o.name}</span>
                     <span className="mono" style={{ display: 'block', fontSize: '.72rem', opacity: 0.85 }}>{o.sub}</span>
@@ -284,32 +263,18 @@ export function NewDeployment() {
 function Seg({ options, value, onChange }: { options: { value: string; label: string }[]; value: string; onChange: (v: string) => void }) {
   return (
     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-      {options.map((o) => {
-        const active = o.value === value;
-        return (
-          <button
-            key={o.value}
-            type="button"
-            onClick={() => onChange(o.value)}
-            style={{
-              flex: 1,
-              minWidth: 70,
-              minHeight: 34,
-              borderRadius: 'var(--radius-sm)',
-              border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-border-strong)'}`,
-              background: active ? 'var(--color-primary-soft)' : 'var(--color-surface)',
-              color: active ? 'var(--color-primary)' : 'var(--color-text)',
-              fontWeight: 600,
-              fontSize: '.8rem',
-              textTransform: 'capitalize',
-              cursor: 'pointer',
-              transition: 'all 150ms',
-            }}
-          >
-            {o.label}
-          </button>
-        );
-      })}
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          data-ripple
+          onClick={() => onChange(o.value)}
+          className={`opt${o.value === value ? ' is-active' : ''}`}
+          style={{ textTransform: 'capitalize' }}
+        >
+          {o.label}
+        </button>
+      ))}
     </div>
   );
 }

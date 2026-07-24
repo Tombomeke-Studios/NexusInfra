@@ -97,31 +97,11 @@ export function ServerDetail() {
 
       {/* Tab bar */}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', borderBottom: '1px solid var(--color-border)', marginBottom: 22 }}>
-        {TABS.map((t) => {
-          const active = tab === t;
-          return (
-            <button
-              key={t}
-              data-ripple
-              onClick={() => setTab(t)}
-              style={{
-                padding: '9px 15px',
-                border: 'none',
-                borderBottom: `2px solid ${active ? 'var(--color-primary)' : 'transparent'}`,
-                background: 'transparent',
-                color: active ? 'var(--color-primary)' : 'var(--color-text-muted)',
-                fontWeight: 600,
-                fontSize: '.88rem',
-                textTransform: 'capitalize',
-                cursor: 'pointer',
-                marginBottom: -1,
-                transition: 'color 150ms, border-color 150ms',
-              }}
-            >
-              {t}
-            </button>
-          );
-        })}
+        {TABS.map((t) => (
+          <button key={t} data-ripple onClick={() => setTab(t)} className={`tab${tab === t ? ' is-active' : ''}`}>
+            {t}
+          </button>
+        ))}
       </div>
 
       {/* Tab content */}

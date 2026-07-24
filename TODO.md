@@ -57,7 +57,7 @@ Port the interactive UX from the design that the first pass simplified. Still UI
 - [x] Files tab: navigable tree + breadcrumbs (#97)
 - [x] Server detail: interactive mock actions (db/backup/schedule/subuser) (#98)
 - [x] Toast headings + design toast content (#99)
-- [ ] Hover states on option controls (#100)
+- [x] Hover states on option controls (#100)
 
 ---
 
