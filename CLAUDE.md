@@ -172,6 +172,7 @@ is the migrations directory.
 |---|---|
 | `src/runtime.ts` | `ContainerRuntime` interface + `DockerodeRuntime` (real Docker via dockerode) + host resource collection + per-container log/stats streams |
 | `src/stats.ts` | `parseDockerStats` — pure derivation of `ContainerStats` (CPU%, mem, network) from a Docker stats sample |
+| `src/limits.ts` | `resourceLimitsToHostConfig` — pure translation of a server's `ResourceLimits` (%) into Docker HostConfig caps (Memory, NanoCpus, RestartPolicy, …) enforced at start |
 | `src/agent.ts` | Command handling: consumes server.start/stop/restart for this node, publishes server.started/stopped/crashed; dependency-injected for testing |
 | `src/agent.test.ts` | Unit tests with a fake runtime + captured publisher (no Docker/broker needed) |
 | `src/index.ts` | Entry: DockerodeRuntime + agent, binds `nexusinfra.node-agent.{nodeId}`, HTTP `/health` + internal SSE `/logs/:containerId` · `/stats/:containerId` |

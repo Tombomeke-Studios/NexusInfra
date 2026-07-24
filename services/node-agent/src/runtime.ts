@@ -1,8 +1,9 @@
 import os from 'os';
 import Docker from 'dockerode';
-import type { NodeResources } from 'shared';
+import type { NodeResources, ResourceLimits } from 'shared';
 import { lineSplitter } from './logs.js';
 import { parseDockerStats, type ContainerStats } from './stats.js';
+import { resourceLimitsToHostConfig } from './limits.js';
 
 // NodeResources is the shared event-payload type (shared/src/events.ts) — the
 // host snapshot reported to the Control Room via the node heartbeat.
@@ -14,6 +15,8 @@ export interface StartSpec {
   env?: Record<string, string>;
   // hostPort -> containerPort (both as strings, e.g. { "8080": "80" })
   ports?: Record<string, string>;
+  // Resource caps / runtime behaviour enforced on the container (#107).
+  resourceLimits?: ResourceLimits;
 }
 
 /**
@@ -62,12 +65,19 @@ export class DockerodeRuntime implements ContainerRuntime {
       }
     }
 
+    // Enforce the server's resource caps / restart policy at start (#107),
+    // converting the host-relative percentages against this node's capacity.
+    const limits = resourceLimitsToHostConfig(spec.resourceLimits, {
+      totalMemBytes: os.totalmem(),
+      cpuCount: os.cpus().length,
+    });
+
     const container = await this.docker.createContainer({
       Image: spec.dockerImage,
       name: spec.containerName,
       Env: env,
       ExposedPorts: exposedPorts,
-      HostConfig: { PortBindings: portBindings },
+      HostConfig: { PortBindings: portBindings, ...limits },
     });
 
     await container.start();

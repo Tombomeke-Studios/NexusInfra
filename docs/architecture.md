@@ -13,7 +13,7 @@ event contracts, or infra topology.
 |---|---|---|
 | `shared` (library) | ✅ Built | Event contract + RabbitMQ helpers, wire-compatible with FinVault |
 | `services/control-room` | ✅ Built | Heartbeat monitoring, status thresholds, HTTP status API |
-| `services/node-agent` | ✅ Built | Docker container lifecycle + node heartbeat/resource reporting |
+| `services/node-agent` | ✅ Built | Docker container lifecycle (with resource-limit/restart enforcement) + node heartbeat/resource reporting |
 | `services/orchestrator` | ✅ Built | Node registry, deployment API + least-loaded node selection, lifecycle events |
 | `dashboard` | ✅ Built (MVP) | React/Vite panel: login, overview, deployment form, live server list + stop |
 | `services/billing-bridge` | Planned (#18, #19) | Runtime tracking → FinVault payments |

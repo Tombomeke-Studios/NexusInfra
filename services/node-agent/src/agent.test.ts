@@ -9,8 +9,10 @@ class FakeRuntime implements ContainerRuntime {
   nextContainerId = 'container-xyz';
   failOn: string | null = null;
 
+  lastStartSpec: StartSpec | null = null;
   async start(spec: StartSpec): Promise<string> {
     this.calls.push(`start:${spec.dockerImage}`);
+    this.lastStartSpec = spec;
     if (this.failOn === 'start') throw new Error('image pull failed');
     return this.nextContainerId;
   }
@@ -72,6 +74,22 @@ describe('Node Agent command handling', () => {
     expect(published[0].envelope.event.type).toBe('server.started');
     expect((published[0].envelope.event.payload as any).containerId).toBe('container-xyz');
     expect((published[0].envelope.event.payload as any).nodeId).toBe(NODE_ID);
+  });
+
+  it('forwards the resource limits from the command to the runtime start spec (#107)', async () => {
+    const { runtime, agent } = makeAgent();
+    await agent.handleCommand(
+      cmd({
+        type: 'server.start',
+        payload: {
+          deploymentId: 'd-1',
+          nodeId: NODE_ID,
+          dockerImage: 'nginx',
+          resourceLimits: { cpuPercent: 50, ramPercent: 25, restartPolicy: 'on-failure' },
+        },
+      })
+    );
+    expect(runtime.lastStartSpec?.resourceLimits).toEqual({ cpuPercent: 50, ramPercent: 25, restartPolicy: 'on-failure' });
   });
 
   it('reports server.crashed when the runtime fails to start', async () => {

@@ -5,6 +5,7 @@ import {
   type EventEnvelope,
   type NexusInfraEvent,
 } from 'shared';
+import type { ResourceLimits } from 'shared';
 import type { ContainerRuntime, StartSpec } from './runtime.js';
 
 // Routing keys for lifecycle reports the agent publishes. Command keys the agent
@@ -58,6 +59,7 @@ export function createAgent(deps: AgentDeps): NodeAgent {
           containerName: payload.containerName as string | undefined,
           env: payload.env as Record<string, string> | undefined,
           ports: payload.ports as Record<string, string> | undefined,
+          resourceLimits: payload.resourceLimits as ResourceLimits | undefined,
         };
         try {
           const containerId = await runtime.start(spec);

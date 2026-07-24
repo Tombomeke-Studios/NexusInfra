@@ -74,7 +74,8 @@ Request:
 ```
 
 `name` and `dockerImage` are required; the rest are optional and stored with the server config (#106) so
-a re-start reuses them — enforcing the limits at container start is a later slice (#107). Responses:
+a re-start reuses them. The limits ride on `server.start` and the Node Agent enforces them on the
+container — RAM/CPU caps, swap, block-I/O weight, restart policy and the OOM killer (#107). Responses:
 `201` with the deployment (including its event trail), `400` on missing fields, `503` when no healthy
 node is available. On success the Orchestrator emits `infra.server.start` for the chosen node.
 
