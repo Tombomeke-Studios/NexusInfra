@@ -41,23 +41,10 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > **Ports** — Control Room `9000` · Node Agent `9100` · Orchestrator `9200` · dashboard `8095`
 > (Docker) / `5173` (Vite dev).
 >
-> **Latest:** the full Claude Design redesign is ported ([[design-source]]). Now closing UI/UX gaps
-> so the copy is faithful (interactive mock behaviors, cursor FX, hover states).
-
----
-
-## Active — `feature/design-polish`
-
-Port the interactive UX from the design that the first pass simplified. Still UI/mock (wired later).
-
-- [x] Cursor aura trail + FX parity (#93)
-- [x] Overview: live meters + full add-node form + node actions (#94)
-- [x] New Deployment: placement headroom + game details (#95)
-- [x] Console: live streaming logs + CPU/RAM sparkline (#96)
-- [x] Files tab: navigable tree + breadcrumbs (#97)
-- [x] Server detail: interactive mock actions (db/backup/schedule/subuser) (#98)
-- [x] Toast headings + design toast content (#99)
-- [x] Hover states on option controls (#100)
+> **Latest:** the Claude Design redesign is ported **and** the interactive UX gaps are closed
+> ([[design-source]]) — cursor trail, live console, navigable files, interactive tabs, headroom,
+> live meters, hover states. Extra features remain UI/mock. **Next up:** wire the **live server
+> console** (#66–#72), or start the **Billing Bridge** (Phase 4). No active feature branch.
 
 ---
 
@@ -113,6 +100,12 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 ---
 
 ## Done
+
+### `feature/design-polish` — merged in #101
+
+- [x] Cursor aura trail + FX parity (#93) · toast heading + message (#99) · option/tab hover states (#100)
+- [x] Live streaming console (#96) · navigable Files tree (#97) · interactive detail actions (#98)
+- [x] New Deployment headroom + game form (#95) · Overview live meters + add-node form + node actions (#94)
 
 ### `feature/design-copy` — merged in #92
 
