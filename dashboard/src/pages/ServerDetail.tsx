@@ -23,6 +23,7 @@ import {
 } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
 import { useToast } from '../components/Toast';
+import { InfoHint } from '../components/InfoHint';
 
 // Server detail — ported from the redesign. The header/status/actions are real;
 // the resource stats and every tab's content are UI/mock for now and get wired
@@ -562,7 +563,7 @@ function DatabasesTab({ id, running }: { id: string; running: boolean }) {
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
-        <strong style={{ fontSize: '.92rem' }}>Databases</strong>
+        <strong style={{ fontSize: '.92rem' }}>Databases<InfoHint text="Each database is its own engine container with generated credentials. MySQL/MariaDB are interchangeable SQL engines; Postgres is a more advanced SQL engine. Pick one, then connect with the host, port and password shown." label="Databases help" /></strong>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', gap: 6 }}>
             {DB_ENGINES.map((e) => (
