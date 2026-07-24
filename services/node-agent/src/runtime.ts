@@ -1,6 +1,7 @@
 import os from 'os';
 import Docker from 'dockerode';
 import type { NodeResources } from 'shared';
+import { lineSplitter } from './logs.js';
 
 // NodeResources is the shared event-payload type (shared/src/events.ts) — the
 // host snapshot reported to the Control Room via the node heartbeat.
@@ -24,6 +25,8 @@ export interface ContainerRuntime {
   stop(containerId: string): Promise<void>;
   restart(containerId: string): Promise<void>;
   collectResources(): Promise<NodeResources>;
+  /** Follow a container's logs, invoking `onLine` per line. Returns an unsubscribe. */
+  logs(containerId: string, onLine: (line: string) => void): () => void;
 }
 
 /**
@@ -82,6 +85,31 @@ export class DockerodeRuntime implements ContainerRuntime {
 
   async restart(containerId: string): Promise<void> {
     await this.docker.getContainer(containerId).restart();
+  }
+
+  logs(containerId: string, onLine: (line: string) => void): () => void {
+    const container = this.docker.getContainer(containerId);
+    let stopped = false;
+    let stream: NodeJS.ReadableStream | null = null;
+    const out = lineSplitter(onLine);
+    const err = lineSplitter(onLine);
+    container
+      .logs({ follow: true, stdout: true, stderr: true, tail: 200 })
+      .then((s) => {
+        if (stopped) {
+          (s as unknown as { destroy?: () => void }).destroy?.();
+          return;
+        }
+        stream = s as unknown as NodeJS.ReadableStream;
+        // Non-TTY containers multiplex stdout/stderr; demux into the splitters.
+        this.docker.modem.demuxStream(stream, out, err);
+        stream.on('error', () => {});
+      })
+      .catch(() => {});
+    return () => {
+      stopped = true;
+      (stream as unknown as { destroy?: () => void } | null)?.destroy?.();
+    };
   }
 
   async collectResources(): Promise<NodeResources> {

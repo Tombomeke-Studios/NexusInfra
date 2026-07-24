@@ -19,6 +19,21 @@ const app = express();
 app.get('/health', (_req, res) => {
   res.json({ service: 'node-agent', nodeId: NODE_ID, status: 'healthy', uptimeSec: Math.round(process.uptime()) });
 });
+
+// ── HTTP: container log stream (SSE) ──────────────────────────────────────────
+// Internal endpoint (reached only via the Orchestrator's proxy on the private
+// network) that follows a container's logs and emits one SSE `data:` per line.
+app.get('/logs/:containerId', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  const stop = runtime.logs(req.params.containerId, (line) => res.write(`data: ${line.replace(/\n/g, ' ')}\n\n`));
+  req.on('close', () => stop());
+});
+
 app.listen(PORT, () => console.log(`[Node Agent ${NODE_ID}] HTTP listening on http://localhost:${PORT}`));
 
 // ── Event bus: consume server lifecycle commands ──────────────────────────────

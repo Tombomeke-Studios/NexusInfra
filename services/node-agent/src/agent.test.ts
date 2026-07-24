@@ -25,6 +25,9 @@ class FakeRuntime implements ContainerRuntime {
   async collectResources(): Promise<NodeResources> {
     return { cpuPercent: 0, ramUsedMb: 0, ramTotalMb: 0, diskUsedGb: 0, diskTotalGb: 0 };
   }
+  logs(): () => void {
+    return () => {};
+  }
 }
 
 const NODE_ID = 'node-1';

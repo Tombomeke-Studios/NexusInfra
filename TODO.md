@@ -52,7 +52,7 @@ First functional slice of the live console: real container logs streamed to the 
 Node Agent → Orchestrator proxy → dashboard `EventSource`). Terminal (#68/#71) and stats (#67/#72)
 follow as their own branches.
 
-- [ ] Node Agent: stream container logs (`GET /logs/:containerId`, SSE) (#66)
+- [x] Node Agent: stream container logs (`GET /logs/:containerId`, SSE) (#66)
 - [ ] Orchestrator: proxy `GET /deployments/:id/logs` to the owning node agent (part of #69)
 - [ ] Dashboard: Console tab consumes real logs via `EventSource`, falls back to mock (#70)
 
