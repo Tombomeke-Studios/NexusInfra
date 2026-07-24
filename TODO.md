@@ -4,7 +4,7 @@
 
 ![MVP](https://img.shields.io/badge/MVP-complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/current-Phase_2_·_Core-3b82f6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-100_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-115_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -113,6 +113,10 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 ---
 
 ## Done
+
+### `feature/server-databases` — merged in #121 (make the mock UI real)
+
+- [x] Server databases — provision real per-server engine containers, list/delete (#109)
 
 ### `feature/file-management` — merged in #120 (make the mock UI real)
 
