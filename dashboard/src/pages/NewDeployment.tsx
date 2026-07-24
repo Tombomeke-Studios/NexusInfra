@@ -23,6 +23,10 @@ export function NewDeployment() {
   const [name, setName] = useState('');
   const [dockerImage, setDockerImage] = useState('');
   const [game, setGame] = useState('minecraft');
+  const [software, setSoftware] = useState('paper');
+  const [version, setVersion] = useState('1.21.4');
+  const [slots, setSlots] = useState(20);
+  const [motd, setMotd] = useState('');
   const [ports, setPorts] = useState<Row[]>([{ key: '', value: '' }]);
   const [env, setEnv] = useState<Row[]>([{ key: '', value: '' }]);
   const [nodes, setNodes] = useState<NodeView[]>([]);
@@ -63,6 +67,14 @@ export function NewDeployment() {
       setBusy(false);
     }
   };
+
+  // Placement headroom (from the selected/emptiest node's live usage).
+  const usedCpu = (n: NodeView) => Math.round(n.cpuPercent ?? 0);
+  const usedRam = (n: NodeView) => (n.ramUsedMb != null && n.ramTotalMb ? Math.round((n.ramUsedMb / n.ramTotalMb) * 100) : 0);
+  const target = placement === 'auto' ? [...nodes].sort((a, b) => usedCpu(a) + usedRam(a) - (usedCpu(b) + usedRam(b)))[0] : nodes.find((n) => n.id === placement);
+  const cpuFree = target ? Math.max(0, 100 - usedCpu(target)) : 100;
+  const ramFree = target ? Math.max(0, 100 - usedRam(target)) : 100;
+  const overCapacity = cpu > cpuFree || ram > ramFree;
 
   return (
     <div style={{ maxWidth: 640, margin: '0 auto', padding: '32px 24px', animation: 'rise 320ms var(--ease-out) both' }}>
@@ -122,8 +134,28 @@ export function NewDeployment() {
             </label>
           ) : (
             <div style={{ marginBottom: 16, padding: 16, border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', background: 'var(--color-surface-2)' }}>
-              <span className="field__label" style={{ fontSize: '.86rem' }}>Game</span>
-              <Seg options={['minecraft', 'valheim', 'rust', 'factorio'].map((g) => ({ value: g, label: g }))} value={game} onChange={setGame} />
+              <div style={{ marginBottom: 14 }}>
+                <span className="field__label" style={{ fontSize: '.86rem' }}>Game</span>
+                <Seg options={['minecraft', 'valheim', 'rust', 'cs2'].map((g) => ({ value: g, label: g }))} value={game} onChange={setGame} />
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <span className="field__label" style={{ fontSize: '.86rem' }}>Software</span>
+                <Seg options={['paper', 'fabric', 'forge', 'vanilla', 'purpur'].map((s) => ({ value: s, label: s }))} value={software} onChange={setSoftware} />
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <span className="field__label" style={{ fontSize: '.86rem' }}>Version</span>
+                <Seg options={['1.21.4', '1.21.1', '1.20.6', '1.20.1', '1.19.4'].map((v) => ({ value: v, label: v }))} value={version} onChange={setVersion} />
+              </div>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <label style={{ flex: 'none', width: 120 }}>
+                  <span className="field__label" style={{ fontSize: '.8rem', color: 'var(--color-text-muted)' }}>Max players</span>
+                  <input className="input mono" type="number" min={1} max={500} value={slots} onChange={(e) => setSlots(Number(e.target.value))} />
+                </label>
+                <label style={{ flex: 1, minWidth: 0 }}>
+                  <span className="field__label" style={{ fontSize: '.8rem', color: 'var(--color-text-muted)' }}>MOTD</span>
+                  <input className="input" value={motd} onChange={(e) => setMotd(e.target.value)} placeholder="A NexusInfra server" />
+                </label>
+              </div>
             </div>
           )}
 
@@ -165,6 +197,30 @@ export function NewDeployment() {
                   </button>
                 );
               })}
+            </div>
+
+            {/* Headroom on the chosen node */}
+            <div style={{ marginTop: 14, padding: '14px 16px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', background: 'var(--color-surface-2)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+                <span style={{ fontSize: '.82rem', fontWeight: 600 }}>Available on {target ? target.name : 'the chosen node'}</span>
+                <span style={{ fontSize: '.74rem', color: 'var(--color-text-subtle)' }}>after currently committed limits</span>
+              </div>
+              <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+                {[{ label: 'CPU free', free: cpuFree, req: cpu }, { label: 'RAM free', free: ramFree, req: ram }].map((m) => (
+                  <div key={m.label} style={{ flex: 1, minWidth: 160 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                      <span style={{ fontSize: '.78rem', color: 'var(--color-text-muted)' }}>{m.label}</span>
+                      <span className="tnum" style={{ fontSize: '.78rem', fontWeight: 600, color: m.req > m.free ? 'var(--color-danger)' : 'var(--color-success)' }}>{m.free}%</span>
+                    </div>
+                    <div className="meter" style={{ height: 7, background: 'var(--color-surface)' }}>
+                      <div className="meter__fill" style={{ width: `${m.free}%`, background: m.req > m.free ? 'var(--color-danger)' : 'var(--color-success)', transition: 'width 500ms var(--ease-out)' }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {overCapacity && (
+                <div style={{ marginTop: 12, fontSize: '.8rem', fontWeight: 550, color: 'var(--color-danger)' }}>⚠ Requested limits exceed free capacity on this node.</div>
+              )}
             </div>
           </div>
 
