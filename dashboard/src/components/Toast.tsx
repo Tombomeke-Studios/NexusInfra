@@ -52,7 +52,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             className={`toast toast--${t.variant}${t.leaving ? ' toast--leaving' : ''}`}
             onClick={() => remove(t.id)}
           >
-            {t.message}
+            <span className="toast__icon">{t.variant === 'success' ? '✓' : t.variant === 'error' ? '!' : 'i'}</span>
+            <span className="toast__msg">{t.message}</span>
+            <span className="toast__bar" />
           </div>
         ))}
       </div>

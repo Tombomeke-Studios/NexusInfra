@@ -707,15 +707,20 @@ input[type='range']::-moz-range-thumb {
   max-width: 360px;
 }
 .toast {
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-width: 270px;
+  padding: 13px 15px;
+  border-radius: var(--radius-lg);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-left: 3px solid var(--color-neutral);
   box-shadow: var(--shadow-lg);
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   cursor: pointer;
-  animation: toast-in 220ms var(--ease-out, ease);
+  animation: toastIn 340ms var(--ease-out);
 }
 .toast--leaving {
   animation: toast-out 180ms ease forwards;
@@ -723,17 +728,52 @@ input[type='range']::-moz-range-thumb {
 @keyframes toast-out {
   to {
     opacity: 0;
-    transform: translateX(16px);
+    transform: translateX(20px) scale(0.96);
   }
 }
-.toast--success {
-  border-left-color: var(--color-success);
+.toast__icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  font-weight: 700;
+  animation: iconpop 360ms var(--ease-out) both;
 }
-.toast--error {
-  border-left-color: var(--color-danger);
+.toast__msg {
+  flex: 1;
+  min-width: 0;
 }
-.toast--info {
-  border-left-color: var(--color-primary);
+.toast__bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 100%;
+  animation: toastbar 4000ms linear forwards;
+}
+.toast--success .toast__icon {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+.toast--success .toast__bar {
+  background: var(--color-success);
+}
+.toast--error .toast__icon {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+.toast--error .toast__bar {
+  background: var(--color-danger);
+}
+.toast--info .toast__icon {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+.toast--info .toast__bar {
+  background: var(--color-primary);
 }
 @keyframes toast-in {
   from {

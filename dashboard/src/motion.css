@@ -260,6 +260,52 @@
   animation-delay: calc(var(--stagger-step) * var(--i, 0));
 }
 
+/* ── Interaction FX (ripple + burst; see fx.ts) ─────────────────────────── */
+.ripple {
+  position: absolute;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.22;
+  transform: scale(0);
+  animation: ripple 600ms var(--ease-out);
+  pointer-events: none;
+}
+@keyframes ripple {
+  to {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+.burst {
+  position: fixed;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 9998;
+  transform: translate(-50%, -50%);
+  animation: burst 600ms var(--ease-out) forwards;
+}
+@keyframes burst {
+  from {
+    transform: translate(-50%, -50%) translate(0, 0);
+    opacity: 1;
+  }
+  to {
+    transform: translate(-50%, -50%) translate(var(--bx), var(--by));
+    opacity: 0;
+  }
+}
+
+/* Buttons clip their ripple */
+.btn,
+.icon-btn,
+.navlink,
+.name-btn {
+  position: relative;
+  overflow: hidden;
+}
+
 /* ── Micro-interactions ─────────────────────────────────────────────────── */
 /* Cards that represent objects lift on hover. */
 .stat,
