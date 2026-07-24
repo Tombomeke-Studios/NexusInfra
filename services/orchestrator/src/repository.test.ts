@@ -118,4 +118,15 @@ describe('InMemoryRepository', () => {
     expect(await repo.getDatabase(db.id)).toBeNull();
     expect(await repo.listDatabases('dep-1')).toEqual([]);
   });
+
+  it('creates, lists and deletes backups per deployment', async () => {
+    const b = await repo.createBackup({ deploymentId: 'dep-1', name: 'backup-1', path: '/data', ref: 'bk_1', sizeBytes: 2048 });
+    expect(b.status).toBe('ready');
+    expect(await repo.listBackups('dep-1')).toHaveLength(1);
+    expect(await repo.listBackups('other')).toEqual([]);
+    expect((await repo.getBackup(b.id))?.ref).toBe('bk_1');
+
+    await repo.deleteBackup(b.id);
+    expect(await repo.getBackup(b.id)).toBeNull();
+  });
 });

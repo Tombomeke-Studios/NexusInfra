@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import type {
+  CreateServerBackupInput,
   CreateServerConfigInput,
   CreateServerDatabaseInput,
   DeploymentDetail,
@@ -9,6 +10,7 @@ import type {
   DeploymentView,
   NodeRecord,
   Repository,
+  ServerBackupRecord,
   ServerConfigRecord,
   ServerDatabaseRecord,
   UpsertNodeInput,
@@ -27,6 +29,7 @@ export class InMemoryRepository implements Repository {
   private deployments = new Map<string, DeploymentRecord>();
   private events: DeploymentEventRecord[] = [];
   private databases = new Map<string, ServerDatabaseRecord>();
+  private backups = new Map<string, ServerBackupRecord>();
 
   async upsertNode(input: UpsertNodeInput): Promise<NodeRecord> {
     const existing = this.nodes.get(input.id);
@@ -160,6 +163,35 @@ export class InMemoryRepository implements Repository {
 
   async deleteDatabase(id: string): Promise<void> {
     this.databases.delete(id);
+  }
+
+  async createBackup(input: CreateServerBackupInput): Promise<ServerBackupRecord> {
+    const backup: ServerBackupRecord = {
+      id: randomUUID(),
+      deploymentId: input.deploymentId,
+      name: input.name,
+      path: input.path,
+      ref: input.ref,
+      sizeBytes: input.sizeBytes,
+      status: 'ready',
+      createdAt: new Date().toISOString(),
+    };
+    this.backups.set(backup.id, backup);
+    return backup;
+  }
+
+  async listBackups(deploymentId: string): Promise<ServerBackupRecord[]> {
+    return Array.from(this.backups.values())
+      .filter((b) => b.deploymentId === deploymentId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async getBackup(id: string): Promise<ServerBackupRecord | null> {
+    return this.backups.get(id) ?? null;
+  }
+
+  async deleteBackup(id: string): Promise<void> {
+    this.backups.delete(id);
   }
 
   private toView(d: DeploymentRecord): DeploymentView | null {

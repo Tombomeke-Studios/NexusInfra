@@ -82,6 +82,25 @@ export interface CreateServerDatabaseInput {
   containerId: string | null;
 }
 
+export interface ServerBackupRecord {
+  id: string;
+  deploymentId: string;
+  name: string;
+  path: string;
+  ref: string;
+  sizeBytes: number;
+  status: string;
+  createdAt: string;
+}
+
+export interface CreateServerBackupInput {
+  deploymentId: string;
+  name: string;
+  path: string;
+  ref: string;
+  sizeBytes: number;
+}
+
 export interface DeploymentEventRecord {
   id: string;
   deploymentId: string;
@@ -148,4 +167,10 @@ export interface Repository {
   listDatabases(deploymentId: string): Promise<ServerDatabaseRecord[]>;
   getDatabase(id: string): Promise<ServerDatabaseRecord | null>;
   deleteDatabase(id: string): Promise<void>;
+
+  // Backups (#110).
+  createBackup(input: CreateServerBackupInput): Promise<ServerBackupRecord>;
+  listBackups(deploymentId: string): Promise<ServerBackupRecord[]>;
+  getBackup(id: string): Promise<ServerBackupRecord | null>;
+  deleteBackup(id: string): Promise<void>;
 }
