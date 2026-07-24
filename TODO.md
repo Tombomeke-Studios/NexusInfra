@@ -53,7 +53,7 @@ Port the interactive UX from the design that the first pass simplified. Still UI
 - [x] Cursor aura trail + FX parity (#93)
 - [ ] Overview: live meters + full add-node form + node actions (#94)
 - [ ] New Deployment: placement headroom + game details (#95)
-- [ ] Console: live streaming logs + CPU/RAM sparkline (#96)
+- [x] Console: live streaming logs + CPU/RAM sparkline (#96)
 - [ ] Files tab: navigable tree + breadcrumbs (#97)
 - [ ] Server detail: interactive mock actions (db/backup/schedule/subuser) (#98)
 - [x] Toast headings + design toast content (#99)

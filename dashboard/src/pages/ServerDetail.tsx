@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   getDeployment,
@@ -125,7 +125,7 @@ export function ServerDetail() {
       </div>
 
       {/* Tab content */}
-      {tab === 'console' && <ConsoleTab running={running} />}
+      {tab === 'console' && <ConsoleTab running={running} isGame={isGame} containerId={d.containerId} />}
       {tab === 'files' && <FilesTab />}
       {tab === 'databases' && <DatabasesTab />}
       {tab === 'backups' && <BackupsTab />}
@@ -147,22 +147,100 @@ function StatBox({ label, value }: { label: string; value: string }) {
   );
 }
 
-// ── Console (UI only; live logs/exec wired via #66–#72) ───────────────────
-const MOCK_LOG: { time: string; text: string; color: string }[] = [
-  { time: '12:00:01', text: '[Server] Starting nexusinfra runtime…', color: '#9aa4b3' },
-  { time: '12:00:02', text: '[Info] Loading configuration', color: '#9aa4b3' },
-  { time: '12:00:03', text: '[Info] Bound to 0.0.0.0:8080', color: '#4ade80' },
-  { time: '12:00:04', text: '[Info] Done. Ready to accept connections.', color: '#4ade80' },
-  { time: '12:00:12', text: '[Warn] High memory usage (78%)', color: '#fbbf24' },
-];
-function ConsoleTab({ running }: { running: boolean }) {
+// ── Console — live mock stream (app/game); real logs/exec wired via #66–#72 ─
+interface LogLine {
+  id: number;
+  time: string;
+  text: string;
+  color: string;
+}
+const clock = () => {
+  const d = new Date();
+  const z = (n: number) => String(n).padStart(2, '0');
+  return `${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}`;
+};
+const hex = () => Math.random().toString(16).slice(2, 8);
+const NAMES = ['Steve', 'Alex', 'Notch_', 'xX_miner', 'CreeperKing', 'Enderman42', 'pvp_god', 'BuilderBob'];
+const pick = <T,>(a: T[]) => a[(Math.random() * a.length) | 0];
+const appLog = (): [string, string] =>
+  pick<[string, string]>([
+    ['#8b949e', `GET /healthz 200 ${1 + ((Math.random() * 6) | 0)}ms`],
+    ['#7ee787', `request ${hex()} 200 ${8 + ((Math.random() * 120) | 0)}ms`],
+    ['#8b949e', `cache hit ratio ${(0.8 + Math.random() * 0.19).toFixed(2)}`],
+    ['#7ee787', `worker tick — queue ${(Math.random() * 40) | 0}`],
+    ['#e3b341', `slow query ${210 + ((Math.random() * 300) | 0)}ms`],
+    ['#8b949e', 'heartbeat ok'],
+  ]);
+const gameLog = (): [string, string] =>
+  pick<[string, string]>([
+    ['#7ee787', `${pick(NAMES)} joined the game`],
+    ['#e3b341', `${pick(NAMES)} left the game`],
+    ['#8b949e', 'Saving chunks for level "world"'],
+    ['#7ee787', `<${pick(NAMES)}> gg`],
+    ['#8b949e', `Time elapsed: ${20 + ((Math.random() * 60) | 0)} ms`],
+    ['#e3b341', "Can't keep up! Is the server overloaded?"],
+  ]);
+
+function ConsoleTab({ running, isGame, containerId }: { running: boolean; isGame: boolean; containerId: string | null }) {
   const [cmd, setCmd] = useState('');
-  const { toast } = useToast();
+  const [log, setLog] = useState<LogLine[]>([]);
+  const [seq, setSeq] = useState(0);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  // Seed the console for the current server, then stream while it's running.
+  useEffect(() => {
+    let id = 1;
+    const now = clock();
+    const seed: LogLine[] = running
+      ? isGame
+        ? [
+            { id: id++, time: now, text: 'Starting minecraft server', color: '#8b949e' },
+            { id: id++, time: now, text: 'Loading properties', color: '#8b949e' },
+            { id: id++, time: now, text: 'Done (6.121s)! For help, type "help"', color: '#7ee787' },
+          ]
+        : [
+            { id: id++, time: now, text: `container ${(containerId || '').slice(0, 12)} attached`, color: '#7ee787' },
+            { id: id++, time: now, text: 'streaming stdout/stderr…', color: '#8b949e' },
+          ]
+      : [{ id: id++, time: now, text: 'process is not running — showing last output', color: '#e3b341' }];
+    setLog(seed);
+    setSeq(id);
+    if (!running) return;
+    const t = setInterval(() => {
+      if (Math.random() < 0.72) {
+        const [color, text] = isGame ? gameLog() : appLog();
+        setSeq((s) => {
+          setLog((ls) => [...ls, { id: s, time: clock(), text, color }].slice(-60));
+          return s + 1;
+        });
+      }
+    }, 1050);
+    return () => clearInterval(t);
+  }, [running, isGame, containerId]);
+
+  useEffect(() => {
+    if (boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;
+  }, [log]);
+
   const send = () => {
-    if (!cmd.trim()) return;
-    toast('Console is not wired yet', 'info');
+    const c = cmd.trim();
+    if (!c) return;
+    const out: LogLine[] = [{ id: seq, time: clock(), text: `> ${c}`, color: '#c9d1d9' }];
+    const resp = /^help$/i.test(c)
+      ? isGame
+        ? '/help /list /stop /op /say /tp'
+        : 'available: status, restart, env, logs'
+      : /^list$/i.test(c) && isGame
+        ? 'There are 7/20 players online'
+        : isGame
+          ? `Issued server command: ${c}`
+          : `${c}: ok`;
+    out.push({ id: seq + 1, time: clock(), text: resp, color: '#7ee787' });
+    setLog((ls) => [...ls, ...out].slice(-60));
+    setSeq((s) => s + 2);
     setCmd('');
   };
+
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -172,9 +250,9 @@ function ConsoleTab({ running }: { running: boolean }) {
           {running ? 'streaming' : 'offline'}
         </span>
       </div>
-      <div style={{ background: '#0a0e16', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', padding: '12px 14px', fontFamily: 'var(--font-mono)', fontSize: '.8rem', lineHeight: 1.7, height: 340, overflowY: 'auto', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-        {MOCK_LOG.map((l, i) => (
-          <div key={i} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+      <div ref={boxRef} style={{ background: '#0a0e16', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', padding: '12px 14px', fontFamily: 'var(--font-mono)', fontSize: '.8rem', lineHeight: 1.7, height: 340, overflowY: 'auto' }}>
+        {log.map((l) => (
+          <div key={l.id} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
             <span style={{ color: '#5a6473' }}>{l.time}</span> <span style={{ color: l.color }}>{l.text}</span>
           </div>
         ))}
