@@ -69,7 +69,7 @@ Each mock behavior in the ported design becomes real, one issue + branch at a ti
 
 Make the panel understandable and tailorable — the options should explain themselves.
 
-- [ ] Contextual help: hover/focus tooltips explaining every option (#122)
+- [x] Contextual help: hover/focus tooltips explaining every option (#122)
 - [ ] First-run onboarding / guided intro — nodes especially (#123)
 - [ ] User preferences: form defaults + customisation, persisted (#124)
 

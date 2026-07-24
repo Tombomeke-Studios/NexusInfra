@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { createDeployment, listNodes, type NodeView } from '../api';
 import { IconPlus } from '../components/Icons';
 import { useToast } from '../components/Toast';
+import { InfoHint } from '../components/InfoHint';
 
 // New Deployment — ported from the redesign. The deploy sends name, image, ports,
 // env, the resource limits + restart policy and the kind, all persisted with the
@@ -103,7 +104,7 @@ export function NewDeployment() {
         <form onSubmit={onSubmit} style={{ padding: 24 }}>
           {/* Type */}
           <div style={{ marginBottom: 20 }}>
-            <span className="field__label">Type</span>
+            <span className="field__label">Type<InfoHint text="Application runs any Docker image you provide. Game server uses a curated image and startup for popular games (Minecraft, Valheim…)." label="Type help" /></span>
             <div style={{ display: 'flex', gap: 10 }}>
               {[
                 { v: 'app', label: 'Application', sub: 'Any Docker image' },
@@ -173,7 +174,7 @@ export function NewDeployment() {
 
           {/* Placement */}
           <div style={{ marginBottom: 20 }}>
-            <span style={{ display: 'block', marginBottom: 4, fontWeight: 600, fontSize: '.95rem' }}>Placement</span>
+            <span style={{ display: 'block', marginBottom: 4, fontWeight: 600, fontSize: '.95rem' }}>Placement<InfoHint text="Which node hosts this server. Auto picks the emptiest healthy node by live CPU + RAM; or pin it to a specific node." label="Placement help" /></span>
             <span style={{ display: 'block', marginBottom: 12, fontSize: '.82rem', color: 'var(--color-text-subtle)' }}>
               Choose a host node, or let the scheduler pick the emptiest one.
             </span>
@@ -222,43 +223,43 @@ export function NewDeployment() {
 
           {/* Resource limits */}
           <div style={{ marginBottom: 20 }}>
-            <span style={{ display: 'block', marginBottom: 4, fontWeight: 600, fontSize: '.95rem' }}>Resource limits</span>
+            <span style={{ display: 'block', marginBottom: 4, fontWeight: 600, fontSize: '.95rem' }}>Resource limits<InfoHint text="Hard caps on this server's share of the host node. They're enforced on the container at start, so a busy server can't starve its neighbours." label="Resource limits help" /></span>
             <span style={{ display: 'block', marginBottom: 16, fontSize: '.82rem', color: 'var(--color-text-subtle)' }}>
               Hard caps on this server's share of the host node.
             </span>
-            <Slider label="CPU limit" value={cpu} onChange={setCpu} suffix="%" min={5} max={100} step={5} />
-            <Slider label="RAM limit" value={ram} onChange={setRam} suffix="%" min={5} max={100} step={5} />
-            <Slider label="Disk limit" value={disk} onChange={setDisk} suffix="%" min={5} max={100} step={5} />
-            <Slider label="Swap (of RAM limit)" value={swap} onChange={setSwap} suffix="%" min={0} max={100} step={25} neutral />
+            <Slider label="CPU limit" value={cpu} onChange={setCpu} suffix="%" min={5} max={100} step={5} hint="The most host CPU this server may use, as a share of the node's cores. 100% ≈ all cores; the container is throttled above this." />
+            <Slider label="RAM limit" value={ram} onChange={setRam} suffix="%" min={5} max={100} step={5} hint="The most host RAM this server may use, as a share of the node's memory. Exceeding it triggers the OOM policy below." />
+            <Slider label="Disk limit" value={disk} onChange={setDisk} suffix="%" min={5} max={100} step={5} hint="The share of the node's disk this server's files may occupy." />
+            <Slider label="Swap (of RAM limit)" value={swap} onChange={setSwap} suffix="%" min={0} max={100} step={25} neutral hint="Extra swap space as a percentage of the RAM limit. 0% disables swap for this server; swap is slower disk-backed memory used when RAM is full." />
           </div>
 
           {/* Runtime behavior */}
           <div style={{ marginBottom: 20 }}>
             <span style={{ display: 'block', marginBottom: 14, fontWeight: 600, fontSize: '.95rem' }}>Runtime behavior</span>
             <div style={{ marginBottom: 16 }}>
-              <span className="field__label" style={{ fontSize: '.86rem' }}>Block I/O priority</span>
+              <span className="field__label" style={{ fontSize: '.86rem' }}>Block I/O priority<InfoHint text="How much disk read/write bandwidth this server gets when nodes are busy. Higher wins contention; most apps are fine on normal." label="Block I/O help" /></span>
               <Seg options={['low', 'normal', 'high'].map((v) => ({ value: v, label: v }))} value={io} onChange={setIo} />
             </div>
             <div style={{ marginBottom: 16 }}>
-              <span className="field__label" style={{ fontSize: '.86rem' }}>Restart policy</span>
+              <span className="field__label" style={{ fontSize: '.86rem' }}>Restart policy<InfoHint text="What Docker does when the container exits. Never = leave stopped; On failure = restart only on a non-zero exit (bounded retries); Always = keep it running." label="Restart policy help" /></span>
               <Seg options={[{ value: 'no', label: 'Never' }, { value: 'on-failure', label: 'On failure' }, { value: 'always', label: 'Always' }]} value={restart} onChange={setRestart} />
             </div>
             <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 14px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', cursor: 'pointer' }}>
               <span style={{ minWidth: 0 }}>
-                <span style={{ display: 'block', fontSize: '.86rem', fontWeight: 550 }}>OOM killer</span>
+                <span style={{ display: 'block', fontSize: '.86rem', fontWeight: 550 }}>OOM killer<InfoHint text="When on, the container is killed if it exceeds its RAM limit (protects the node). When off, it may be throttled instead — only valid with a RAM limit set." label="OOM killer help" /></span>
                 <span style={{ display: 'block', fontSize: '.78rem', color: 'var(--color-text-subtle)' }}>Kill the container if it exceeds its RAM limit</span>
               </span>
               <Toggle on={oom} onToggle={() => setOom((v) => !v)} />
             </label>
             <div style={{ marginTop: 16 }}>
-              <span className="field__label" style={{ fontSize: '.86rem' }}>Startup command <span className="subtle" style={{ fontWeight: 400 }}>(optional)</span></span>
+              <span className="field__label" style={{ fontSize: '.86rem' }}>Startup command <span className="subtle" style={{ fontWeight: 400 }}>(optional)</span><InfoHint text="Override the command run inside the container. Leave blank to use the image's default entrypoint." label="Startup command help" /></span>
               <input className="input mono" value={startup} onChange={(e) => setStartup(e.target.value)} placeholder="./server --port 8080" style={{ fontSize: '.86rem' }} />
             </div>
           </div>
 
           {/* Feature limits */}
           <div style={{ marginBottom: 22 }}>
-            <span style={{ display: 'block', marginBottom: 14, fontWeight: 600, fontSize: '.95rem' }}>Feature limits</span>
+            <span style={{ display: 'block', marginBottom: 14, fontWeight: 600, fontSize: '.95rem' }}>Feature limits<InfoHint text="Caps on the extras this server may create: how many managed databases and stored backups it's allowed." label="Feature limits help" /></span>
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               <Counter label="Databases" value={dbs} onChange={setDbs} />
               <Counter label="Backups" value={backups} onChange={setBackups} />
@@ -296,11 +297,11 @@ function Seg({ options, value, onChange }: { options: { value: string; label: st
   );
 }
 
-function Slider({ label, value, onChange, suffix, min, max, step, neutral }: { label: string; value: number; onChange: (v: number) => void; suffix: string; min: number; max: number; step: number; neutral?: boolean }) {
+function Slider({ label, value, onChange, suffix, min, max, step, neutral, hint }: { label: string; value: number; onChange: (v: number) => void; suffix: string; min: number; max: number; step: number; neutral?: boolean; hint?: string }) {
   return (
     <div style={{ marginBottom: 18 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 9 }}>
-        <span style={{ fontSize: '.86rem', fontWeight: 550 }}>{label}</span>
+        <span style={{ fontSize: '.86rem', fontWeight: 550 }}>{label}{hint && <InfoHint text={hint} label={`${label} help`} />}</span>
         <span className="mono" style={{ fontSize: '.92rem', fontWeight: 600, color: neutral ? 'var(--color-text-muted)' : limitColor(value) }}>
           {value}
           {suffix}

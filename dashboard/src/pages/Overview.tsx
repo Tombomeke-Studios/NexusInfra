@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { listNodes, listDeployments, type NodeView, type DeploymentView } from '../api';
 import { CountUp } from '../components/CountUp';
 import { useToast } from '../components/Toast';
+import { InfoHint } from '../components/InfoHint';
 import { formatRelative } from '../format';
 
 // Overview — ported from the redesign: stat cards, a fleet-utilization card, a
@@ -283,8 +284,15 @@ function AddNodeForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: (
 
   return (
     <div style={{ border: '1px solid var(--color-primary)', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface)', boxShadow: 'var(--shadow)', padding: 16, animation: 'pop 220ms var(--ease-out)' }}>
-      <div style={{ fontWeight: 600, marginBottom: 12 }}>New node</div>
+      <div style={{ fontWeight: 600, marginBottom: 12 }}>
+        New node
+        <InfoHint text="A node is a Docker host NexusInfra runs servers on. Add nodes to grow capacity; the scheduler places each deployment on the emptiest healthy one." label="What is a node?" />
+      </div>
       <input className="input" placeholder="node-fra-2 (optional)" value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 10 }} />
+      <span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>
+        Region
+        <InfoHint text="The datacenter location this node runs in. Pin latency-sensitive or region-locked servers to a specific region." label="Region help" />
+      </span>
       <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
         {['fra', 'nyc', 'sgp', 'ams'].map((r) => (
           <button key={r} type="button" data-ripple onClick={() => setRegion(r)} className={`opt${region === r ? ' is-active' : ''}`} style={{ minHeight: 32, minWidth: 0, fontSize: '.76rem', textTransform: 'uppercase' }}>
@@ -293,15 +301,15 @@ function AddNodeForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: (
         ))}
       </div>
       <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
-        <label style={{ flex: 1, minWidth: 0 }}><span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>vCPU cores</span><input className="input mono" type="number" min={1} max={128} value={cores} onChange={(e) => setCores(Number(e.target.value))} style={numStyle} /></label>
-        <label style={{ flex: 1, minWidth: 0 }}><span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>Memory (GB)</span><input className="input mono" type="number" min={1} max={1024} value={mem} onChange={(e) => setMem(Number(e.target.value))} style={numStyle} /></label>
+        <label style={{ flex: 1, minWidth: 0 }}><span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>vCPU cores<InfoHint text="How many virtual CPU cores this host offers. A server's CPU limit is a share of these cores." label="vCPU cores help" /></span><input className="input mono" type="number" min={1} max={128} value={cores} onChange={(e) => setCores(Number(e.target.value))} style={numStyle} /></label>
+        <label style={{ flex: 1, minWidth: 0 }}><span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>Memory (GB)<InfoHint text="Total RAM on this host. A server's memory limit is a share of this total." label="Memory help" /></span><input className="input mono" type="number" min={1} max={1024} value={mem} onChange={(e) => setMem(Number(e.target.value))} style={numStyle} /></label>
       </div>
       <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
-        <label style={{ flex: 1, minWidth: 0 }}><span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>Disk (GB)</span><input className="input mono" type="number" min={10} max={10000} step={10} value={disk} onChange={(e) => setDisk(Number(e.target.value))} style={numStyle} /></label>
-        <label style={{ flex: 1, minWidth: 0 }}><span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>Mem overalloc %</span><input className="input mono" type="number" min={0} max={200} step={5} value={over} onChange={(e) => setOver(Number(e.target.value))} style={numStyle} /></label>
+        <label style={{ flex: 1, minWidth: 0 }}><span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>Disk (GB)<InfoHint text="Total disk this host provides for server volumes and container images." label="Disk help" /></span><input className="input mono" type="number" min={10} max={10000} step={10} value={disk} onChange={(e) => setDisk(Number(e.target.value))} style={numStyle} /></label>
+        <label style={{ flex: 1, minWidth: 0 }}><span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>Mem overalloc %<InfoHint text="Let the sum of server memory limits exceed physical RAM by this percentage. Useful when servers rarely peak together — risky if they do." label="Memory overallocation help" /></span><input className="input mono" type="number" min={0} max={200} step={5} value={over} onChange={(e) => setOver(Number(e.target.value))} style={numStyle} /></label>
       </div>
       <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 14, padding: '9px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', cursor: 'pointer' }}>
-        <span style={{ fontSize: '.82rem', fontWeight: 550 }}>Start in maintenance mode</span>
+        <span style={{ fontSize: '.82rem', fontWeight: 550 }}>Start in maintenance mode<InfoHint text="Register the node but don't schedule new servers onto it yet — for setup, upgrades or draining." label="Maintenance mode help" /></span>
         <button type="button" role="switch" aria-checked={maint} aria-label="Start in maintenance" onClick={() => setMaint((v) => !v)} style={{ flex: 'none', width: 42, height: 24, borderRadius: 'var(--radius-full)', border: 'none', cursor: 'pointer', padding: 3, transition: 'background 200ms', background: maint ? 'var(--color-primary)' : 'var(--color-border-strong)' }}>
           <span style={{ display: 'block', width: 18, height: 18, borderRadius: '50%', background: '#fff', transition: 'transform 200ms var(--ease-out)', transform: maint ? 'translateX(18px)' : 'translateX(0)' }} />
         </button>
