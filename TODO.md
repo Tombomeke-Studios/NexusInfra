@@ -41,20 +41,10 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > **Ports** — Control Room `9000` · Node Agent `9100` · Orchestrator `9200` · dashboard `8095`
 > (Docker) / `5173` (Vite dev).
 >
-> **Latest:** the redesign is fully ported (UI/UX present for every screen). Now **making the mock
-> features actually functional**, slice by slice, starting with the live server console.
-
----
-
-## Active — `feature/live-logs`
-
-First functional slice of the live console: real container logs streamed to the Console tab (SSE:
-Node Agent → Orchestrator proxy → dashboard `EventSource`). Terminal (#68/#71) and stats (#67/#72)
-follow as their own branches.
-
-- [x] Node Agent: stream container logs (`GET /logs/:containerId`, SSE) (#66)
-- [x] Orchestrator: proxy `GET /deployments/:id/logs` to the owning node agent (part of #69)
-- [x] Dashboard: Console tab consumes real logs via `EventSource`, falls back to mock (#70)
+> **Latest:** the redesign is fully ported (UI/UX present) and **making the mock features functional**
+> has begun. ✅ **Live logs are real** — a running server's container logs stream to the Console tab
+> (verified end to end). **Next up:** live per-server stats (#67/#72), then the interactive terminal
+> (#68/#71), then the panel-feature backlog below. No active feature branch.
 
 ---
 
@@ -80,13 +70,12 @@ A per-server console like other panels: live logs, an interactive terminal, and 
 Needs a WebSocket transport (not the RabbitMQ command bus) authenticated by JWT. Big group; build
 after picking it up. Depends on / overlaps the API Gateway (#20).
 
-- [ ] Node Agent: stream container logs (docker logs --follow) (#66)
+- [x] Node Agent: stream container logs (SSE) (#66) · Dashboard live logs (#70) — done in #115
 - [ ] Node Agent: per-container resource stats (docker stats) (#67)
 - [ ] Node Agent: interactive exec/console into a container (#68)
-- [ ] WebSocket transport for logs/stats/console (gateway, JWT) (#69)
-- [ ] Dashboard: live logs viewer in the deployment detail (#70, supersedes #17)
-- [ ] Dashboard: interactive terminal (xterm.js) for a server (#71)
+- [ ] WebSocket transport for exec/terminal (gateway, JWT) (#69 — logs use SSE already)
 - [ ] Dashboard: live per-server CPU/RAM/network stats (#72)
+- [ ] Dashboard: interactive terminal (xterm.js) for a server (#71)
 
 ### Phase 3+ — Dashboard, other slices
 
@@ -124,6 +113,12 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 ---
 
 ## Done
+
+### `feature/live-logs` — merged in #115 (first functional slice)
+
+- [x] Node Agent: stream container logs (`GET /logs/:containerId`, SSE) (#66)
+- [x] Orchestrator: proxy `GET /deployments/:id/logs` to the owning node agent (part of #69)
+- [x] Dashboard: Console tab streams real logs, falls back to mock (#70)
 
 ### `feature/design-polish` — merged in #101
 
