@@ -61,6 +61,24 @@ model Deployment {
   stoppedAt      DateTime?
   createdAt      DateTime          @default(now())
   events         DeploymentEvent[]
+  databases      ServerDatabase[]
+}
+
+// A managed database provisioned for a server: its own engine container with
+// generated credentials, started by the owning node agent (#109).
+model ServerDatabase {
+  id           String     @id
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+  deploymentId String
+  engine       String
+  name         String
+  username     String
+  password     String
+  host         String
+  port         Int
+  containerId  String?
+  status       String     @default("running")
+  createdAt    DateTime   @default(now())
 }
 
 // Append-only audit trail for a deployment's lifecycle.
