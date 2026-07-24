@@ -213,5 +213,31 @@ export function createApiRouter(deps: ApiDeps): Router {
   router.get('/deployments/:id/logs', proxyContainerStream('logs'));
   router.get('/deployments/:id/stats', proxyContainerStream('stats'));
 
+  // ── File management (#108) — proxy CRUD to the owning Node Agent ─────────────
+  // Resolve the running container, forward the file op, and mirror the agent's
+  // status + JSON body back to the caller.
+  const fileBase = (containerId: string) => `${NODE_AGENT_URL}/files/${containerId}`;
+  const withContainer = async (req: Request, res: Response, upstream: (containerId: string) => Promise<globalThis.Response>) => {
+    const target = resolveContainerTarget(await repo.getDeployment(req.params.id));
+    if (target.status !== 200) return res.status(target.status).json({ error: target.error });
+    try {
+      const r = await upstream(target.containerId!);
+      const body = await r.text();
+      res.status(r.status);
+      return body ? res.type('application/json').send(body) : res.end();
+    } catch {
+      return res.status(502).json({ error: 'node agent unreachable' });
+    }
+  };
+  const q = (v: unknown) => encodeURIComponent(String(v ?? ''));
+  const asJson = (method: string, body: unknown) => ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) });
+
+  router.get('/deployments/:id/files', (req, res) => withContainer(req, res, (c) => fetch(`${fileBase(c)}?path=${q(req.query.path ?? '/')}`)));
+  router.get('/deployments/:id/files/content', (req, res) => withContainer(req, res, (c) => fetch(`${fileBase(c)}/content?path=${q(req.query.path)}`)));
+  router.put('/deployments/:id/files/content', (req, res) => withContainer(req, res, (c) => fetch(`${fileBase(c)}/content`, asJson('PUT', req.body))));
+  router.post('/deployments/:id/files/dir', (req, res) => withContainer(req, res, (c) => fetch(`${fileBase(c)}/dir`, asJson('POST', req.body))));
+  router.post('/deployments/:id/files/rename', (req, res) => withContainer(req, res, (c) => fetch(`${fileBase(c)}/rename`, asJson('POST', req.body))));
+  router.delete('/deployments/:id/files', (req, res) => withContainer(req, res, (c) => fetch(`${fileBase(c)}?path=${q(req.query.path)}`, { method: 'DELETE' })));
+
   return router;
 }
