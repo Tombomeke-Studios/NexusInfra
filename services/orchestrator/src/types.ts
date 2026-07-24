@@ -2,6 +2,12 @@
 // Prisma so the logic modules (node selection, registry, lifecycle, API) depend on
 // an interface, not a concrete database — enabling an in-memory fake in tests.
 
+import type { ResourceLimits } from 'shared';
+
+// Re-exported so the rest of the Orchestrator imports it from one place; the
+// canonical definition lives in shared (it also rides on the server.start event).
+export type { ResourceLimits };
+
 export type DeploymentStatus = 'pending' | 'running' | 'stopped' | 'crashed' | 'failed';
 
 export type NodeHealth = 'healthy' | 'degraded' | 'offline';
@@ -16,21 +22,6 @@ export interface NodeRecord {
   ramTotalMb: number | null;
   diskUsedGb: number | null;
   diskTotalGb: number | null;
-}
-
-/**
- * The resource caps and runtime behaviour chosen for a server. Persisted with the
- * config (#106) so a re-start reuses them and the enforcement pass (#107) can read
- * them; every field is optional so older/partial configs round-trip cleanly.
- */
-export interface ResourceLimits {
-  cpuPercent?: number; // share of the host node's CPU, 0–100
-  ramPercent?: number; // share of the host node's RAM, 0–100
-  diskPercent?: number; // share of the host node's disk, 0–100
-  swapPercent?: number; // swap as a share of the RAM limit, 0–100
-  ioPriority?: 'low' | 'normal' | 'high';
-  restartPolicy?: 'no' | 'on-failure' | 'always';
-  oomKill?: boolean; // kill the container when it exceeds its RAM limit
 }
 
 export interface ServerConfigRecord {

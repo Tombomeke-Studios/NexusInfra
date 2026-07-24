@@ -77,6 +77,11 @@ describe('deployment API', () => {
     expect(config?.type).toBe('game');
     expect(config?.autoRestart).toBe(true);
     expect(config?.resourceLimits).toEqual({ cpuPercent: 40, ramPercent: 60, restartPolicy: 'on-failure', oomKill: true });
+
+    // The limits ride on server.start so the agent can enforce them (#107).
+    const start = published.find((p) => p.key === 'infra.server.start');
+    const payload = readPayload(start!.envelope.event) as Record<string, unknown>;
+    expect(payload.resourceLimits).toEqual({ cpuPercent: 40, ramPercent: 60, restartPolicy: 'on-failure', oomKill: true });
   });
 
   it('rejects a deployment with missing fields', async () => {
