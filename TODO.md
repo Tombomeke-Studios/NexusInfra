@@ -4,7 +4,7 @@
 
 ![MVP](https://img.shields.io/badge/MVP-complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/current-Phase_2_·_Core-3b82f6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-127_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-132_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -121,6 +121,10 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 ---
 
 ## Done
+
+### `feature/user-preferences` — merged in #130 (panel UX)
+
+- [x] User preferences — customisable New Deployment defaults, persisted; seeds the forms (#124)
 
 ### `feature/onboarding-intro` — merged in #127 (panel UX)
 
