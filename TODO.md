@@ -41,40 +41,10 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > **Ports** — Control Room `9000` · Node Agent `9100` · Orchestrator `9200` · dashboard `8095`
 > (Docker) / `5173` (Vite dev).
 >
-> **Active work:** porting the redesigned UI/UX from the Claude Design project
-> ("NexusInfra UI animations") into the React dashboard — see below. Copy the look & feel faithfully;
-> extra features (console, files, databases, backups, etc.) are **UI-only for now** and wired up later.
-
----
-
-## Active — `feature/design-copy`
-
-Reproduce the redesign ([[design-source]], `NexusInfra.dc.html`) screen by screen. One issue + one
-commit each. The live server console (#66–#72) is delivered as UI here (#82) and wired up afterward.
-
-**Foundation**
-- [x] Design port: foundation CSS — keyframes, aurora tokens, range sliders (#74)
-- [x] Design port: animated aurora + grid background (#75)
-- [x] Design port: toasts + micro-interactions — magnetic, ripple, burst (#91)
-
-**Screens**
-- [x] Design port: Login screen (#76)
-- [x] Design port: app shell / top nav (#77)
-- [x] Design port: Overview — stats, nodes, recent activity (#78)
-- [x] Design port: New Deployment — rich form (#79)
-- [x] Design port: Servers list (#80)
-- [x] Design port: Server detail shell + tab sidebar (#81)
-
-**Server detail tabs (UI only)**
-- [x] Design port: Console tab (#82)
-- [x] Design port: Files tab (#83)
-- [x] Design port: Databases tab (#84)
-- [x] Design port: Backups tab (#85)
-- [x] Design port: Network tab (#86)
-- [x] Design port: Schedules tab (#87)
-- [x] Design port: Subusers tab (#88)
-- [x] Design port: Startup tab (#89)
-- [x] Design port: Settings tab (#90)
+> **Latest:** the full Claude Design redesign is ported ([[design-source]]) — aurora background,
+> every screen, and the server-detail tabs (incl. a Console UI). Extra features are UI-only pending
+> wiring. **Next up:** wire the **live server console** (#66–#72), or start the **Billing Bridge**
+> (Phase 4). No active feature branch; promote a group before starting.
 
 ---
 
@@ -130,6 +100,14 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 ---
 
 ## Done
+
+### `feature/design-copy` — merged in #92
+
+- [x] Foundation: aurora/grid tokens + keyframes + range sliders (#74) · aurora background (#75)
+- [x] Interaction layer — ripple/burst/spotlight/magnetic + richer toasts (#91)
+- [x] Screens: Login (#76), shell (#77), Overview (#78), New Deployment (#79), Servers (#80)
+- [x] Server detail (#81) + tabs: Console (#82), Files (#83), Databases (#84), Backups (#85),
+      Network (#86), Schedules (#87), Subusers (#88), Startup (#89), Settings (#90)
 
 ### `feature/ui-animations` — merged in #65
 
