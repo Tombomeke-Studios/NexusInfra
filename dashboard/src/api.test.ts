@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { createDeployment, listDeployments, login, streamLogs, streamStats, ApiError, TOKEN_KEY, type ContainerStats } from './api';
+import { createDeployment, listDeployments, login, streamLogs, streamStats, listFiles, writeFile, ApiError, TOKEN_KEY, type ContainerStats } from './api';
 
 // The client is verified against a mocked fetch: it attaches the Bearer token,
 // posts JSON, and surfaces API errors with their status.
@@ -72,6 +72,20 @@ describe('api client', () => {
     const lines: string[] = [];
     await streamLogs('d1', (l) => lines.push(l), new AbortController().signal);
     expect(lines).toEqual(['first line', 'second line']);
+  });
+
+  it('lists files with the path query and writes via PUT', async () => {
+    fetchMock.mockResolvedValue(jsonResponse([{ name: 'src', kind: 'dir', size: 0 }]));
+    const entries = await listFiles('d1', '/app');
+    expect(entries).toEqual([{ name: 'src', kind: 'dir', size: 0 }]);
+    expect(fetchMock.mock.calls[0][0]).toContain('/deployments/d1/files?path=%2Fapp');
+
+    fetchMock.mockResolvedValue({ ok: true, status: 204, json: async () => ({}) } as Response);
+    await writeFile('d1', '/app/x.txt', 'hello');
+    const [url, options] = fetchMock.mock.calls[1];
+    expect(url).toContain('/deployments/d1/files/content');
+    expect(options.method).toBe('PUT');
+    expect(JSON.parse(options.body as string)).toEqual({ path: '/app/x.txt', content: 'hello' });
   });
 
   it('parses JSON stats samples from the stats stream', async () => {

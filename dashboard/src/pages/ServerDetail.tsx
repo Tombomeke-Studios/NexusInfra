@@ -7,7 +7,14 @@ import {
   restartDeployment,
   streamLogs,
   streamStats,
+  listFiles,
+  readFile,
+  writeFile,
+  makeDir,
+  renamePath,
+  deletePath,
   type DeploymentDetail,
+  type FileEntry,
 } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
 import { useToast } from '../components/Toast';
@@ -101,7 +108,7 @@ export function ServerDetail() {
 
       {/* Tab content */}
       {tab === 'console' && <ConsoleTab id={d.id} running={running} isGame={isGame} containerId={d.containerId} />}
-      {tab === 'files' && <FilesTab isGame={isGame} />}
+      {tab === 'files' && <FilesTab id={d.id} running={running} />}
       {tab === 'databases' && <DatabasesTab />}
       {tab === 'backups' && <BackupsTab />}
       {tab === 'network' && <NetworkTab />}
@@ -343,59 +350,159 @@ function TabHeader({ title, action, onAction }: { title: string; action?: string
 const listCard: CSSProperties = { border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface)', overflow: 'hidden' };
 const rowCss: CSSProperties = { display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', borderBottom: '1px solid var(--color-border)' };
 
-type Entry = [name: string, kind: 'file' | 'dir', size: string];
-const APP_TREE: Record<string, Entry[]> = {
-  '/': [['Dockerfile', 'file', '512 B'], ['docker-compose.yml', 'file', '1.1 KB'], ['src', 'dir', '—'], ['config', 'dir', '—'], ['.env', 'file', '340 B'], ['package.json', 'file', '1.8 KB'], ['node_modules', 'dir', '—']],
-  '/src': [['index.js', 'file', '4.2 KB'], ['routes.js', 'file', '2.9 KB'], ['db.js', 'file', '1.1 KB']],
-  '/config': [['default.json', 'file', '820 B'], ['production.json', 'file', '910 B']],
-};
-const GAME_TREE: Record<string, Entry[]> = {
-  '/': [['server.properties', 'file', '1.4 KB'], ['server.jar', 'file', '48.2 MB'], ['eula.txt', 'file', '189 B'], ['world', 'dir', '—'], ['plugins', 'dir', '—'], ['logs', 'dir', '—'], ['ops.json', 'file', '412 B'], ['whitelist.json', 'file', '2 B']],
-  '/world': [['level.dat', 'file', '8.1 KB'], ['region', 'dir', '—'], ['playerdata', 'dir', '—'], ['session.lock', 'file', '3 B']],
-  '/plugins': [['EssentialsX.jar', 'file', '2.1 MB'], ['WorldEdit.jar', 'file', '4.8 MB'], ['LuckPerms.jar', 'file', '6.2 MB'], ['bStats', 'dir', '—']],
-  '/logs': [['latest.log', 'file', '221 KB'], ['2026-07-21-1.log.gz', 'file', '44 KB']],
-};
+// Human-readable byte size for the file list.
+const fmtSize = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`);
+const joinPath = (dir: string, name: string) => (dir === '/' ? `/${name}` : `${dir}/${name}`);
 
-function FilesTab({ isGame }: { isGame: boolean }) {
-  const tree = isGame ? GAME_TREE : APP_TREE;
-  const [cwd, setCwd] = useState<string[]>([]);
+// ── Files — real CRUD over the container filesystem (#108) ──────────────────
+function FilesTab({ id, running }: { id: string; running: boolean }) {
   const { toast } = useToast();
-  const key = '/' + cwd.join('/');
-  const entries = tree[key === '/' ? '/' : key] ?? [];
+  const [cwd, setCwd] = useState('/');
+  const [entries, setEntries] = useState<FileEntry[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [editing, setEditing] = useState<{ path: string; content: string } | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const load = useCallback(
+    async (dir: string) => {
+      if (!running) return;
+      setLoading(true);
+      try {
+        setEntries(await listFiles(id, dir));
+        setError(null);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to list files');
+        setEntries([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [id, running]
+  );
+
+  useEffect(() => {
+    void load(cwd);
+  }, [load, cwd]);
+
+  const act = async (fn: () => Promise<unknown>, ok: string) => {
+    try {
+      await fn();
+      toast(ok, 'success', 'Files');
+      await load(cwd);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Action failed', 'error', 'Files');
+    }
+  };
+
+  const open = async (entry: FileEntry) => {
+    const path = joinPath(cwd, entry.name);
+    if (entry.kind === 'dir') return setCwd(path);
+    try {
+      const { content } = await readFile(id, path);
+      setEditing({ path, content });
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Cannot open file', 'error', 'Files');
+    }
+  };
+
+  const newFolder = () => {
+    const name = window.prompt('New folder name');
+    if (name?.trim()) void act(() => makeDir(id, joinPath(cwd, name.trim())), `Created ${name.trim()}`);
+  };
+  const rename = (entry: FileEntry) => {
+    const name = window.prompt('Rename to', entry.name);
+    if (name?.trim() && name.trim() !== entry.name) void act(() => renamePath(id, joinPath(cwd, entry.name), joinPath(cwd, name.trim())), 'Renamed');
+  };
+  const remove = (entry: FileEntry) => {
+    if (window.confirm(`Delete ${entry.name}? This cannot be undone.`)) void act(() => deletePath(id, joinPath(cwd, entry.name)), `Deleted ${entry.name}`);
+  };
+  const onUpload = async (file: File) => {
+    const content = await file.text();
+    void act(() => writeFile(id, joinPath(cwd, file.name), content), `Uploaded ${file.name}`);
+  };
+
+  const crumbs = cwd === '/' ? [] : cwd.slice(1).split('/');
+
+  if (!running) return <div className="empty">Start the server to browse its files.</div>;
+
+  if (editing) return <FileEditor id={id} file={editing} onClose={() => setEditing(null)} onSaved={() => load(cwd)} />;
 
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
         <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', fontSize: '.88rem' }}>
-          <button className="name-btn" onClick={() => setCwd([])}>container</button>
+          <button className="name-btn" onClick={() => setCwd('/')}>container</button>
           <span className="subtle">/</span>
-          {cwd.map((c, i) => (
+          {crumbs.map((c, i) => (
             <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <button className="name-btn" onClick={() => setCwd(cwd.slice(0, i + 1))}>{c}</button>
+              <button className="name-btn" onClick={() => setCwd('/' + crumbs.slice(0, i + 1).join('/'))}>{c}</button>
               <span className="subtle">/</span>
             </span>
           ))}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn--secondary btn--sm" data-ripple onClick={() => toast('New folder is not wired yet', 'info')}>New folder</button>
-          <button className="btn btn--primary btn--sm" data-ripple data-magnetic onClick={() => toast('Upload is not wired yet', 'info')}>Upload</button>
+          <button className="btn btn--secondary btn--sm" data-ripple onClick={newFolder}>New folder</button>
+          <button className="btn btn--primary btn--sm" data-ripple data-magnetic onClick={() => fileInput.current?.click()}>Upload</button>
+          <input ref={fileInput} type="file" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void onUpload(f); e.target.value = ''; }} />
         </div>
       </div>
+      {error && <p role="alert" className="alert alert--error" style={{ marginBottom: 12 }}>{error}</p>}
       <div style={listCard}>
-        {entries.map(([name, kind, size]) => (
-          <button
-            key={name}
-            data-ripple
-            onClick={() => (kind === 'dir' ? setCwd([...cwd, name]) : toast('Opening files is not wired yet', 'info'))}
-            style={{ ...rowCss, width: '100%', textAlign: 'left', border: 'none', borderBottom: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', font: 'inherit' }}
-          >
-            <span style={{ flex: 'none' }}>{kind === 'dir' ? '📁' : '📄'}</span>
-            <span style={{ flex: 1, minWidth: 0, fontSize: '.9rem', color: kind === 'dir' ? 'var(--color-primary)' : 'var(--color-text)', fontWeight: kind === 'dir' ? 600 : 400 }}>{name}</span>
-            <span className="subtle tnum" style={{ fontSize: '.8rem' }}>{size}</span>
-          </button>
+        {entries.map((entry) => (
+          <div key={entry.name} style={{ ...rowCss, gap: 10 }}>
+            <button
+              data-ripple
+              onClick={() => void open(entry)}
+              style={{ ...rowCss, flex: 1, minWidth: 0, padding: 0, border: 'none', borderBottom: 'none', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', font: 'inherit', textAlign: 'left' }}
+            >
+              <span style={{ flex: 'none' }}>{entry.kind === 'dir' ? '📁' : '📄'}</span>
+              <span style={{ flex: 1, minWidth: 0, fontSize: '.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: entry.kind === 'dir' ? 'var(--color-primary)' : 'var(--color-text)', fontWeight: entry.kind === 'dir' ? 600 : 400 }}>{entry.name}</span>
+              {entry.kind === 'file' && <span className="subtle tnum" style={{ fontSize: '.8rem' }}>{fmtSize(entry.size)}</span>}
+            </button>
+            <button className="icon-btn" data-ripple aria-label={`Rename ${entry.name}`} onClick={() => rename(entry)}>✎</button>
+            <button className="icon-btn" data-ripple aria-label={`Delete ${entry.name}`} onClick={() => remove(entry)}>🗑</button>
+          </div>
         ))}
-        {entries.length === 0 && <div className="empty">This folder is empty.</div>}
+        {!loading && entries.length === 0 && !error && <div className="empty">This folder is empty.</div>}
+        {loading && <div className="empty">Loading…</div>}
       </div>
+    </>
+  );
+}
+
+function FileEditor({ id, file, onClose, onSaved }: { id: string; file: { path: string; content: string }; onClose: () => void; onSaved: () => void }) {
+  const { toast } = useToast();
+  const [text, setText] = useState(file.content);
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    setSaving(true);
+    try {
+      await writeFile(id, file.path, text);
+      toast('Saved', 'success', 'Files');
+      onSaved();
+      onClose();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Save failed', 'error', 'Files');
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 12 }}>
+        <button className="btn btn--ghost btn--sm" data-ripple onClick={onClose}>← Back to files</button>
+        <span className="mono subtle" style={{ fontSize: '.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.path}</span>
+        <button className="btn btn--primary btn--sm" data-ripple data-burst="success" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+      </div>
+      <textarea
+        className="input mono"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        aria-label="File contents"
+        spellCheck={false}
+        style={{ width: '100%', height: 380, background: '#0a0e16', color: '#c9d1d9', fontSize: '.82rem', lineHeight: 1.6, resize: 'vertical' }}
+      />
     </>
   );
 }
