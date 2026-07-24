@@ -54,7 +54,7 @@ follow as their own branches.
 
 - [x] Node Agent: stream container logs (`GET /logs/:containerId`, SSE) (#66)
 - [x] Orchestrator: proxy `GET /deployments/:id/logs` to the owning node agent (part of #69)
-- [ ] Dashboard: Console tab consumes real logs via `EventSource`, falls back to mock (#70)
+- [x] Dashboard: Console tab consumes real logs via `EventSource`, falls back to mock (#70)
 
 ---
 

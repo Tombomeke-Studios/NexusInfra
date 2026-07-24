@@ -5,6 +5,7 @@ import {
   startDeployment,
   stopDeployment,
   restartDeployment,
+  streamLogs,
   type DeploymentDetail,
 } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
@@ -98,7 +99,7 @@ export function ServerDetail() {
       </div>
 
       {/* Tab content */}
-      {tab === 'console' && <ConsoleTab running={running} isGame={isGame} containerId={d.containerId} />}
+      {tab === 'console' && <ConsoleTab id={d.id} running={running} isGame={isGame} containerId={d.containerId} />}
       {tab === 'files' && <FilesTab isGame={isGame} />}
       {tab === 'databases' && <DatabasesTab />}
       {tab === 'backups' && <BackupsTab />}
@@ -190,42 +191,54 @@ const gameLog = (): [string, string] =>
     ['#e3b341', "Can't keep up! Is the server overloaded?"],
   ]);
 
-function ConsoleTab({ running, isGame, containerId }: { running: boolean; isGame: boolean; containerId: string | null }) {
+const lineColor = (t: string) =>
+  /error|fatal|exit code|oomkilled|panic/i.test(t) ? '#f85149' : /warn|slow|overload|can't keep up/i.test(t) ? '#e3b341' : '#c9d1d9';
+
+function ConsoleTab({ id, running, isGame, containerId }: { id: string; running: boolean; isGame: boolean; containerId: string | null }) {
   const [cmd, setCmd] = useState('');
   const [log, setLog] = useState<LogLine[]>([]);
-  const [seq, setSeq] = useState(0);
+  const seqRef = useRef(0);
   const boxRef = useRef<HTMLDivElement>(null);
+  const append = (text: string, color: string) =>
+    setLog((ls) => {
+      const next = [...ls, { id: seqRef.current++, time: clock(), text, color }].slice(-200);
+      return next;
+    });
 
-  // Seed the console for the current server, then stream while it's running.
+  // Try the real log stream first; fall back to a mock stream if it can't open
+  // (e.g. the container isn't running, or the dashboard is run without a backend).
   useEffect(() => {
-    let id = 1;
-    const now = clock();
-    const seed: LogLine[] = running
-      ? isGame
-        ? [
-            { id: id++, time: now, text: 'Starting minecraft server', color: '#8b949e' },
-            { id: id++, time: now, text: 'Loading properties', color: '#8b949e' },
-            { id: id++, time: now, text: 'Done (6.121s)! For help, type "help"', color: '#7ee787' },
-          ]
-        : [
-            { id: id++, time: now, text: `container ${(containerId || '').slice(0, 12)} attached`, color: '#7ee787' },
-            { id: id++, time: now, text: 'streaming stdout/stderr…', color: '#8b949e' },
-          ]
-      : [{ id: id++, time: now, text: 'process is not running — showing last output', color: '#e3b341' }];
-    setLog(seed);
-    setSeq(id);
-    if (!running) return;
-    const t = setInterval(() => {
-      if (Math.random() < 0.72) {
-        const [color, text] = isGame ? gameLog() : appLog();
-        setSeq((s) => {
-          setLog((ls) => [...ls, { id: s, time: clock(), text, color }].slice(-60));
-          return s + 1;
-        });
-      }
-    }, 1050);
-    return () => clearInterval(t);
-  }, [running, isGame, containerId]);
+    setLog([]);
+    seqRef.current = 0;
+    if (!running) {
+      append('process is not running — showing last output', '#e3b341');
+      return;
+    }
+    let cancelled = false;
+    let mockTimer: ReturnType<typeof setInterval> | undefined;
+    const ctrl = new AbortController();
+
+    const startMock = () => {
+      append(`container ${(containerId || '').slice(0, 12)} attached`, '#7ee787');
+      append('streaming stdout/stderr… (demo)', '#8b949e');
+      mockTimer = setInterval(() => {
+        if (Math.random() < 0.72) {
+          const [color, text] = isGame ? gameLog() : appLog();
+          append(text, color);
+        }
+      }, 1050);
+    };
+
+    streamLogs(id, (line) => !cancelled && append(line, lineColor(line)), ctrl.signal).catch(() => {
+      if (!cancelled) startMock();
+    });
+
+    return () => {
+      cancelled = true;
+      ctrl.abort();
+      if (mockTimer) clearInterval(mockTimer);
+    };
+  }, [id, running, isGame, containerId]);
 
   useEffect(() => {
     if (boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;
@@ -234,7 +247,8 @@ function ConsoleTab({ running, isGame, containerId }: { running: boolean; isGame
   const send = () => {
     const c = cmd.trim();
     if (!c) return;
-    const out: LogLine[] = [{ id: seq, time: clock(), text: `> ${c}`, color: '#c9d1d9' }];
+    // Command exec isn't wired yet (#68/#71) — echo locally with a mock response.
+    append(`> ${c}`, '#c9d1d9');
     const resp = /^help$/i.test(c)
       ? isGame
         ? '/help /list /stop /op /say /tp'
@@ -244,9 +258,7 @@ function ConsoleTab({ running, isGame, containerId }: { running: boolean; isGame
         : isGame
           ? `Issued server command: ${c}`
           : `${c}: ok`;
-    out.push({ id: seq + 1, time: clock(), text: resp, color: '#7ee787' });
-    setLog((ls) => [...ls, ...out].slice(-60));
-    setSeq((s) => s + 2);
+    append(resp, '#7ee787');
     setCmd('');
   };
 

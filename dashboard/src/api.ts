@@ -124,3 +124,36 @@ export function restartDeployment(id: string): Promise<{ status: string; deploym
 export function startDeployment(id: string): Promise<{ status: string; deploymentId: string }> {
   return request(`/deployments/${id}/start`, { method: 'POST' });
 }
+
+/**
+ * Streams a deployment's container logs (SSE over a streaming fetch, so the JWT
+ * stays in the Authorization header). Resolves when the stream ends; rejects if
+ * it can't be opened. `signal` aborts it.
+ */
+export async function streamLogs(id: string, onLine: (line: string) => void, signal: AbortSignal): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`${BASE}/deployments/${id}/logs`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+    signal,
+  });
+  if (!res.ok || !res.body) throw new ApiError(res.status, 'log stream unavailable');
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let i: number;
+    while ((i = buf.indexOf('\n\n')) >= 0) {
+      const evt = buf.slice(0, i);
+      buf = buf.slice(i + 2);
+      const data = evt
+        .split('\n')
+        .filter((l) => l.startsWith('data: '))
+        .map((l) => l.slice(6))
+        .join('\n');
+      if (data) onLine(data);
+    }
+  }
+}
