@@ -337,10 +337,15 @@ function FilesTab({ isGame }: { isGame: boolean }) {
 
 function DatabasesTab() {
   const { toast } = useToast();
-  const dbs = [{ name: 's1_main', user: 'u_s1', host: 'db.nexusinfra.local:3306' }];
+  const [dbs, setDbs] = useState([{ name: 's1_main', user: 'u_s1', host: 'db.fra.nexusinfra.io:3306' }]);
+  const create = () => {
+    const name = `s1_db${dbs.length + 1}`;
+    setDbs((xs) => [...xs, { name, user: 'u' + Math.random().toString(16).slice(2, 8), host: 'db.fra.nexusinfra.io:3306' }]);
+    toast(`Database ${name} created`, 'success', 'Database');
+  };
   return (
     <>
-      <TabHeader title="Databases" action="New database" onAction={() => toast('Not wired yet', 'info')} />
+      <TabHeader title="Databases" action="New database" onAction={create} />
       <div style={listCard}>
         {dbs.map((db) => (
           <div key={db.name} style={rowCss}>
@@ -349,6 +354,7 @@ function DatabasesTab() {
             <span className="mono subtle" style={{ fontSize: '.8rem' }}>{db.host}</span>
           </div>
         ))}
+        {dbs.length === 0 && <div className="empty">No databases yet.</div>}
       </div>
     </>
   );
@@ -356,13 +362,18 @@ function DatabasesTab() {
 
 function BackupsTab() {
   const { toast } = useToast();
-  const backups = [
+  const [backups, setBackups] = useState([
     { name: 'auto-2026-07-24', size: '184 MB', rel: '3h ago', locked: false },
     { name: 'pre-update', size: '172 MB', rel: '2d ago', locked: true },
-  ];
+  ]);
+  const create = () => {
+    const name = `manual-${Date.now().toString().slice(-6)}`;
+    setBackups((xs) => [{ name, size: `${150 + ((Math.random() * 80) | 0)} MB`, rel: 'just now', locked: false }, ...xs]);
+    toast(`Backup ${name} started`, 'success', 'Backup');
+  };
   return (
     <>
-      <TabHeader title="Backups" action="Create backup" onAction={() => toast('Not wired yet', 'info')} />
+      <TabHeader title="Backups" action="Create backup" onAction={create} />
       <div style={listCard}>
         {backups.map((b) => (
           <div key={b.name} style={rowCss}>
@@ -412,9 +423,13 @@ function SchedulesTab() {
     { name: 'Nightly backup', cron: '0 4 * * *', human: 'every day at 04:00', action: 'create backup', enabled: true },
     { name: 'Weekly restart', cron: '0 6 * * 1', human: 'Mondays at 06:00', action: 'restart', enabled: false },
   ]);
+  const create = () => {
+    setSchedules((xs) => [...xs, { name: `Task ${xs.length + 1}`, cron: '0 3 * * *', human: 'every day at 03:00', action: 'restart', enabled: true }]);
+    toast('Schedule created', 'success', 'Schedule');
+  };
   return (
     <>
-      <TabHeader title="Schedules" action="New schedule" onAction={() => toast('Not wired yet', 'info')} />
+      <TabHeader title="Schedules" action="New schedule" onAction={create} />
       <div className="stack">
         {schedules.map((s, i) => (
           <div key={s.name} style={{ ...rowCss, border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface)' }}>
@@ -427,7 +442,7 @@ function SchedulesTab() {
                 <span className="mono muted">{s.cron}</span> · {s.human} · {s.action}
               </div>
             </div>
-            <button className="btn btn--secondary btn--sm" data-ripple onClick={() => toast('Not wired yet', 'info')}>Run now</button>
+            <button className="btn btn--secondary btn--sm" data-ripple onClick={() => toast(`Ran “${s.name}”`, 'success', 'Schedule')}>Run now</button>
             <button role="switch" aria-checked={s.enabled} aria-label="Toggle schedule" onClick={() => setSchedules((xs) => xs.map((x, j) => (j === i ? { ...x, enabled: !x.enabled } : x)))} style={{ flex: 'none', width: 44, height: 26, borderRadius: 'var(--radius-full)', border: 'none', cursor: 'pointer', padding: 3, transition: 'background 200ms', background: s.enabled ? 'var(--color-primary)' : 'var(--color-border-strong)' }}>
               <span style={{ display: 'block', width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'transform 200ms var(--ease-out)', transform: s.enabled ? 'translateX(18px)' : 'translateX(0)' }} />
             </button>
@@ -440,14 +455,18 @@ function SchedulesTab() {
 
 function SubusersTab() {
   const { toast } = useToast();
-  const users = [
+  const [users, setUsers] = useState([
     { email: 'owner@nexusinfra.dev', initial: 'O', perms: 'Full access', role: 'owner', soft: 'var(--color-primary-soft)', color: 'var(--color-primary)', canRemove: false },
     { email: 'ops@nexusinfra.dev', initial: 'P', perms: 'Console, files, backups', role: 'admin', soft: 'var(--color-success-soft)', color: 'var(--color-success)', canRemove: true },
     { email: 'viewer@nexusinfra.dev', initial: 'V', perms: 'Read-only', role: 'viewer', soft: 'var(--color-neutral-soft)', color: 'var(--color-neutral)', canRemove: true },
-  ];
+  ]);
+  const remove = (email: string) => {
+    setUsers((xs) => xs.filter((u) => u.email !== email));
+    toast('Access revoked', 'error', 'Subuser');
+  };
   return (
     <>
-      <TabHeader title="Subusers" action="Invite user" onAction={() => toast('Not wired yet', 'info')} />
+      <TabHeader title="Subusers" action="Invite user" onAction={() => toast('Invites are not wired yet', 'info')} />
       <div style={listCard}>
         {users.map((u) => (
           <div key={u.email} style={rowCss}>
@@ -457,7 +476,7 @@ function SubusersTab() {
               <div className="subtle" style={{ fontSize: '.78rem' }}>{u.perms}</div>
             </div>
             <span style={{ flex: 'none', fontSize: '.72rem', fontWeight: 600, padding: '3px 10px', borderRadius: 'var(--radius-full)', background: u.soft, color: u.color }}>{u.role}</span>
-            {u.canRemove && <button className="icon-btn" data-ripple aria-label="Revoke access" onClick={() => toast('Not wired yet', 'info')}>✕</button>}
+            {u.canRemove && <button className="icon-btn" data-ripple aria-label="Revoke access" onClick={() => remove(u.email)}>✕</button>}
           </div>
         ))}
       </div>
