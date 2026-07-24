@@ -4,7 +4,7 @@
 
 ![MVP](https://img.shields.io/badge/MVP-complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/current-Phase_2_·_Core-3b82f6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-60_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-78_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -113,6 +113,12 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 ---
 
 ## Done
+
+### `feature/live-stats` — merged in #117 (live per-server stats)
+
+- [x] Node Agent: per-container resource stats (`GET /stats/:containerId`, SSE) (#67)
+- [x] Orchestrator: proxy `GET /deployments/:id/stats` to the owning node agent
+- [x] Dashboard: header meters stream real `docker stats`, mock fallback (#72)
 
 ### `feature/live-logs` — merged in #115 (first functional slice)
 
