@@ -4,7 +4,7 @@
 
 ![MVP](https://img.shields.io/badge/MVP-complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/current-Phase_2_·_Core-3b82f6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-132_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-141_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -133,6 +133,10 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 ### `feature/contextual-help` — merged in #126 (panel UX)
 
 - [x] Contextual help — accessible hover/focus tooltips explaining every option (#122)
+
+### `feature/server-backups` — merged in #131 (make the mock UI real)
+
+- [x] Server backups — tar snapshot/restore of a server's data volume, list/delete (#110)
 
 ### `feature/server-databases` — merged in #121 (make the mock UI real)
 
