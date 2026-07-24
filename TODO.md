@@ -41,14 +41,38 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > **Ports** — Control Room `9000` · Node Agent `9100` · Orchestrator `9200` · dashboard `8095`
 > (Docker) / `5173` (Vite dev).
 >
-> **Latest:** the Claude Design redesign is ported **and** the interactive UX gaps are closed
-> ([[design-source]]) — cursor trail, live console, navigable files, interactive tabs, headroom,
-> live meters, hover states. Extra features remain UI/mock. **Next up:** wire the **live server
-> console** (#66–#72), or start the **Billing Bridge** (Phase 4). No active feature branch.
+> **Latest:** the redesign is fully ported (UI/UX present for every screen). Now **making the mock
+> features actually functional**, slice by slice, starting with the live server console.
+
+---
+
+## Active — `feature/live-logs`
+
+First functional slice of the live console: real container logs streamed to the Console tab (SSE:
+Node Agent → Orchestrator proxy → dashboard `EventSource`). Terminal (#68/#71) and stats (#67/#72)
+follow as their own branches.
+
+- [x] Node Agent: stream container logs (`GET /logs/:containerId`, SSE) (#66)
+- [x] Orchestrator: proxy `GET /deployments/:id/logs` to the owning node agent (part of #69)
+- [x] Dashboard: Console tab consumes real logs via `EventSource`, falls back to mock (#70)
 
 ---
 
 ## Backlog
+
+### Panel features → functional (make the mock UI real)
+
+Each mock behavior in the ported design becomes real, one issue + branch at a time.
+
+- [ ] Persist full deployment config (limits, restart, env, kind) (#106)
+- [ ] Enforce resource limits / restart policy / OOM at container start (#107)
+- [ ] File management API + real Files tab (#108)
+- [ ] Server databases — provision real DBs (#109)
+- [ ] Server backups — snapshot & restore volumes (#110)
+- [ ] Server schedules — cron tasks (#111)
+- [ ] Subusers — per-server access control (#112, needs #20)
+- [ ] Node provisioning — register/deregister real nodes (#113)
+- [ ] Game servers — real game images + startup (#114)
 
 ### Phase 3+ — Live server console (logs · terminal · stats)
 

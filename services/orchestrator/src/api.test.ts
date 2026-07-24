@@ -152,4 +152,14 @@ describe('deployment API', () => {
     const res = await request(app).post(`/deployments/${created.body.id}/start`);
     expect(res.status).toBe(409);
   });
+
+  it('gates log streaming on the deployment being running', async () => {
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+
+    // Not running yet → 409.
+    expect((await request(app).get(`/deployments/${created.body.id}/logs`)).status).toBe(409);
+    // Unknown deployment → 404.
+    expect((await request(app).get('/deployments/nope/logs')).status).toBe(404);
+  });
 });

@@ -60,6 +60,7 @@ services:
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
       - DATABASE_URL=file:/data/orchestrator.db
       - JWT_SECRET=${JWT_SECRET:-dev-secret}
+      - NODE_AGENT_URL=http://node-agent:9100
     volumes:
       - orchestrator_data:/data
     depends_on:

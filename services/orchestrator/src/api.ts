@@ -2,7 +2,18 @@ import { Router, type Request, type Response } from 'express';
 import { buildEnvelope, publishRabbitEvent, type EventEnvelope, type NexusInfraEvent } from 'shared';
 import { nodeHealth } from './nodeRegistry.js';
 import { selectNode as defaultSelectNode } from './nodeSelection.js';
-import type { NodeRecord, Repository } from './types.js';
+import type { DeploymentDetail, NodeRecord, Repository } from './types.js';
+
+// Where the (single, local) Node Agent's internal HTTP lives. Multi-node will
+// resolve this per node from the registry.
+const NODE_AGENT_URL = process.env.NODE_AGENT_URL || 'http://node-agent:9100';
+
+/** Decide whether a deployment's logs can be streamed, and from which container. */
+export function resolveLogTarget(detail: DeploymentDetail | null): { status: number; error?: string; containerId?: string } {
+  if (!detail) return { status: 404, error: 'deployment not found' };
+  if (!detail.containerId) return { status: 409, error: 'deployment is not running' };
+  return { status: 200, containerId: detail.containerId };
+}
 
 // Deployment REST API — the user-facing entry point that turns a server config
 // into a running container. Creating a deployment picks a node and emits
@@ -162,6 +173,35 @@ export function createApiRouter(deps: ApiDeps): Router {
     const now = Date.now();
     const nodes = await repo.listNodes();
     res.json(nodes.map((n) => ({ ...n, health: nodeHealth(n, now) })));
+  });
+
+  // Stream a running deployment's logs (SSE), proxied from the owning Node Agent.
+  router.get('/deployments/:id/logs', async (req: Request, res: Response) => {
+    const target = resolveLogTarget(await repo.getDeployment(req.params.id));
+    if (target.status !== 200) return res.status(target.status).json({ error: target.error });
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+
+    const controller = new AbortController();
+    req.on('close', () => controller.abort());
+    try {
+      const upstream = await fetch(`${NODE_AGENT_URL}/logs/${target.containerId}`, { signal: controller.signal });
+      if (!upstream.body) return res.end();
+      const reader = upstream.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(Buffer.from(value));
+      }
+    } catch {
+      // client disconnected or upstream closed
+    }
+    res.end();
   });
 
   return router;

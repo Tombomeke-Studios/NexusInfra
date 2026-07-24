@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { createDeployment, listDeployments, login, ApiError, TOKEN_KEY } from './api';
+import { createDeployment, listDeployments, login, streamLogs, ApiError, TOKEN_KEY } from './api';
 
 // The client is verified against a mocked fetch: it attaches the Bearer token,
 // posts JSON, and surfaces API errors with their status.
@@ -56,6 +56,22 @@ describe('api client', () => {
       dockerImage: 'nginx',
       ports: { '8080': '80' },
     });
+  });
+
+  it('parses SSE data lines from the log stream', async () => {
+    const chunks = ['data: first line\n\ndata: second', ' line\n\n'];
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const enc = new TextEncoder();
+        for (const c of chunks) controller.enqueue(enc.encode(c));
+        controller.close();
+      },
+    });
+    fetchMock.mockResolvedValue({ ok: true, status: 200, body } as unknown as Response);
+
+    const lines: string[] = [];
+    await streamLogs('d1', (l) => lines.push(l), new AbortController().signal);
+    expect(lines).toEqual(['first line', 'second line']);
   });
 
   it('throws ApiError carrying the status and message on failure', async () => {
