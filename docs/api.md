@@ -84,6 +84,13 @@ Start (or re-run) a deployment that is **not** currently running — re-places i
 emits `infra.server.start` from the saved config. `202` while starting, `404` if unknown, `409` if it
 is already running/pending, `503` if no healthy node is available.
 
+### `GET /deployments/:id/logs`
+
+Server-Sent Events stream of the running container's logs — one `data:` line per log line.
+Proxied from the owning Node Agent's internal `/logs/:containerId`. `404` if unknown, `409` if the
+deployment is not running. The browser consumes it with a streaming `fetch` (so the JWT stays in the
+`Authorization` header, not the URL).
+
 ### `POST /deployments/:id/stop`
 
 Request a running deployment be stopped — emits `infra.server.stop`; the agent stops **and removes**
