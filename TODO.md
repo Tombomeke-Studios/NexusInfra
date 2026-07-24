@@ -65,6 +65,14 @@ Each mock behavior in the ported design becomes real, one issue + branch at a ti
 - [ ] Node provisioning — register/deregister real nodes (#113)
 - [ ] Game servers — real game images + startup (#114)
 
+### Panel UX & customisation
+
+Make the panel understandable and tailorable — the options should explain themselves.
+
+- [ ] Contextual help: hover/focus tooltips explaining every option (#122)
+- [ ] First-run onboarding / guided intro — nodes especially (#123)
+- [ ] User preferences: form defaults + customisation, persisted (#124)
+
 ### Phase 3+ — Live server console (logs · terminal · stats)
 
 A per-server console like other panels: live logs, an interactive terminal, and CPU/RAM/network.
@@ -86,7 +94,7 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 
 - [ ] Real-time container log streaming via WebSocket (#17)
 - [ ] API Gateway: JWT validation, routing, WebSocket proxy (#20)
-- [ ] Dashboard: node detail view (resource history)
+- [ ] Dashboard: node detail view (resource history) (#125)
 - [ ] Replace stub login with real FinVault JWT via the Gateway
 
 ### Phase 4 — Billing integration (`feature/billing-bridge`)
