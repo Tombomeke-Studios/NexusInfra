@@ -6,6 +6,7 @@ import {
   stopDeployment,
   restartDeployment,
   streamLogs,
+  streamStats,
   type DeploymentDetail,
 } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
@@ -86,8 +87,8 @@ export function ServerDetail() {
         </div>
       </div>
 
-      {/* Resource stats — drift live while running (mock) */}
-      <LiveStats running={running} isGame={isGame} />
+      {/* Resource stats — real docker stats while running, mock fallback */}
+      <LiveStats id={d.id} running={running} isGame={isGame} containerId={d.containerId} startedAt={d.startedAt} />
 
       {/* Tab bar */}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', borderBottom: '1px solid var(--color-border)', marginBottom: 22 }}>
@@ -112,38 +113,81 @@ export function ServerDetail() {
   );
 }
 
-// Header resource stats that drift live while the server runs (mock; real
-// per-container stats are #67/#72).
-function LiveStats({ running, isGame }: { running: boolean; isGame: boolean }) {
-  const [s, setS] = useState({ cpu: 34, ram: 58, disk: 22, netKb: 1180, players: 7, tps: 19.9, since: Date.now() });
+// Header resource stats. While the server runs they stream from the owning Node
+// Agent's real `docker stats` (#67/#72); if the stream can't open (no backend,
+// container not up) they fall back to the mock drift so the demo still looks
+// alive. Players/TPS remain mock — Docker doesn't expose game telemetry.
+function LiveStats({ id, running, isGame, containerId, startedAt }: { id: string; running: boolean; isGame: boolean; containerId: string | null; startedAt: string | null }) {
+  const [s, setS] = useState({ cpu: 34, ram: 58, disk: 22, netKb: 1180, players: 7, tps: 19.9 });
+  const [live, setLive] = useState(false);
+
   useEffect(() => {
     if (!running) return;
     const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-    const t = setInterval(() => {
-      setS((p) => ({
-        ...p,
-        cpu: Math.round(clamp(p.cpu + (Math.random() * 12 - 6), 3, 96)),
-        ram: Math.round(clamp(p.ram + (Math.random() * 8 - 4), 5, 97)),
-        netKb: Math.round(clamp(p.netKb + (Math.random() * 500 - 250), 60, 8000)),
-        players: isGame ? clamp(p.players + (Math.random() < 0.3 ? (Math.random() < 0.5 ? 1 : -1) : 0), 0, 20) : p.players,
-        tps: isGame ? +clamp(p.tps + (Math.random() * 0.6 - 0.3), 12, 20).toFixed(1) : p.tps,
-      }));
-    }, 1500);
-    return () => clearInterval(t);
-  }, [running, isGame]);
 
-  const mins = Math.floor((Date.now() - s.since) / 60000);
-  const uptime = running ? `${Math.floor(mins / 60)}h ${mins % 60}m` : '—';
+    // Mock drift — the fallback when the real stats stream isn't available.
+    let mockTimer: ReturnType<typeof setInterval> | undefined;
+    const startMock = () => {
+      mockTimer = setInterval(() => {
+        setS((p) => ({
+          ...p,
+          cpu: Math.round(clamp(p.cpu + (Math.random() * 12 - 6), 3, 96)),
+          ram: Math.round(clamp(p.ram + (Math.random() * 8 - 4), 5, 97)),
+          netKb: Math.round(clamp(p.netKb + (Math.random() * 500 - 250), 60, 8000)),
+          players: isGame ? clamp(p.players + (Math.random() < 0.3 ? (Math.random() < 0.5 ? 1 : -1) : 0), 0, 20) : p.players,
+          tps: isGame ? +clamp(p.tps + (Math.random() * 0.6 - 0.3), 12, 20).toFixed(1) : p.tps,
+        }));
+      }, 1500);
+    };
+
+    const ctrl = new AbortController();
+    let cancelled = false;
+    // Network counters are cumulative — derive a KB/s rate from consecutive samples.
+    let prev: { totalKb: number; t: number } | null = null;
+
+    streamStats(id, (st) => {
+      if (cancelled) return;
+      setLive(true);
+      const now = Date.now();
+      const totalKb = st.rxKb + st.txKb;
+      let netKb = 0;
+      if (prev && now > prev.t) netKb = Math.max(0, Math.round(((totalKb - prev.totalKb) / (now - prev.t)) * 1000));
+      prev = { totalKb, t: now };
+      setS((p) => ({ ...p, cpu: Math.round(st.cpuPercent), ram: Math.round(st.memPercent), netKb }));
+    }, ctrl.signal).catch(() => {
+      if (!cancelled) startMock();
+    });
+
+    return () => {
+      cancelled = true;
+      ctrl.abort();
+      setLive(false);
+      if (mockTimer) clearInterval(mockTimer);
+    };
+  }, [id, running, isGame, containerId]);
+
+  const mins = running && startedAt ? Math.floor((Date.now() - new Date(startedAt).getTime()) / 60000) : 0;
+  const uptime = running && startedAt ? `${Math.floor(mins / 60)}h ${mins % 60}m` : '—';
   const net = running ? (s.netKb >= 1024 ? `${(s.netKb / 1024).toFixed(1)} MB/s` : `${s.netKb} KB/s`) : '—';
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12, marginBottom: 24 }}>
-      <StatBox label="CPU" value={running ? `${s.cpu}%` : '0%'} />
-      <StatBox label="Memory" value={running ? `${s.ram}%` : '0%'} />
-      <StatBox label="Disk" value={`${s.disk}%`} />
-      <StatBox label="Network" value={net} />
-      <StatBox label="Uptime" value={uptime} />
-      {isGame && <StatBox label="Players · TPS" value={running ? `${s.players}/20 · ${s.tps}` : '—'} />}
+    <div style={{ marginBottom: 24 }}>
+      {running && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8, fontSize: '.72rem', color: 'var(--color-text-subtle)' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: live ? 'var(--color-success)' : 'var(--color-neutral)', animation: live ? 'pulse 1.8s ease-out infinite' : 'none' }} />
+            {live ? 'live · docker stats' : 'estimated'}
+          </span>
+        </div>
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12 }}>
+        <StatBox label="CPU" value={running ? `${s.cpu}%` : '0%'} />
+        <StatBox label="Memory" value={running ? `${s.ram}%` : '0%'} />
+        <StatBox label="Disk" value={`${s.disk}%`} />
+        <StatBox label="Network" value={net} />
+        <StatBox label="Uptime" value={uptime} />
+        {isGame && <StatBox label="Players · TPS" value={running ? `${s.players}/20 · ${s.tps}` : '—'} />}
+      </div>
     </div>
   );
 }

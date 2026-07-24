@@ -125,18 +125,28 @@ export function startDeployment(id: string): Promise<{ status: string; deploymen
   return request(`/deployments/${id}/start`, { method: 'POST' });
 }
 
+/** Live per-container resource stats — the dashboard renders these live (#72). */
+export interface ContainerStats {
+  cpuPercent: number;
+  memUsedMb: number;
+  memLimitMb: number;
+  memPercent: number;
+  rxKb: number;
+  txKb: number;
+}
+
 /**
- * Streams a deployment's container logs (SSE over a streaming fetch, so the JWT
- * stays in the Authorization header). Resolves when the stream ends; rejects if
- * it can't be opened. `signal` aborts it.
+ * Consume a deployment's SSE stream (over a streaming fetch, so the JWT stays in
+ * the Authorization header), invoking `onData` with each event's `data` payload.
+ * Resolves when the stream ends; rejects if it can't be opened. `signal` aborts.
  */
-export async function streamLogs(id: string, onLine: (line: string) => void, signal: AbortSignal): Promise<void> {
+async function streamSse(path: string, onData: (data: string) => void, signal: AbortSignal): Promise<void> {
   const token = getToken();
-  const res = await fetch(`${BASE}/deployments/${id}/logs`, {
+  const res = await fetch(`${BASE}${path}`, {
     headers: token ? { authorization: `Bearer ${token}` } : {},
     signal,
   });
-  if (!res.ok || !res.body) throw new ApiError(res.status, 'log stream unavailable');
+  if (!res.ok || !res.body) throw new ApiError(res.status, 'stream unavailable');
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
@@ -153,7 +163,23 @@ export async function streamLogs(id: string, onLine: (line: string) => void, sig
         .filter((l) => l.startsWith('data: '))
         .map((l) => l.slice(6))
         .join('\n');
-      if (data) onLine(data);
+      if (data) onData(data);
     }
   }
+}
+
+/** Streams a deployment's container logs (SSE). See {@link streamSse}. */
+export function streamLogs(id: string, onLine: (line: string) => void, signal: AbortSignal): Promise<void> {
+  return streamSse(`/deployments/${id}/logs`, onLine, signal);
+}
+
+/** Streams a deployment's live resource stats (SSE). See {@link streamSse}. */
+export function streamStats(id: string, onStats: (stats: ContainerStats) => void, signal: AbortSignal): Promise<void> {
+  return streamSse(`/deployments/${id}/stats`, (data) => {
+    try {
+      onStats(JSON.parse(data) as ContainerStats);
+    } catch {
+      // Ignore a malformed sample; the next one follows.
+    }
+  }, signal);
 }

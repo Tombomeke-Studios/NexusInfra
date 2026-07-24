@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { createDeployment, listDeployments, login, streamLogs, ApiError, TOKEN_KEY } from './api';
+import { createDeployment, listDeployments, login, streamLogs, streamStats, ApiError, TOKEN_KEY, type ContainerStats } from './api';
 
 // The client is verified against a mocked fetch: it attaches the Bearer token,
 // posts JSON, and surfaces API errors with their status.
@@ -72,6 +72,21 @@ describe('api client', () => {
     const lines: string[] = [];
     await streamLogs('d1', (l) => lines.push(l), new AbortController().signal);
     expect(lines).toEqual(['first line', 'second line']);
+  });
+
+  it('parses JSON stats samples from the stats stream', async () => {
+    const sample = { cpuPercent: 12.5, memUsedMb: 200, memLimitMb: 1024, memPercent: 19.5, rxKb: 3, txKb: 1 };
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(sample)}\n\n`));
+        controller.close();
+      },
+    });
+    fetchMock.mockResolvedValue({ ok: true, status: 200, body } as unknown as Response);
+
+    const samples: ContainerStats[] = [];
+    await streamStats('d1', (st) => samples.push(st), new AbortController().signal);
+    expect(samples).toEqual([sample]);
   });
 
   it('throws ApiError carrying the status and message on failure', async () => {

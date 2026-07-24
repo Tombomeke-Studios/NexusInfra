@@ -42,9 +42,10 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > (Docker) / `5173` (Vite dev).
 >
 > **Latest:** the redesign is fully ported (UI/UX present) and **making the mock features functional**
-> has begun. ✅ **Live logs are real** — a running server's container logs stream to the Console tab
-> (verified end to end). **Next up:** live per-server stats (#67/#72), then the interactive terminal
-> (#68/#71), then the panel-feature backlog below. No active feature branch.
+> has begun. ✅ **Live logs** and ✅ **live stats** are real — a running server's container logs stream
+> to the Console tab and its CPU/memory/network stream from real `docker stats` to the header meters
+> (mock fallback when no backend). **Next up:** the interactive terminal (#68/#71), then the
+> panel-feature backlog below.
 
 ---
 
@@ -71,10 +72,9 @@ Needs a WebSocket transport (not the RabbitMQ command bus) authenticated by JWT.
 after picking it up. Depends on / overlaps the API Gateway (#20).
 
 - [x] Node Agent: stream container logs (SSE) (#66) · Dashboard live logs (#70) — done in #115
-- [ ] Node Agent: per-container resource stats (docker stats) (#67)
+- [x] Node Agent: per-container resource stats (docker stats) (#67) · Dashboard live stats (#72)
 - [ ] Node Agent: interactive exec/console into a container (#68)
-- [ ] WebSocket transport for exec/terminal (gateway, JWT) (#69 — logs use SSE already)
-- [ ] Dashboard: live per-server CPU/RAM/network stats (#72)
+- [ ] WebSocket transport for exec/terminal (gateway, JWT) (#69 — logs/stats use SSE already)
 - [ ] Dashboard: interactive terminal (xterm.js) for a server (#71)
 
 ### Phase 3+ — Dashboard, other slices
