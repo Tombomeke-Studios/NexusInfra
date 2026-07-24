@@ -33,6 +33,16 @@ class FakeRuntime implements ContainerRuntime {
   stats(): () => void {
     return () => {};
   }
+  async listFiles(): Promise<import('./files.js').FileEntry[]> {
+    return [];
+  }
+  async readFile(): Promise<string> {
+    return '';
+  }
+  async writeFile(): Promise<void> {}
+  async makeDir(): Promise<void> {}
+  async renamePath(): Promise<void> {}
+  async deletePath(): Promise<void> {}
 }
 
 const NODE_ID = 'node-1';

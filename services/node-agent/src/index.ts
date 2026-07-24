@@ -3,6 +3,7 @@ import express from 'express';
 import { consumeRabbitQueue, startNodeHeartbeat } from 'shared';
 import { DockerodeRuntime } from './runtime.js';
 import { createAgent } from './agent.js';
+import { createFileRouter } from './fileRoutes.js';
 
 // ── Node Agent ────────────────────────────────────────────────────────────────
 // Runs on a Docker host. Consumes server lifecycle commands addressed to this
@@ -16,6 +17,7 @@ const agent = createAgent({ nodeId: NODE_ID, runtime });
 
 // ── HTTP: health probe ────────────────────────────────────────────────────────
 const app = express();
+app.use(express.json({ limit: '4mb' })); // file writes carry content in the body
 app.get('/health', (_req, res) => {
   res.json({ service: 'node-agent', nodeId: NODE_ID, status: 'healthy', uptimeSec: Math.round(process.uptime()) });
 });
@@ -47,6 +49,10 @@ app.get('/stats/:containerId', (req, res) => {
   const stop = runtime.stats(req.params.containerId, (stats) => res.write(`data: ${JSON.stringify(stats)}\n\n`));
   req.on('close', () => stop());
 });
+
+// ── HTTP: container file management (#108) ────────────────────────────────────
+// Internal CRUD over the container's filesystem, reached only via the proxy.
+app.use(createFileRouter(runtime));
 
 app.listen(PORT, () => console.log(`[Node Agent ${NODE_ID}] HTTP listening on http://localhost:${PORT}`));
 

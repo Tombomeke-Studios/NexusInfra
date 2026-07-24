@@ -108,6 +108,22 @@ JSON object `{ cpuPercent, memUsedMb, memLimitMb, memPercent, rxKb, txKb }` deri
 Proxied from the owning Node Agent's internal `/stats/:containerId`. `404` if unknown, `409` if the
 deployment is not running. Consumed with the same streaming `fetch` as logs.
 
+### File management  *(running deployment)*
+
+CRUD over the running container's filesystem, proxied to the owning Node Agent (#108). Each returns
+`404` if the deployment is unknown, `409` if it is not running, and `400` (with the container's own
+error message) on a bad path or failed operation. Paths are normalised to a traversal-safe absolute
+form on the agent, and file operations run as argv arrays (no shell) so a path can't inject.
+
+| Method + path | Purpose |
+|---|---|
+| `GET /deployments/:id/files?path=/dir` | List a directory — `[{ name, kind: 'file'\|'dir', size }]`, directories first |
+| `GET /deployments/:id/files/content?path=/f` | Read a text file — `{ path, content }` |
+| `PUT /deployments/:id/files/content` | Create/overwrite a file — body `{ path, content }` → `204` |
+| `POST /deployments/:id/files/dir` | Make a directory — body `{ path }` → `201` |
+| `POST /deployments/:id/files/rename` | Move/rename — body `{ from, to }` |
+| `DELETE /deployments/:id/files?path=/f` | Delete a file or directory (recursive) → `204` |
+
 ### `POST /deployments/:id/stop`
 
 Request a running deployment be stopped — emits `infra.server.stop`; the agent stops **and removes**

@@ -29,6 +29,17 @@ Cross-project security design: [`../../CONCEPTS/integration/security.md`](../../
   one identity across the ecosystem.
 - WebSocket connections authenticate via JWT in the query string, mirroring FinVault's gateway.
 
+## Container file management (#108)
+
+- The Node Agent's file API operates **inside** the target container. Every path is normalised to a
+  traversal-safe absolute form first, so `..` segments collapse and can never climb above the
+  container root (they also never reach the host — operations run in the container's namespace).
+- File operations are issued as **argv arrays**, never a shell string, so a crafted path can't inject
+  a command; writes go through Docker's archive API rather than a shell redirect.
+- The endpoints are **agent-internal** — reached only via the Orchestrator's proxy on the private
+  network, which gates them on a running deployment. User-facing authorisation rides on the same JWT
+  as the rest of the API; per-server subuser scoping is a later slice (#112).
+
 ## Known gaps (foundation phase)
 
 - No auth on Control Room HTTP endpoints yet (localhost/dev only) — gated by the gateway later.

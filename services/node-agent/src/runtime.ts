@@ -1,9 +1,11 @@
 import os from 'os';
 import Docker from 'dockerode';
+import { Writable } from 'stream';
 import type { NodeResources, ResourceLimits } from 'shared';
 import { lineSplitter } from './logs.js';
 import { parseDockerStats, type ContainerStats } from './stats.js';
 import { resourceLimitsToHostConfig } from './limits.js';
+import { buildTarball, normalizeContainerPath, parseLsOutput, type FileEntry } from './files.js';
 
 // NodeResources is the shared event-payload type (shared/src/events.ts) — the
 // host snapshot reported to the Control Room via the node heartbeat.
@@ -33,6 +35,20 @@ export interface ContainerRuntime {
   logs(containerId: string, onLine: (line: string) => void): () => void;
   /** Follow a container's resource stats, invoking `onStats` per sample. Returns an unsubscribe. */
   stats(containerId: string, onStats: (stats: ContainerStats) => void): () => void;
+
+  // ── File management (#108) — CRUD over a container's filesystem ──────────────
+  /** List a directory's immediate entries (dirs first, then files). */
+  listFiles(containerId: string, path: string): Promise<FileEntry[]>;
+  /** Read a text file's contents. */
+  readFile(containerId: string, path: string): Promise<string>;
+  /** Create or overwrite a text file. */
+  writeFile(containerId: string, path: string, content: string): Promise<void>;
+  /** Create a directory (and any missing parents). */
+  makeDir(containerId: string, path: string): Promise<void>;
+  /** Move/rename a file or directory. */
+  renamePath(containerId: string, from: string, to: string): Promise<void>;
+  /** Delete a file or directory (recursively). */
+  deletePath(containerId: string, path: string): Promise<void>;
 }
 
 /**
@@ -153,6 +169,68 @@ export class DockerodeRuntime implements ContainerRuntime {
       stopped = true;
       (stream as unknown as { destroy?: () => void } | null)?.destroy?.();
     };
+  }
+
+  // ── File management (#108) ───────────────────────────────────────────────────
+  // All paths are normalised to a traversal-safe absolute form first, then handed
+  // to commands as argv arrays (no shell), so a container path can't inject.
+
+  async listFiles(containerId: string, path: string): Promise<FileEntry[]> {
+    const dir = normalizeContainerPath(path);
+    const { stdout, stderr, exitCode } = await this.exec(containerId, ['ls', '-lAp', dir]);
+    if (exitCode !== 0) throw new Error(stderr.trim() || `cannot list ${dir}`);
+    return parseLsOutput(stdout);
+  }
+
+  async readFile(containerId: string, path: string): Promise<string> {
+    const file = normalizeContainerPath(path);
+    const { stdout, stderr, exitCode } = await this.exec(containerId, ['cat', file]);
+    if (exitCode !== 0) throw new Error(stderr.trim() || `cannot read ${file}`);
+    return stdout;
+  }
+
+  async writeFile(containerId: string, path: string, content: string): Promise<void> {
+    const file = normalizeContainerPath(path);
+    const slash = file.lastIndexOf('/');
+    const dir = slash > 0 ? file.slice(0, slash) : '/';
+    const base = file.slice(slash + 1);
+    if (!base) throw new Error('a file name is required');
+    await this.docker.getContainer(containerId).putArchive(buildTarball(base, content), { path: dir });
+  }
+
+  async makeDir(containerId: string, path: string): Promise<void> {
+    const dir = normalizeContainerPath(path);
+    const { stderr, exitCode } = await this.exec(containerId, ['mkdir', '-p', dir]);
+    if (exitCode !== 0) throw new Error(stderr.trim() || `cannot create ${dir}`);
+  }
+
+  async renamePath(containerId: string, from: string, to: string): Promise<void> {
+    const src = normalizeContainerPath(from);
+    const dst = normalizeContainerPath(to);
+    const { stderr, exitCode } = await this.exec(containerId, ['mv', src, dst]);
+    if (exitCode !== 0) throw new Error(stderr.trim() || `cannot move ${src}`);
+  }
+
+  async deletePath(containerId: string, path: string): Promise<void> {
+    const target = normalizeContainerPath(path);
+    if (target === '/') throw new Error('refusing to delete the container root');
+    const { stderr, exitCode } = await this.exec(containerId, ['rm', '-rf', target]);
+    if (exitCode !== 0) throw new Error(stderr.trim() || `cannot delete ${target}`);
+  }
+
+  // Run a command in the container, collecting demuxed stdout/stderr and the exit
+  // code. Cmd is an argv array — never a shell string — so paths can't inject.
+  private async exec(containerId: string, cmd: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    const exec = await this.docker.getContainer(containerId).exec({ Cmd: cmd, AttachStdout: true, AttachStderr: true });
+    const stream = await exec.start({});
+    let stdout = '';
+    let stderr = '';
+    const out = new Writable({ write: (c, _e, cb) => { stdout += c.toString('utf8'); cb(); } });
+    const err = new Writable({ write: (c, _e, cb) => { stderr += c.toString('utf8'); cb(); } });
+    this.docker.modem.demuxStream(stream as unknown as NodeJS.ReadableStream, out, err);
+    await new Promise<void>((resolve) => (stream as unknown as NodeJS.ReadableStream).on('end', resolve));
+    const info = await exec.inspect();
+    return { stdout, stderr, exitCode: info.ExitCode ?? 0 };
   }
 
   async collectResources(): Promise<NodeResources> {

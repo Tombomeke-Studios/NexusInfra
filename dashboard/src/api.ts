@@ -181,6 +181,37 @@ async function streamSse(path: string, onData: (data: string) => void, signal: A
   }
 }
 
+// ── Container file management (#108) ──────────────────────────────────────────
+export interface FileEntry {
+  name: string;
+  kind: 'file' | 'dir';
+  size: number;
+}
+
+export function listFiles(id: string, path: string): Promise<FileEntry[]> {
+  return request(`/deployments/${id}/files?path=${encodeURIComponent(path)}`);
+}
+
+export function readFile(id: string, path: string): Promise<{ path: string; content: string }> {
+  return request(`/deployments/${id}/files/content?path=${encodeURIComponent(path)}`);
+}
+
+export function writeFile(id: string, path: string, content: string): Promise<void> {
+  return request(`/deployments/${id}/files/content`, { method: 'PUT', body: JSON.stringify({ path, content }) });
+}
+
+export function makeDir(id: string, path: string): Promise<void> {
+  return request(`/deployments/${id}/files/dir`, { method: 'POST', body: JSON.stringify({ path }) });
+}
+
+export function renamePath(id: string, from: string, to: string): Promise<void> {
+  return request(`/deployments/${id}/files/rename`, { method: 'POST', body: JSON.stringify({ from, to }) });
+}
+
+export function deletePath(id: string, path: string): Promise<void> {
+  return request(`/deployments/${id}/files?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+}
+
 /** Streams a deployment's container logs (SSE). See {@link streamSse}. */
 export function streamLogs(id: string, onLine: (line: string) => void, signal: AbortSignal): Promise<void> {
   return streamSse(`/deployments/${id}/logs`, onLine, signal);
