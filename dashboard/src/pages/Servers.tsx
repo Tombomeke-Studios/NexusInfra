@@ -53,7 +53,7 @@ export function Servers() {
   const onStart = (id: string) => runAction(id, startDeployment, 'start');
 
   return (
-    <div className="page">
+    <div className="page" style={{ maxWidth: 1320 }}>
       <div className="page__head">
         <h1 className="page__title">Servers</h1>
         <span className="live">
@@ -88,6 +88,7 @@ export function Servers() {
                 <th>Node</th>
                 <th>Status</th>
                 <th>Container</th>
+                <th>Limits</th>
                 <th>Created</th>
                 <th></th>
               </tr>
@@ -96,9 +97,25 @@ export function Servers() {
               {deployments.map((d, i) => (
                 <tr key={d.id} style={{ ['--i']: Math.min(i, 12) } as CSSProperties}>
                   <td>
-                    <button className="name-btn" onClick={() => setDetailId(d.id)}>
-                      {d.name}
-                    </button>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                      <button className="name-btn" onClick={() => setDetailId(d.id)}>
+                        {d.name}
+                      </button>
+                      <span
+                        style={{
+                          fontSize: '.66rem',
+                          fontWeight: 600,
+                          textTransform: 'uppercase',
+                          letterSpacing: '.04em',
+                          padding: '2px 7px',
+                          borderRadius: 'var(--radius-full)',
+                          background: 'var(--color-surface-2)',
+                          color: 'var(--color-text-subtle)',
+                        }}
+                      >
+                        {d.dockerImage.startsWith('nexusinfra/') ? 'game' : 'app'}
+                      </span>
+                    </span>
                   </td>
                   <td className="mono">{d.dockerImage}</td>
                   <td>{d.nodeId ?? '—'}</td>
@@ -106,6 +123,7 @@ export function Servers() {
                     <StatusBadge status={d.status} />
                   </td>
                   <td className="mono subtle">{shortId(d.containerId)}</td>
+                  <td className="mono subtle" style={{ fontSize: '.82rem', whiteSpace: 'nowrap' }}>cpu 50% · ram 50%</td>
                   <td className="subtle tnum">{formatRelative(d.createdAt)}</td>
                   <td>
                     <span className="actions">
@@ -130,7 +148,12 @@ export function Servers() {
                             Stop
                           </button>
                         </>
-                      ) : d.status !== 'pending' ? (
+                      ) : d.status === 'pending' ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, color: 'var(--color-warning)', fontSize: '.82rem', fontWeight: 550 }}>
+                          <span className="spinner" style={{ color: 'var(--color-warning)' }} />
+                          placing…
+                        </span>
+                      ) : (
                         <button
                           className="btn btn--secondary btn--sm"
                           onClick={() => onStart(d.id)}
@@ -140,7 +163,7 @@ export function Servers() {
                           {pendingId === d.id ? <span className="spinner" /> : <IconPlay size={15} />}
                           Start
                         </button>
-                      ) : null}
+                      )}
                     </span>
                   </td>
                 </tr>
