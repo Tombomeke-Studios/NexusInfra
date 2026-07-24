@@ -62,12 +62,21 @@ Create and place a deployment.
 Request:
 
 ```json
-{ "name": "my-nginx", "dockerImage": "nginx", "ports": { "8080": "80" }, "env": {}, "autoRestart": false, "type": "generic" }
+{
+  "name": "my-nginx",
+  "dockerImage": "nginx",
+  "ports": { "8080": "80" },
+  "env": {},
+  "type": "app",
+  "autoRestart": true,
+  "resourceLimits": { "cpuPercent": 50, "ramPercent": 50, "diskPercent": 50, "swapPercent": 0, "ioPriority": "normal", "restartPolicy": "on-failure", "oomKill": false }
+}
 ```
 
-`name` and `dockerImage` are required. Responses: `201` with the deployment (including its event
-trail), `400` on missing fields, `503` when no healthy node is available. On success the Orchestrator
-emits `infra.server.start` for the chosen node.
+`name` and `dockerImage` are required; the rest are optional and stored with the server config (#106) so
+a re-start reuses them — enforcing the limits at container start is a later slice (#107). Responses:
+`201` with the deployment (including its event trail), `400` on missing fields, `503` when no healthy
+node is available. On success the Orchestrator emits `infra.server.start` for the chosen node.
 
 ### `GET /deployments`
 

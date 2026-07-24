@@ -49,11 +49,24 @@ export interface DeploymentDetail extends DeploymentView {
   events: DeploymentEvent[];
 }
 
+export interface ResourceLimits {
+  cpuPercent?: number;
+  ramPercent?: number;
+  diskPercent?: number;
+  swapPercent?: number;
+  ioPriority?: 'low' | 'normal' | 'high';
+  restartPolicy?: 'no' | 'on-failure' | 'always';
+  oomKill?: boolean;
+}
+
 export interface CreateDeploymentInput {
   name: string;
   dockerImage: string;
   ports?: Record<string, string>;
   env?: Record<string, string>;
+  resourceLimits?: ResourceLimits;
+  autoRestart?: boolean;
+  type?: string;
 }
 
 /** Thrown when the API responds with a non-2xx status; carries the HTTP status. */

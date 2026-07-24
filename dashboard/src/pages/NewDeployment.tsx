@@ -4,9 +4,10 @@ import { createDeployment, listNodes, type NodeView } from '../api';
 import { IconPlus } from '../components/Icons';
 import { useToast } from '../components/Toast';
 
-// New Deployment — ported from the redesign. The real deploy sends name, image,
-// ports and env; the richer controls (type, game form, placement, resource
-// limits, runtime, feature limits) are UI for now and wired up later.
+// New Deployment — ported from the redesign. The deploy sends name, image, ports,
+// env, the resource limits + restart policy and the kind, all persisted with the
+// server config (#106); enforcing the limits at container start is #107. The game
+// picker, placement and feature limits remain UI for now.
 interface Row {
   key: string;
   value: string;
@@ -58,7 +59,23 @@ export function NewDeployment() {
     setError(null);
     try {
       const image = kind === 'game' ? `nexusinfra/${game}` : dockerImage;
-      await createDeployment({ name, dockerImage: image, ports: rowsToRecord(ports), env: rowsToRecord(env) });
+      await createDeployment({
+        name,
+        dockerImage: image,
+        ports: rowsToRecord(ports),
+        env: rowsToRecord(env),
+        type: kind,
+        autoRestart: restart !== 'no',
+        resourceLimits: {
+          cpuPercent: cpu,
+          ramPercent: ram,
+          diskPercent: disk,
+          swapPercent: swap,
+          ioPriority: io as 'low' | 'normal' | 'high',
+          restartPolicy: restart as 'no' | 'on-failure' | 'always',
+          oomKill: oom,
+        },
+      });
       toast(`Deploying ${name}`, 'success');
       navigate('/servers');
     } catch (err) {

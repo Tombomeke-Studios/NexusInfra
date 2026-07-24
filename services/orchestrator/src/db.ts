@@ -9,6 +9,7 @@ import type {
   DeploymentView,
   NodeRecord,
   Repository,
+  ResourceLimits,
   ServerConfigRecord,
   UpsertNodeInput,
 } from './types.js';
@@ -41,6 +42,15 @@ function parseJson(value: string): Record<string, string> {
   }
 }
 
+function parseLimits(value: string): ResourceLimits {
+  try {
+    const parsed = JSON.parse(value) as ResourceLimits;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 function toNodeRecord(n: PrismaNode): NodeRecord {
   return {
     id: n.id,
@@ -63,6 +73,7 @@ function toConfigRecord(c: PrismaConfig): ServerConfigRecord {
     dockerImage: c.dockerImage,
     ports: parseJson(c.ports),
     env: parseJson(c.environmentVars),
+    resourceLimits: parseLimits(c.resourceLimits),
     autoRestart: c.autoRestart,
     type: c.type,
     createdAt: c.createdAt.toISOString(),
@@ -132,6 +143,7 @@ export class PrismaRepository implements Repository {
         dockerImage: input.dockerImage,
         ports: JSON.stringify(input.ports ?? {}),
         environmentVars: JSON.stringify(input.env ?? {}),
+        resourceLimits: JSON.stringify(input.resourceLimits ?? {}),
         autoRestart: input.autoRestart ?? false,
         type: input.type ?? 'generic',
       },

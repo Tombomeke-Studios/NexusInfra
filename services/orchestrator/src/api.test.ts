@@ -59,6 +59,26 @@ describe('deployment API', () => {
     expect(payload.deploymentId).toBe(res.body.id);
   });
 
+  it('persists the resource limits, restart flag and kind from the request', async () => {
+    await seedHealthyNode(repo);
+
+    const res = await request(app)
+      .post('/deployments')
+      .send({
+        name: 'capped',
+        dockerImage: 'nginx',
+        type: 'game',
+        autoRestart: true,
+        resourceLimits: { cpuPercent: 40, ramPercent: 60, restartPolicy: 'on-failure', oomKill: true },
+      });
+
+    expect(res.status).toBe(201);
+    const config = await repo.getDeploymentConfig(res.body.id);
+    expect(config?.type).toBe('game');
+    expect(config?.autoRestart).toBe(true);
+    expect(config?.resourceLimits).toEqual({ cpuPercent: 40, ramPercent: 60, restartPolicy: 'on-failure', oomKill: true });
+  });
+
   it('rejects a deployment with missing fields', async () => {
     await seedHealthyNode(repo);
     const res = await request(app).post('/deployments').send({ name: 'no-image' });
