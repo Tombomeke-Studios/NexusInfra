@@ -7,10 +7,12 @@ import type {
   DeploymentStatus,
   DeploymentStatusPatch,
   DeploymentView,
+  CreateServerDatabaseInput,
   NodeRecord,
   Repository,
   ResourceLimits,
   ServerConfigRecord,
+  ServerDatabaseRecord,
   UpsertNodeInput,
 } from './types.js';
 
@@ -29,6 +31,7 @@ export function getPrisma(): PrismaClient {
 type PrismaNode = Awaited<ReturnType<PrismaClient['node']['findFirstOrThrow']>>;
 type PrismaConfig = Awaited<ReturnType<PrismaClient['serverConfig']['findFirstOrThrow']>>;
 type PrismaDeployment = Awaited<ReturnType<PrismaClient['deployment']['findFirstOrThrow']>>;
+type PrismaDatabase = Awaited<ReturnType<PrismaClient['serverDatabase']['findFirstOrThrow']>>;
 
 function iso(date: Date | null): string | null {
   return date ? date.toISOString() : null;
@@ -77,6 +80,22 @@ function toConfigRecord(c: PrismaConfig): ServerConfigRecord {
     autoRestart: c.autoRestart,
     type: c.type,
     createdAt: c.createdAt.toISOString(),
+  };
+}
+
+function toDatabaseRecord(d: PrismaDatabase): ServerDatabaseRecord {
+  return {
+    id: d.id,
+    deploymentId: d.deploymentId,
+    engine: d.engine,
+    name: d.name,
+    username: d.username,
+    password: d.password,
+    host: d.host,
+    port: d.port,
+    containerId: d.containerId,
+    status: d.status,
+    createdAt: d.createdAt.toISOString(),
   };
 }
 
@@ -199,6 +218,25 @@ export class PrismaRepository implements Repository {
       include: { serverConfig: true },
     });
     return d ? toConfigRecord(d.serverConfig) : null;
+  }
+
+  async createDatabase(input: CreateServerDatabaseInput): Promise<ServerDatabaseRecord> {
+    const db = await this.client.serverDatabase.create({ data: { id: randomUUID(), ...input } });
+    return toDatabaseRecord(db);
+  }
+
+  async listDatabases(deploymentId: string): Promise<ServerDatabaseRecord[]> {
+    const rows = await this.client.serverDatabase.findMany({ where: { deploymentId }, orderBy: { createdAt: 'asc' } });
+    return rows.map(toDatabaseRecord);
+  }
+
+  async getDatabase(id: string): Promise<ServerDatabaseRecord | null> {
+    const db = await this.client.serverDatabase.findUnique({ where: { id } });
+    return db ? toDatabaseRecord(db) : null;
+  }
+
+  async deleteDatabase(id: string): Promise<void> {
+    await this.client.serverDatabase.delete({ where: { id } });
   }
 
   async getDeployment(id: string): Promise<DeploymentDetail | null> {

@@ -55,6 +55,33 @@ export interface DeploymentView extends DeploymentRecord {
   userId: string;
 }
 
+export type DatabaseEngine = 'mysql' | 'mariadb' | 'postgres';
+
+export interface ServerDatabaseRecord {
+  id: string;
+  deploymentId: string;
+  engine: string;
+  name: string;
+  username: string;
+  password: string;
+  host: string;
+  port: number;
+  containerId: string | null;
+  status: string;
+  createdAt: string;
+}
+
+export interface CreateServerDatabaseInput {
+  deploymentId: string;
+  engine: string;
+  name: string;
+  username: string;
+  password: string;
+  host: string;
+  port: number;
+  containerId: string | null;
+}
+
 export interface DeploymentEventRecord {
   id: string;
   deploymentId: string;
@@ -115,4 +142,10 @@ export interface Repository {
   getDeployment(id: string): Promise<DeploymentDetail | null>;
   /** The server config behind a deployment (image/ports/env), for re-starting it. */
   getDeploymentConfig(deploymentId: string): Promise<ServerConfigRecord | null>;
+
+  // Managed databases (#109).
+  createDatabase(input: CreateServerDatabaseInput): Promise<ServerDatabaseRecord>;
+  listDatabases(deploymentId: string): Promise<ServerDatabaseRecord[]>;
+  getDatabase(id: string): Promise<ServerDatabaseRecord | null>;
+  deleteDatabase(id: string): Promise<void>;
 }

@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { buildEnvelope, publishRabbitEvent, type EventEnvelope, type NexusInfraEvent } from 'shared';
 import { nodeHealth } from './nodeRegistry.js';
 import { selectNode as defaultSelectNode } from './nodeSelection.js';
+import { generateDatabaseCredentials, isDatabaseEngine } from './dbProvision.js';
 import type { DeploymentDetail, NodeRecord, Repository } from './types.js';
 
 // Where the (single, local) Node Agent's internal HTTP lives. Multi-node will
@@ -28,11 +29,34 @@ const KEY_RESTART = 'infra.server.restart';
 export type PublishFn = (routingKey: string, envelope: EventEnvelope) => Promise<boolean>;
 export type SelectNodeFn = (nodes: NodeRecord[], now: number) => NodeRecord | null;
 
+/** Provisions a database container on the owning Node Agent; returns its id + host port. */
+export type ProvisionDatabaseFn = (req: { engine: string; name: string; username: string; password: string }) => Promise<{ containerId: string; port: number }>;
+export type DeprovisionDatabaseFn = (containerId: string) => Promise<void>;
+
 export interface ApiDeps {
   repo: Repository;
   publish?: PublishFn;
   selectNode?: SelectNodeFn;
+  provisionDatabase?: ProvisionDatabaseFn;
+  deprovisionDatabase?: DeprovisionDatabaseFn;
 }
+
+// Default provisioning talks to the Node Agent's internal database HTTP.
+const defaultProvisionDatabase: ProvisionDatabaseFn = async (req) => {
+  const r = await fetch(`${NODE_AGENT_URL}/databases`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? 'database provisioning failed');
+  return (await r.json()) as { containerId: string; port: number };
+};
+
+const defaultDeprovisionDatabase: DeprovisionDatabaseFn = async (containerId) => {
+  await fetch(`${NODE_AGENT_URL}/databases/${containerId}`, { method: 'DELETE' });
+};
+
+const DB_PUBLIC_HOST = process.env.DATABASE_PUBLIC_HOST || 'localhost';
 
 function userIdOf(req: Request): string {
   return (req as Request & { userId?: string }).userId ?? 'dev-user';
@@ -42,6 +66,8 @@ export function createApiRouter(deps: ApiDeps): Router {
   const { repo } = deps;
   const publish = deps.publish ?? publishRabbitEvent;
   const selectNode = deps.selectNode ?? defaultSelectNode;
+  const provisionDatabase = deps.provisionDatabase ?? defaultProvisionDatabase;
+  const deprovisionDatabase = deps.deprovisionDatabase ?? defaultDeprovisionDatabase;
   const router = Router();
 
   const emit = (routingKey: string, event: NexusInfraEvent) =>
@@ -238,6 +264,55 @@ export function createApiRouter(deps: ApiDeps): Router {
   router.post('/deployments/:id/files/dir', (req, res) => withContainer(req, res, (c) => fetch(`${fileBase(c)}/dir`, asJson('POST', req.body))));
   router.post('/deployments/:id/files/rename', (req, res) => withContainer(req, res, (c) => fetch(`${fileBase(c)}/rename`, asJson('POST', req.body))));
   router.delete('/deployments/:id/files', (req, res) => withContainer(req, res, (c) => fetch(`${fileBase(c)}?path=${q(req.query.path)}`, { method: 'DELETE' })));
+
+  // ── Managed databases (#109) ────────────────────────────────────────────────
+  // A database is its own engine container the owning node starts, with generated
+  // credentials the Orchestrator records and hands back to the user.
+  router.get('/deployments/:id/databases', async (req: Request, res: Response) => {
+    const detail = await repo.getDeployment(req.params.id);
+    if (!detail) return res.status(404).json({ error: 'deployment not found' });
+    res.json(await repo.listDatabases(detail.id));
+  });
+
+  router.post('/deployments/:id/databases', async (req: Request, res: Response) => {
+    const detail = await repo.getDeployment(req.params.id);
+    if (!detail) return res.status(404).json({ error: 'deployment not found' });
+    if (!detail.nodeId || !detail.containerId) return res.status(409).json({ error: 'deployment is not running' });
+
+    const engine = (req.body ?? {}).engine;
+    if (!isDatabaseEngine(engine)) return res.status(400).json({ error: 'engine must be mysql, mariadb or postgres' });
+
+    const existing = await repo.listDatabases(detail.id);
+    const creds = generateDatabaseCredentials(detail.name, existing.length + 1);
+    try {
+      const { containerId, port } = await provisionDatabase({ engine, ...creds });
+      const db = await repo.createDatabase({
+        deploymentId: detail.id,
+        engine,
+        ...creds,
+        host: DB_PUBLIC_HOST,
+        port,
+        containerId,
+      });
+      return res.status(201).json(db);
+    } catch (err) {
+      return res.status(502).json({ error: err instanceof Error ? err.message : 'database provisioning failed' });
+    }
+  });
+
+  router.delete('/deployments/:id/databases/:dbId', async (req: Request, res: Response) => {
+    const db = await repo.getDatabase(req.params.dbId);
+    if (!db || db.deploymentId !== req.params.id) return res.status(404).json({ error: 'database not found' });
+    if (db.containerId) {
+      try {
+        await deprovisionDatabase(db.containerId);
+      } catch {
+        // Best-effort: still drop the record so the UI isn't stuck on a ghost.
+      }
+    }
+    await repo.deleteDatabase(db.id);
+    return res.status(204).end();
+  });
 
   return router;
 }

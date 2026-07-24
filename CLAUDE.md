@@ -175,6 +175,8 @@ is the migrations directory.
 | `src/limits.ts` | `resourceLimitsToHostConfig` — pure translation of a server's `ResourceLimits` (%) into Docker HostConfig caps (Memory, NanoCpus, RestartPolicy, …) enforced at start |
 | `src/files.ts` | Pure file helpers: `normalizeContainerPath` (traversal guard), `parseLsOutput`, `buildTarball` |
 | `src/fileRoutes.ts` | `createFileRouter` — internal container-file CRUD HTTP (list/read/write/mkdir/rename/delete) over the runtime |
+| `src/databases.ts` | `buildDatabaseSpec` (engine→image/env/port) + `pickDatabasePort` — pure, for provisioning a managed DB container |
+| `src/dbRoutes.ts` | `createDatabaseRouter` — internal DB provision/deprovision HTTP (starts/stops an engine container) |
 | `src/agent.ts` | Command handling: consumes server.start/stop/restart for this node, publishes server.started/stopped/crashed; dependency-injected for testing |
 | `src/agent.test.ts` | Unit tests with a fake runtime + captured publisher (no Docker/broker needed) |
 | `src/index.ts` | Entry: DockerodeRuntime + agent, binds `nexusinfra.node-agent.{nodeId}`, HTTP `/health` + internal SSE `/logs/:containerId` · `/stats/:containerId` + file CRUD (`fileRoutes`) |
@@ -182,12 +184,13 @@ is the migrations directory.
 ### services/orchestrator (deployment control plane)
 | Path | Contents |
 |---|---|
-| `prisma/schema.prisma` | Prisma + SQLite schema: `Node`, `ServerConfig`, `Deployment`, `DeploymentEvent`. `prisma/migrations` is the schema source of truth |
+| `prisma/schema.prisma` | Prisma + SQLite schema: `Node`, `ServerConfig`, `Deployment`, `DeploymentEvent`, `ServerDatabase`. `prisma/migrations` is the schema source of truth |
 | `src/types.ts` | Domain records + the `Repository` interface (decouples logic from the DB) |
 | `src/repository.ts` | `InMemoryRepository` — backs unit tests and a DB-less local mode |
 | `src/db.ts` | `getPrisma()` + `PrismaRepository` (SQLite-backed `Repository`) |
 | `src/nodeRegistry.ts` | Consumes `monitoring.heartbeat.node.#`, upserts nodes, derives health (3s/10s) |
 | `src/nodeSelection.ts` | Pure least-loaded `selectNode` (healthy nodes, ranked by CPU+RAM load) |
+| `src/dbProvision.ts` | Pure managed-DB helpers: `isDatabaseEngine` guard + `generateDatabaseCredentials` (safe name/user/password) |
 | `src/api.ts` | Express deployment API: create/list/get deployments, stop, node health |
 | `src/lifecycle.ts` | Consumes `infra.server.started/stopped/crashed`, updates deployment status + audit |
 | `src/index.ts` | Entry: PrismaRepository + consumers on `nexusinfra.orchestrator`, mounts API, HTTP `/health` (`:9200`) |

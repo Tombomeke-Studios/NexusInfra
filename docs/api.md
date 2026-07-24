@@ -124,6 +124,18 @@ form on the agent, and file operations run as argv arrays (no shell) so a path c
 | `POST /deployments/:id/files/rename` | Move/rename — body `{ from, to }` |
 | `DELETE /deployments/:id/files?path=/f` | Delete a file or directory (recursive) → `204` |
 
+### Managed databases  *(running deployment)*
+
+Each database is its own engine container the owning Node Agent starts, with credentials the Orchestrator
+generates and records (#109). `404` if the deployment is unknown, `409` if it is not running, `400` on a
+bad engine, `502` if provisioning on the agent fails.
+
+| Method + path | Purpose |
+|---|---|
+| `GET /deployments/:id/databases` | List the server's databases |
+| `POST /deployments/:id/databases` | Provision one — body `{ engine: 'mysql'\|'mariadb'\|'postgres' }` → `201` with `{ name, username, password, host, port, … }` |
+| `DELETE /deployments/:id/databases/:dbId` | Stop + remove the database container and drop the record → `204` |
+
 ### `POST /deployments/:id/stop`
 
 Request a running deployment be stopped — emits `infra.server.stop`; the agent stops **and removes**
