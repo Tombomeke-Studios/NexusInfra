@@ -4,6 +4,7 @@ import { createDeployment, listNodes, type NodeView } from '../api';
 import { IconPlus } from '../components/Icons';
 import { useToast } from '../components/Toast';
 import { InfoHint } from '../components/InfoHint';
+import { getDeploymentDefaults } from '../prefs';
 
 // New Deployment — ported from the redesign. The deploy sends name, image, ports,
 // env, the resource limits + restart policy and the kind, all persisted with the
@@ -21,7 +22,9 @@ const rowsToRecord = (rows: Row[]) => {
 const limitColor = (v: number) => (v >= 85 ? 'var(--color-danger)' : v >= 65 ? 'var(--color-warning)' : 'var(--color-primary)');
 
 export function NewDeployment() {
-  const [kind, setKind] = useState<'app' | 'game'>('app');
+  // Seed the form from the user's saved defaults (#124); each field stays editable.
+  const defaults = getDeploymentDefaults();
+  const [kind, setKind] = useState<'app' | 'game'>(defaults.type);
   const [name, setName] = useState('');
   const [dockerImage, setDockerImage] = useState('');
   const [game, setGame] = useState('minecraft');
@@ -33,13 +36,13 @@ export function NewDeployment() {
   const [env, setEnv] = useState<Row[]>([{ key: '', value: '' }]);
   const [nodes, setNodes] = useState<NodeView[]>([]);
   const [placement, setPlacement] = useState('auto');
-  const [cpu, setCpu] = useState(50);
-  const [ram, setRam] = useState(50);
-  const [disk, setDisk] = useState(50);
-  const [swap, setSwap] = useState(0);
-  const [io, setIo] = useState('normal');
-  const [restart, setRestart] = useState('on-failure');
-  const [oom, setOom] = useState(false);
+  const [cpu, setCpu] = useState(defaults.cpu);
+  const [ram, setRam] = useState(defaults.ram);
+  const [disk, setDisk] = useState(defaults.disk);
+  const [swap, setSwap] = useState(defaults.swap);
+  const [io, setIo] = useState<string>(defaults.io);
+  const [restart, setRestart] = useState<string>(defaults.restart);
+  const [oom, setOom] = useState(defaults.oom);
   const [startup, setStartup] = useState('');
   const [dbs, setDbs] = useState(1);
   const [backups, setBackups] = useState(2);

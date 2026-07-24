@@ -41,6 +41,9 @@ export function Layout() {
           <NavLink to="/servers" className="navlink" data-ripple>
             Servers
           </NavLink>
+          <NavLink to="/preferences" className="navlink" data-ripple>
+            Preferences
+          </NavLink>
         </nav>
         <ThemeToggle />
         <button className="btn btn--ghost btn--sm" onClick={() => setIntroOpen(true)} data-ripple aria-label="Open the intro tour" title="Intro & help">
