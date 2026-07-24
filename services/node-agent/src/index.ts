@@ -4,6 +4,7 @@ import { consumeRabbitQueue, startNodeHeartbeat } from 'shared';
 import { DockerodeRuntime } from './runtime.js';
 import { createAgent } from './agent.js';
 import { createFileRouter } from './fileRoutes.js';
+import { createDatabaseRouter } from './dbRoutes.js';
 
 // ── Node Agent ────────────────────────────────────────────────────────────────
 // Runs on a Docker host. Consumes server lifecycle commands addressed to this
@@ -53,6 +54,9 @@ app.get('/stats/:containerId', (req, res) => {
 // ── HTTP: container file management (#108) ────────────────────────────────────
 // Internal CRUD over the container's filesystem, reached only via the proxy.
 app.use(createFileRouter(runtime));
+
+// ── HTTP: managed database provisioning (#109) ────────────────────────────────
+app.use(createDatabaseRouter(runtime));
 
 app.listen(PORT, () => console.log(`[Node Agent ${NODE_ID}] HTTP listening on http://localhost:${PORT}`));
 
