@@ -201,10 +201,12 @@ is the migrations directory.
 | Path | Contents |
 |---|---|
 | `src/api.ts` | Typed Orchestrator client (login, nodes, deployments, create, stop); attaches the JWT; `ApiError` on non-2xx |
-| `src/session.ts` | Token get/set/clear + `isAuthenticated` (single place that touches localStorage) |
+| `src/session.ts` | Token get/set/clear + `isAuthenticated` (single place that touches the token in localStorage) |
+| `src/prefs.ts` | Persisted client preferences (localStorage): first-run intro flag now, customisable form defaults later |
 | `src/routes.tsx` · `src/App.tsx` | Route table (public `/login`; the rest behind `RequireAuth` + `Layout`) wrapped in the router |
 | `src/components/{Layout,RequireAuth}.tsx` | Nav shell + auth-guard route wrapper |
 | `src/components/InfoHint.tsx` | Accessible "?" tooltip for contextual option help (hover/focus); used across the option forms |
+| `src/components/IntroTour.tsx` | First-run intro walkthrough (skippable, re-openable from the nav Help button) |
 | `src/pages/{Login,Overview,NewDeployment,Servers}.tsx` | Login, node health/overview, deployment form, live server list + stop |
 | `src/health.ts` | Status → colour helpers shared across pages |
 | `src/test/setup.ts` · `vitest.config.ts` | jsdom + Testing Library setup; in-memory localStorage |

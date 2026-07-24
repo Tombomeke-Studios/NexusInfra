@@ -1,14 +1,23 @@
+import { useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { logout } from '../session';
+import { hasSeenIntro, markIntroSeen } from '../prefs';
 import { ThemeToggle } from './ThemeToggle';
+import { IntroTour } from './IntroTour';
 import { IconHexagon, IconLogout } from './Icons';
 
-// App shell: sticky top bar with brand, primary nav, theme toggle, and a
-// sign-out action kept separate from navigation. The routed page renders in the
-// <Outlet/>.
+// App shell: sticky top bar with brand, primary nav, theme toggle, a help entry
+// point, and a sign-out action kept separate from navigation. The routed page
+// renders in the <Outlet/>. The first-run intro (#123) opens automatically.
 export function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [introOpen, setIntroOpen] = useState(() => !hasSeenIntro());
+
+  const closeIntro = () => {
+    markIntroSeen();
+    setIntroOpen(false);
+  };
 
   const signOut = () => {
     logout();
@@ -34,6 +43,9 @@ export function Layout() {
           </NavLink>
         </nav>
         <ThemeToggle />
+        <button className="btn btn--ghost btn--sm" onClick={() => setIntroOpen(true)} data-ripple aria-label="Open the intro tour" title="Intro & help">
+          Help
+        </button>
         <button className="btn btn--ghost btn--sm" onClick={signOut} data-ripple>
           <IconLogout size={16} />
           Sign out
@@ -44,6 +56,7 @@ export function Layout() {
           <Outlet />
         </div>
       </main>
+      <IntroTour open={introOpen} onClose={closeIntro} />
     </div>
   );
 }
