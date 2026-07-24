@@ -54,7 +54,7 @@ Port the interactive UX from the design that the first pass simplified. Still UI
 - [ ] Overview: live meters + full add-node form + node actions (#94)
 - [ ] New Deployment: placement headroom + game details (#95)
 - [x] Console: live streaming logs + CPU/RAM sparkline (#96)
-- [ ] Files tab: navigable tree + breadcrumbs (#97)
+- [x] Files tab: navigable tree + breadcrumbs (#97)
 - [ ] Server detail: interactive mock actions (db/backup/schedule/subuser) (#98)
 - [x] Toast headings + design toast content (#99)
 - [ ] Hover states on option controls (#100)

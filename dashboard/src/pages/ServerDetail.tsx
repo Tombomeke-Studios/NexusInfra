@@ -126,7 +126,7 @@ export function ServerDetail() {
 
       {/* Tab content */}
       {tab === 'console' && <ConsoleTab running={running} isGame={isGame} containerId={d.containerId} />}
-      {tab === 'files' && <FilesTab />}
+      {tab === 'files' && <FilesTab isGame={isGame} />}
       {tab === 'databases' && <DatabasesTab />}
       {tab === 'backups' && <BackupsTab />}
       {tab === 'network' && <NetworkTab />}
@@ -278,32 +278,58 @@ function TabHeader({ title, action, onAction }: { title: string; action?: string
 const listCard: CSSProperties = { border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface)', overflow: 'hidden' };
 const rowCss: CSSProperties = { display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', borderBottom: '1px solid var(--color-border)' };
 
-function FilesTab() {
-  const files = [
-    { icon: '📁', name: 'plugins', size: '—' },
-    { icon: '📁', name: 'world', size: '—' },
-    { icon: '📄', name: 'server.properties', size: '1.2 KB' },
-    { icon: '📄', name: 'eula.txt', size: '154 B' },
-    { icon: '📄', name: 'start.sh', size: '320 B' },
-  ];
+type Entry = [name: string, kind: 'file' | 'dir', size: string];
+const APP_TREE: Record<string, Entry[]> = {
+  '/': [['Dockerfile', 'file', '512 B'], ['docker-compose.yml', 'file', '1.1 KB'], ['src', 'dir', '—'], ['config', 'dir', '—'], ['.env', 'file', '340 B'], ['package.json', 'file', '1.8 KB'], ['node_modules', 'dir', '—']],
+  '/src': [['index.js', 'file', '4.2 KB'], ['routes.js', 'file', '2.9 KB'], ['db.js', 'file', '1.1 KB']],
+  '/config': [['default.json', 'file', '820 B'], ['production.json', 'file', '910 B']],
+};
+const GAME_TREE: Record<string, Entry[]> = {
+  '/': [['server.properties', 'file', '1.4 KB'], ['server.jar', 'file', '48.2 MB'], ['eula.txt', 'file', '189 B'], ['world', 'dir', '—'], ['plugins', 'dir', '—'], ['logs', 'dir', '—'], ['ops.json', 'file', '412 B'], ['whitelist.json', 'file', '2 B']],
+  '/world': [['level.dat', 'file', '8.1 KB'], ['region', 'dir', '—'], ['playerdata', 'dir', '—'], ['session.lock', 'file', '3 B']],
+  '/plugins': [['EssentialsX.jar', 'file', '2.1 MB'], ['WorldEdit.jar', 'file', '4.8 MB'], ['LuckPerms.jar', 'file', '6.2 MB'], ['bStats', 'dir', '—']],
+  '/logs': [['latest.log', 'file', '221 KB'], ['2026-07-21-1.log.gz', 'file', '44 KB']],
+};
+
+function FilesTab({ isGame }: { isGame: boolean }) {
+  const tree = isGame ? GAME_TREE : APP_TREE;
+  const [cwd, setCwd] = useState<string[]>([]);
   const { toast } = useToast();
+  const key = '/' + cwd.join('/');
+  const entries = tree[key === '/' ? '/' : key] ?? [];
+
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-        <span className="mono" style={{ fontSize: '.88rem', color: 'var(--color-primary)' }}>/ home / container</span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+        <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', fontSize: '.88rem' }}>
+          <button className="name-btn" onClick={() => setCwd([])}>container</button>
+          <span className="subtle">/</span>
+          {cwd.map((c, i) => (
+            <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <button className="name-btn" onClick={() => setCwd(cwd.slice(0, i + 1))}>{c}</button>
+              <span className="subtle">/</span>
+            </span>
+          ))}
+        </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn--secondary btn--sm" data-ripple onClick={() => toast('Not wired yet', 'info')}>New folder</button>
-          <button className="btn btn--primary btn--sm" data-ripple onClick={() => toast('Not wired yet', 'info')}>Upload</button>
+          <button className="btn btn--secondary btn--sm" data-ripple onClick={() => toast('New folder is not wired yet', 'info')}>New folder</button>
+          <button className="btn btn--primary btn--sm" data-ripple data-magnetic onClick={() => toast('Upload is not wired yet', 'info')}>Upload</button>
         </div>
       </div>
       <div style={listCard}>
-        {files.map((f) => (
-          <button key={f.name} data-ripple onClick={() => toast('File browser is not wired yet', 'info')} style={{ ...rowCss, width: '100%', textAlign: 'left', border: 'none', borderBottom: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', font: 'inherit' }}>
-            <span style={{ flex: 'none' }}>{f.icon}</span>
-            <span style={{ flex: 1, minWidth: 0, fontSize: '.9rem' }}>{f.name}</span>
-            <span className="subtle tnum" style={{ fontSize: '.8rem' }}>{f.size}</span>
+        {entries.map(([name, kind, size]) => (
+          <button
+            key={name}
+            data-ripple
+            onClick={() => (kind === 'dir' ? setCwd([...cwd, name]) : toast('Opening files is not wired yet', 'info'))}
+            style={{ ...rowCss, width: '100%', textAlign: 'left', border: 'none', borderBottom: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', font: 'inherit' }}
+          >
+            <span style={{ flex: 'none' }}>{kind === 'dir' ? '📁' : '📄'}</span>
+            <span style={{ flex: 1, minWidth: 0, fontSize: '.9rem', color: kind === 'dir' ? 'var(--color-primary)' : 'var(--color-text)', fontWeight: kind === 'dir' ? 600 : 400 }}>{name}</span>
+            <span className="subtle tnum" style={{ fontSize: '.8rem' }}>{size}</span>
           </button>
         ))}
+        {entries.length === 0 && <div className="empty">This folder is empty.</div>}
       </div>
     </>
   );
