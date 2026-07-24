@@ -7,10 +7,12 @@ import type {
   DeploymentStatus,
   DeploymentStatusPatch,
   DeploymentView,
+  CreateServerBackupInput,
   CreateServerDatabaseInput,
   NodeRecord,
   Repository,
   ResourceLimits,
+  ServerBackupRecord,
   ServerConfigRecord,
   ServerDatabaseRecord,
   UpsertNodeInput,
@@ -32,6 +34,7 @@ type PrismaNode = Awaited<ReturnType<PrismaClient['node']['findFirstOrThrow']>>;
 type PrismaConfig = Awaited<ReturnType<PrismaClient['serverConfig']['findFirstOrThrow']>>;
 type PrismaDeployment = Awaited<ReturnType<PrismaClient['deployment']['findFirstOrThrow']>>;
 type PrismaDatabase = Awaited<ReturnType<PrismaClient['serverDatabase']['findFirstOrThrow']>>;
+type PrismaBackup = Awaited<ReturnType<PrismaClient['serverBackup']['findFirstOrThrow']>>;
 
 function iso(date: Date | null): string | null {
   return date ? date.toISOString() : null;
@@ -96,6 +99,19 @@ function toDatabaseRecord(d: PrismaDatabase): ServerDatabaseRecord {
     containerId: d.containerId,
     status: d.status,
     createdAt: d.createdAt.toISOString(),
+  };
+}
+
+function toBackupRecord(b: PrismaBackup): ServerBackupRecord {
+  return {
+    id: b.id,
+    deploymentId: b.deploymentId,
+    name: b.name,
+    path: b.path,
+    ref: b.ref,
+    sizeBytes: b.sizeBytes,
+    status: b.status,
+    createdAt: b.createdAt.toISOString(),
   };
 }
 
@@ -237,6 +253,25 @@ export class PrismaRepository implements Repository {
 
   async deleteDatabase(id: string): Promise<void> {
     await this.client.serverDatabase.delete({ where: { id } });
+  }
+
+  async createBackup(input: CreateServerBackupInput): Promise<ServerBackupRecord> {
+    const backup = await this.client.serverBackup.create({ data: { id: randomUUID(), ...input } });
+    return toBackupRecord(backup);
+  }
+
+  async listBackups(deploymentId: string): Promise<ServerBackupRecord[]> {
+    const rows = await this.client.serverBackup.findMany({ where: { deploymentId }, orderBy: { createdAt: 'desc' } });
+    return rows.map(toBackupRecord);
+  }
+
+  async getBackup(id: string): Promise<ServerBackupRecord | null> {
+    const b = await this.client.serverBackup.findUnique({ where: { id } });
+    return b ? toBackupRecord(b) : null;
+  }
+
+  async deleteBackup(id: string): Promise<void> {
+    await this.client.serverBackup.delete({ where: { id } });
   }
 
   async getDeployment(id: string): Promise<DeploymentDetail | null> {

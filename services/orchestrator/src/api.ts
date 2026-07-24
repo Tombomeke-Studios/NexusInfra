@@ -33,12 +33,20 @@ export type SelectNodeFn = (nodes: NodeRecord[], now: number) => NodeRecord | nu
 export type ProvisionDatabaseFn = (req: { engine: string; name: string; username: string; password: string }) => Promise<{ containerId: string; port: number }>;
 export type DeprovisionDatabaseFn = (containerId: string) => Promise<void>;
 
+/** Snapshot / restore / delete a container backup on the owning Node Agent. */
+export type SnapshotBackupFn = (req: { containerId: string; path?: string }) => Promise<{ ref: string; sizeBytes: number; path: string }>;
+export type RestoreBackupFn = (req: { containerId: string; ref: string; path: string }) => Promise<void>;
+export type RemoveBackupFn = (ref: string) => Promise<void>;
+
 export interface ApiDeps {
   repo: Repository;
   publish?: PublishFn;
   selectNode?: SelectNodeFn;
   provisionDatabase?: ProvisionDatabaseFn;
   deprovisionDatabase?: DeprovisionDatabaseFn;
+  snapshotBackup?: SnapshotBackupFn;
+  restoreBackup?: RestoreBackupFn;
+  removeBackup?: RemoveBackupFn;
 }
 
 // Default provisioning talks to the Node Agent's internal database HTTP.
@@ -58,6 +66,21 @@ const defaultDeprovisionDatabase: DeprovisionDatabaseFn = async (containerId) =>
 
 const DB_PUBLIC_HOST = process.env.DATABASE_PUBLIC_HOST || 'localhost';
 
+const defaultSnapshotBackup: SnapshotBackupFn = async (req) => {
+  const r = await fetch(`${NODE_AGENT_URL}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? 'backup failed');
+  return (await r.json()) as { ref: string; sizeBytes: number; path: string };
+};
+
+const defaultRestoreBackup: RestoreBackupFn = async (req) => {
+  const r = await fetch(`${NODE_AGENT_URL}/backups/restore`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? 'restore failed');
+};
+
+const defaultRemoveBackup: RemoveBackupFn = async (ref) => {
+  await fetch(`${NODE_AGENT_URL}/backups/${ref}`, { method: 'DELETE' });
+};
+
 function userIdOf(req: Request): string {
   return (req as Request & { userId?: string }).userId ?? 'dev-user';
 }
@@ -68,6 +91,9 @@ export function createApiRouter(deps: ApiDeps): Router {
   const selectNode = deps.selectNode ?? defaultSelectNode;
   const provisionDatabase = deps.provisionDatabase ?? defaultProvisionDatabase;
   const deprovisionDatabase = deps.deprovisionDatabase ?? defaultDeprovisionDatabase;
+  const snapshotBackup = deps.snapshotBackup ?? defaultSnapshotBackup;
+  const restoreBackup = deps.restoreBackup ?? defaultRestoreBackup;
+  const removeBackup = deps.removeBackup ?? defaultRemoveBackup;
   const router = Router();
 
   const emit = (routingKey: string, event: NexusInfraEvent) =>
@@ -311,6 +337,59 @@ export function createApiRouter(deps: ApiDeps): Router {
       }
     }
     await repo.deleteDatabase(db.id);
+    return res.status(204).end();
+  });
+
+  // ── Backups (#110) — snapshot / restore a server's data volume ──────────────
+  router.get('/deployments/:id/backups', async (req: Request, res: Response) => {
+    const detail = await repo.getDeployment(req.params.id);
+    if (!detail) return res.status(404).json({ error: 'deployment not found' });
+    res.json(await repo.listBackups(detail.id));
+  });
+
+  router.post('/deployments/:id/backups', async (req: Request, res: Response) => {
+    const detail = await repo.getDeployment(req.params.id);
+    if (!detail) return res.status(404).json({ error: 'deployment not found' });
+    if (!detail.containerId) return res.status(409).json({ error: 'deployment is not running' });
+
+    const path = typeof (req.body ?? {}).path === 'string' ? req.body.path : undefined;
+    try {
+      const snap = await snapshotBackup({ containerId: detail.containerId, path });
+      const backup = await repo.createBackup({
+        deploymentId: detail.id,
+        name: `backup-${new Date().toISOString().replace(/[:.]/g, '-')}`,
+        path: snap.path,
+        ref: snap.ref,
+        sizeBytes: snap.sizeBytes,
+      });
+      return res.status(201).json(backup);
+    } catch (err) {
+      return res.status(502).json({ error: err instanceof Error ? err.message : 'backup failed' });
+    }
+  });
+
+  router.post('/deployments/:id/backups/:backupId/restore', async (req: Request, res: Response) => {
+    const backup = await repo.getBackup(req.params.backupId);
+    if (!backup || backup.deploymentId !== req.params.id) return res.status(404).json({ error: 'backup not found' });
+    const detail = await repo.getDeployment(req.params.id);
+    if (!detail?.containerId) return res.status(409).json({ error: 'deployment is not running' });
+    try {
+      await restoreBackup({ containerId: detail.containerId, ref: backup.ref, path: backup.path });
+      return res.status(200).json({ status: 'restored', backupId: backup.id });
+    } catch (err) {
+      return res.status(502).json({ error: err instanceof Error ? err.message : 'restore failed' });
+    }
+  });
+
+  router.delete('/deployments/:id/backups/:backupId', async (req: Request, res: Response) => {
+    const backup = await repo.getBackup(req.params.backupId);
+    if (!backup || backup.deploymentId !== req.params.id) return res.status(404).json({ error: 'backup not found' });
+    try {
+      await removeBackup(backup.ref);
+    } catch {
+      // Best-effort: drop the record even if the node file is already gone.
+    }
+    await repo.deleteBackup(backup.id);
     return res.status(204).end();
   });
 

@@ -59,7 +59,7 @@ Each mock behavior in the ported design becomes real, one issue + branch at a ti
 - [x] Enforce resource limits / restart policy / OOM at container start (#107)
 - [x] File management API + real Files tab (#108)
 - [x] Server databases — provision real DBs (#109)
-- [ ] Server backups — snapshot & restore volumes (#110)
+- [x] Server backups — snapshot & restore volumes (#110)
 - [ ] Server schedules — cron tasks (#111)
 - [ ] Subusers — per-server access control (#112, needs #20)
 - [ ] Node provisioning — register/deregister real nodes (#113)

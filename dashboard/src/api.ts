@@ -240,6 +240,33 @@ export function deleteDatabase(id: string, dbId: string): Promise<void> {
   return request(`/deployments/${id}/databases/${dbId}`, { method: 'DELETE' });
 }
 
+// ── Backups (#110) ────────────────────────────────────────────────────────────
+export interface ServerBackup {
+  id: string;
+  deploymentId: string;
+  name: string;
+  path: string;
+  sizeBytes: number;
+  status: string;
+  createdAt: string;
+}
+
+export function listBackups(id: string): Promise<ServerBackup[]> {
+  return request(`/deployments/${id}/backups`);
+}
+
+export function createBackup(id: string): Promise<ServerBackup> {
+  return request(`/deployments/${id}/backups`, { method: 'POST', body: JSON.stringify({}) });
+}
+
+export function restoreBackup(id: string, backupId: string): Promise<{ status: string }> {
+  return request(`/deployments/${id}/backups/${backupId}/restore`, { method: 'POST' });
+}
+
+export function deleteBackup(id: string, backupId: string): Promise<void> {
+  return request(`/deployments/${id}/backups/${backupId}`, { method: 'DELETE' });
+}
+
 /** Streams a deployment's container logs (SSE). See {@link streamSse}. */
 export function streamLogs(id: string, onLine: (line: string) => void, signal: AbortSignal): Promise<void> {
   return streamSse(`/deployments/${id}/logs`, onLine, signal);

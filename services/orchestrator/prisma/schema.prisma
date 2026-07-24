@@ -62,6 +62,21 @@ model Deployment {
   createdAt      DateTime          @default(now())
   events         DeploymentEvent[]
   databases      ServerDatabase[]
+  backups        ServerBackup[]
+}
+
+// A point-in-time snapshot of a server's data directory, stored as a tar on the
+// owning node and restorable back into the container (#110).
+model ServerBackup {
+  id           String     @id
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+  deploymentId String
+  name         String
+  path         String
+  ref          String
+  sizeBytes    Int        @default(0)
+  status       String     @default("ready")
+  createdAt    DateTime   @default(now())
 }
 
 // A managed database provisioned for a server: its own engine container with

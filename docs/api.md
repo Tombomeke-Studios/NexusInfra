@@ -136,6 +136,19 @@ bad engine, `502` if provisioning on the agent fails.
 | `POST /deployments/:id/databases` | Provision one — body `{ engine: 'mysql'\|'mariadb'\|'postgres' }` → `201` with `{ name, username, password, host, port, … }` |
 | `DELETE /deployments/:id/databases/:dbId` | Stop + remove the database container and drop the record → `204` |
 
+### Backups  *(running deployment)*
+
+A backup is a tar snapshot of the server's data path (default `/data`), stored on the owning node and
+restorable back into the container (#110). `404` if the deployment/backup is unknown, `409` if it is
+not running, `502` if the node operation fails.
+
+| Method + path | Purpose |
+|---|---|
+| `GET /deployments/:id/backups` | List the server's backups (newest first) — `{ name, path, sizeBytes, createdAt, … }` |
+| `POST /deployments/:id/backups` | Snapshot the data path → `201` with the backup record |
+| `POST /deployments/:id/backups/:backupId/restore` | Extract the snapshot back into the running container |
+| `DELETE /deployments/:id/backups/:backupId` | Delete the stored tar and drop the record → `204` |
+
 ### `POST /deployments/:id/stop`
 
 Request a running deployment be stopped — emits `infra.server.stop`; the agent stops **and removes**

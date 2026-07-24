@@ -48,6 +48,13 @@ Cross-project security design: [`../../CONCEPTS/integration/security.md`](../../
   database. It should be encrypted at rest (the `FINVAULT_MESSAGE_KEY` primitives already exist) or
   vaulted before production — tracked with the auth/secrets hardening (#21).
 
+## Backups (#110)
+
+- A backup is a tar the agent writes under an **opaque, filesystem-safe ref** (validated so a crafted
+  ref can't traverse out of the backup directory); the agent's backup endpoint is internal (proxy-only).
+- Tars live on the **node that made them** (single-node MVP); the Orchestrator stores only metadata, not
+  the blob. Multi-node placement + off-node backup storage is a later (production) concern.
+
 ## Known gaps (foundation phase)
 
 - No auth on Control Room HTTP endpoints yet (localhost/dev only) — gated by the gateway later.

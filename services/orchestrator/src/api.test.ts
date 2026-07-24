@@ -258,4 +258,48 @@ describe('deployment API', () => {
     // Running but unknown engine → 400.
     expect((await request(app).post(`/deployments/${created.body.id}/databases`).send({ engine: 'mongo' })).status).toBe(400);
   });
+
+  it('creates, lists, restores and deletes a backup', async () => {
+    const snapshots: string[] = [];
+    const restores: string[] = [];
+    const removes: string[] = [];
+    const bkApp = express();
+    bkApp.use(express.json());
+    bkApp.use(
+      createApiRouter({
+        repo,
+        publish: async (key, envelope) => (published.push({ key, envelope }), true),
+        snapshotBackup: async (req) => (snapshots.push(req.containerId), { ref: 'bk_x', sizeBytes: 4096, path: '/data' }),
+        restoreBackup: async (req) => void restores.push(req.ref),
+        removeBackup: async (ref) => void removes.push(ref),
+      })
+    );
+
+    await seedHealthyNode(repo);
+    const created = await request(bkApp).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'abc', nodeId: 'node-local' });
+
+    const make = await request(bkApp).post(`/deployments/${created.body.id}/backups`).send({});
+    expect(make.status).toBe(201);
+    expect(make.body.sizeBytes).toBe(4096);
+    expect(snapshots).toEqual(['abc']);
+
+    expect((await request(bkApp).get(`/deployments/${created.body.id}/backups`)).body).toHaveLength(1);
+
+    const rest = await request(bkApp).post(`/deployments/${created.body.id}/backups/${make.body.id}/restore`);
+    expect(rest.status).toBe(200);
+    expect(restores).toEqual(['bk_x']);
+
+    const del = await request(bkApp).delete(`/deployments/${created.body.id}/backups/${make.body.id}`);
+    expect(del.status).toBe(204);
+    expect(removes).toEqual(['bk_x']);
+    expect((await request(bkApp).get(`/deployments/${created.body.id}/backups`)).body).toEqual([]);
+  });
+
+  it('gates creating a backup on the deployment being running', async () => {
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    expect((await request(app).post(`/deployments/${created.body.id}/backups`).send({})).status).toBe(409);
+    expect((await request(app).get('/deployments/nope/backups')).status).toBe(404);
+  });
 });
