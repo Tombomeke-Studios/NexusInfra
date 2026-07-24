@@ -204,6 +204,7 @@ is the migrations directory.
 | `src/session.ts` | Token get/set/clear + `isAuthenticated` (single place that touches localStorage) |
 | `src/routes.tsx` · `src/App.tsx` | Route table (public `/login`; the rest behind `RequireAuth` + `Layout`) wrapped in the router |
 | `src/components/{Layout,RequireAuth}.tsx` | Nav shell + auth-guard route wrapper |
+| `src/components/InfoHint.tsx` | Accessible "?" tooltip for contextual option help (hover/focus); used across the option forms |
 | `src/pages/{Login,Overview,NewDeployment,Servers}.tsx` | Login, node health/overview, deployment form, live server list + stop |
 | `src/health.ts` | Status → colour helpers shared across pages |
 | `src/test/setup.ts` · `vitest.config.ts` | jsdom + Testing Library setup; in-memory localStorage |

@@ -352,6 +352,59 @@
   color: var(--color-text-subtle);
 }
 
+/* ── Contextual help (InfoHint) ─────────────────────────────────────────── */
+.info-hint {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+.info-hint__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface-2);
+  color: var(--color-text-subtle);
+  font-size: 0.66rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  transition: border-color var(--transition), color var(--transition);
+}
+.info-hint__trigger:hover,
+.info-hint__trigger:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.info-hint__bubble {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  width: max-content;
+  max-width: 240px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  box-shadow: var(--shadow);
+  color: var(--color-text);
+  font-size: 0.76rem;
+  font-weight: 450;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+  pointer-events: none;
+  animation: pop 140ms var(--ease-out);
+}
+
 /* ── Option / segmented buttons (with hover + active) ───────────────────── */
 .opt {
   position: relative;
