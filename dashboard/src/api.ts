@@ -212,6 +212,34 @@ export function deletePath(id: string, path: string): Promise<void> {
   return request(`/deployments/${id}/files?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
 }
 
+// ── Managed databases (#109) ──────────────────────────────────────────────────
+export type DatabaseEngine = 'mysql' | 'mariadb' | 'postgres';
+
+export interface ServerDatabase {
+  id: string;
+  deploymentId: string;
+  engine: string;
+  name: string;
+  username: string;
+  password: string;
+  host: string;
+  port: number;
+  status: string;
+  createdAt: string;
+}
+
+export function listDatabases(id: string): Promise<ServerDatabase[]> {
+  return request(`/deployments/${id}/databases`);
+}
+
+export function createDatabase(id: string, engine: DatabaseEngine): Promise<ServerDatabase> {
+  return request(`/deployments/${id}/databases`, { method: 'POST', body: JSON.stringify({ engine }) });
+}
+
+export function deleteDatabase(id: string, dbId: string): Promise<void> {
+  return request(`/deployments/${id}/databases/${dbId}`, { method: 'DELETE' });
+}
+
 /** Streams a deployment's container logs (SSE). See {@link streamSse}. */
 export function streamLogs(id: string, onLine: (line: string) => void, signal: AbortSignal): Promise<void> {
   return streamSse(`/deployments/${id}/logs`, onLine, signal);
