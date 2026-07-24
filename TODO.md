@@ -71,7 +71,7 @@ Make the panel understandable and tailorable — the options should explain them
 
 - [x] Contextual help: hover/focus tooltips explaining every option (#122)
 - [x] First-run onboarding / guided intro — nodes especially (#123)
-- [ ] User preferences: form defaults + customisation, persisted (#124)
+- [x] User preferences: form defaults + customisation, persisted (#124)
 
 ### Phase 3+ — Live server console (logs · terminal · stats)
 
