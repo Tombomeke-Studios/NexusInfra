@@ -114,6 +114,13 @@
   opacity: 0.3;
   animation: aurora3 25s ease-in-out infinite;
 }
+.fx-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  pointer-events: none;
+  overflow: hidden;
+}
 .cursor-aura {
   position: fixed;
   top: 0;
@@ -343,6 +350,65 @@
   margin-top: var(--space-2);
   font-size: 0.82rem;
   color: var(--color-text-subtle);
+}
+
+/* ── Option / segmented buttons (with hover + active) ───────────────────── */
+.opt {
+  position: relative;
+  overflow: hidden;
+  flex: 1;
+  min-width: 66px;
+  min-height: 34px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 600;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+.opt:hover {
+  background: var(--color-surface-2);
+  border-color: color-mix(in srgb, var(--color-primary) 55%, var(--color-border-strong));
+}
+.opt.is-active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+.opt--card {
+  min-height: 0;
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+}
+.opt--card.opt--lg {
+  padding: 13px 15px;
+}
+
+/* Server-detail tab bar */
+.tab {
+  position: relative;
+  overflow: hidden;
+  padding: 9px 15px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-weight: 600;
+  font-size: 0.88rem;
+  text-transform: capitalize;
+  cursor: pointer;
+  margin-bottom: -1px;
+  transition: color 150ms, border-color 150ms;
+}
+.tab:hover {
+  color: var(--color-text);
+}
+.tab.is-active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
 }
 
 /* ── Badges / status pills (colour + dot + text, never colour alone) ─────── */
@@ -745,6 +811,20 @@ input[type='range']::-moz-range-thumb {
 .toast__msg {
   flex: 1;
   min-width: 0;
+}
+.toast__heading {
+  display: block;
+  font-weight: 650;
+  font-size: 0.9rem;
+  letter-spacing: -0.01em;
+}
+.toast__text {
+  display: block;
+  font-size: 0.83rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .toast__bar {
   position: absolute;

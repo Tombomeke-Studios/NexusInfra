@@ -41,10 +41,10 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > **Ports** — Control Room `9000` · Node Agent `9100` · Orchestrator `9200` · dashboard `8095`
 > (Docker) / `5173` (Vite dev).
 >
-> **Latest:** the full Claude Design redesign is ported ([[design-source]]) — aurora background,
-> every screen, and the server-detail tabs (incl. a Console UI). Extra features are UI-only pending
-> wiring. **Next up:** wire the **live server console** (#66–#72), or start the **Billing Bridge**
-> (Phase 4). No active feature branch; promote a group before starting.
+> **Latest:** the Claude Design redesign is ported **and** the interactive UX gaps are closed
+> ([[design-source]]) — cursor trail, live console, navigable files, interactive tabs, headroom,
+> live meters, hover states. Extra features remain UI/mock. **Next up:** wire the **live server
+> console** (#66–#72), or start the **Billing Bridge** (Phase 4). No active feature branch.
 
 ---
 
@@ -100,6 +100,12 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 ---
 
 ## Done
+
+### `feature/design-polish` — merged in #101
+
+- [x] Cursor aura trail + FX parity (#93) · toast heading + message (#99) · option/tab hover states (#100)
+- [x] Live streaming console (#96) · navigable Files tree (#97) · interactive detail actions (#98)
+- [x] New Deployment headroom + game form (#95) · Overview live meters + add-node form + node actions (#94)
 
 ### `feature/design-copy` — merged in #92
 

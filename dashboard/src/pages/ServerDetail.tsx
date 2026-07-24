@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   getDeployment,
@@ -97,36 +97,16 @@ export function ServerDetail() {
 
       {/* Tab bar */}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', borderBottom: '1px solid var(--color-border)', marginBottom: 22 }}>
-        {TABS.map((t) => {
-          const active = tab === t;
-          return (
-            <button
-              key={t}
-              data-ripple
-              onClick={() => setTab(t)}
-              style={{
-                padding: '9px 15px',
-                border: 'none',
-                borderBottom: `2px solid ${active ? 'var(--color-primary)' : 'transparent'}`,
-                background: 'transparent',
-                color: active ? 'var(--color-primary)' : 'var(--color-text-muted)',
-                fontWeight: 600,
-                fontSize: '.88rem',
-                textTransform: 'capitalize',
-                cursor: 'pointer',
-                marginBottom: -1,
-                transition: 'color 150ms, border-color 150ms',
-              }}
-            >
-              {t}
-            </button>
-          );
-        })}
+        {TABS.map((t) => (
+          <button key={t} data-ripple onClick={() => setTab(t)} className={`tab${tab === t ? ' is-active' : ''}`}>
+            {t}
+          </button>
+        ))}
       </div>
 
       {/* Tab content */}
-      {tab === 'console' && <ConsoleTab running={running} />}
-      {tab === 'files' && <FilesTab />}
+      {tab === 'console' && <ConsoleTab running={running} isGame={isGame} containerId={d.containerId} />}
+      {tab === 'files' && <FilesTab isGame={isGame} />}
       {tab === 'databases' && <DatabasesTab />}
       {tab === 'backups' && <BackupsTab />}
       {tab === 'network' && <NetworkTab />}
@@ -147,22 +127,100 @@ function StatBox({ label, value }: { label: string; value: string }) {
   );
 }
 
-// ── Console (UI only; live logs/exec wired via #66–#72) ───────────────────
-const MOCK_LOG: { time: string; text: string; color: string }[] = [
-  { time: '12:00:01', text: '[Server] Starting nexusinfra runtime…', color: '#9aa4b3' },
-  { time: '12:00:02', text: '[Info] Loading configuration', color: '#9aa4b3' },
-  { time: '12:00:03', text: '[Info] Bound to 0.0.0.0:8080', color: '#4ade80' },
-  { time: '12:00:04', text: '[Info] Done. Ready to accept connections.', color: '#4ade80' },
-  { time: '12:00:12', text: '[Warn] High memory usage (78%)', color: '#fbbf24' },
-];
-function ConsoleTab({ running }: { running: boolean }) {
+// ── Console — live mock stream (app/game); real logs/exec wired via #66–#72 ─
+interface LogLine {
+  id: number;
+  time: string;
+  text: string;
+  color: string;
+}
+const clock = () => {
+  const d = new Date();
+  const z = (n: number) => String(n).padStart(2, '0');
+  return `${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}`;
+};
+const hex = () => Math.random().toString(16).slice(2, 8);
+const NAMES = ['Steve', 'Alex', 'Notch_', 'xX_miner', 'CreeperKing', 'Enderman42', 'pvp_god', 'BuilderBob'];
+const pick = <T,>(a: T[]) => a[(Math.random() * a.length) | 0];
+const appLog = (): [string, string] =>
+  pick<[string, string]>([
+    ['#8b949e', `GET /healthz 200 ${1 + ((Math.random() * 6) | 0)}ms`],
+    ['#7ee787', `request ${hex()} 200 ${8 + ((Math.random() * 120) | 0)}ms`],
+    ['#8b949e', `cache hit ratio ${(0.8 + Math.random() * 0.19).toFixed(2)}`],
+    ['#7ee787', `worker tick — queue ${(Math.random() * 40) | 0}`],
+    ['#e3b341', `slow query ${210 + ((Math.random() * 300) | 0)}ms`],
+    ['#8b949e', 'heartbeat ok'],
+  ]);
+const gameLog = (): [string, string] =>
+  pick<[string, string]>([
+    ['#7ee787', `${pick(NAMES)} joined the game`],
+    ['#e3b341', `${pick(NAMES)} left the game`],
+    ['#8b949e', 'Saving chunks for level "world"'],
+    ['#7ee787', `<${pick(NAMES)}> gg`],
+    ['#8b949e', `Time elapsed: ${20 + ((Math.random() * 60) | 0)} ms`],
+    ['#e3b341', "Can't keep up! Is the server overloaded?"],
+  ]);
+
+function ConsoleTab({ running, isGame, containerId }: { running: boolean; isGame: boolean; containerId: string | null }) {
   const [cmd, setCmd] = useState('');
-  const { toast } = useToast();
+  const [log, setLog] = useState<LogLine[]>([]);
+  const [seq, setSeq] = useState(0);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  // Seed the console for the current server, then stream while it's running.
+  useEffect(() => {
+    let id = 1;
+    const now = clock();
+    const seed: LogLine[] = running
+      ? isGame
+        ? [
+            { id: id++, time: now, text: 'Starting minecraft server', color: '#8b949e' },
+            { id: id++, time: now, text: 'Loading properties', color: '#8b949e' },
+            { id: id++, time: now, text: 'Done (6.121s)! For help, type "help"', color: '#7ee787' },
+          ]
+        : [
+            { id: id++, time: now, text: `container ${(containerId || '').slice(0, 12)} attached`, color: '#7ee787' },
+            { id: id++, time: now, text: 'streaming stdout/stderr…', color: '#8b949e' },
+          ]
+      : [{ id: id++, time: now, text: 'process is not running — showing last output', color: '#e3b341' }];
+    setLog(seed);
+    setSeq(id);
+    if (!running) return;
+    const t = setInterval(() => {
+      if (Math.random() < 0.72) {
+        const [color, text] = isGame ? gameLog() : appLog();
+        setSeq((s) => {
+          setLog((ls) => [...ls, { id: s, time: clock(), text, color }].slice(-60));
+          return s + 1;
+        });
+      }
+    }, 1050);
+    return () => clearInterval(t);
+  }, [running, isGame, containerId]);
+
+  useEffect(() => {
+    if (boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;
+  }, [log]);
+
   const send = () => {
-    if (!cmd.trim()) return;
-    toast('Console is not wired yet', 'info');
+    const c = cmd.trim();
+    if (!c) return;
+    const out: LogLine[] = [{ id: seq, time: clock(), text: `> ${c}`, color: '#c9d1d9' }];
+    const resp = /^help$/i.test(c)
+      ? isGame
+        ? '/help /list /stop /op /say /tp'
+        : 'available: status, restart, env, logs'
+      : /^list$/i.test(c) && isGame
+        ? 'There are 7/20 players online'
+        : isGame
+          ? `Issued server command: ${c}`
+          : `${c}: ok`;
+    out.push({ id: seq + 1, time: clock(), text: resp, color: '#7ee787' });
+    setLog((ls) => [...ls, ...out].slice(-60));
+    setSeq((s) => s + 2);
     setCmd('');
   };
+
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -172,9 +230,9 @@ function ConsoleTab({ running }: { running: boolean }) {
           {running ? 'streaming' : 'offline'}
         </span>
       </div>
-      <div style={{ background: '#0a0e16', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', padding: '12px 14px', fontFamily: 'var(--font-mono)', fontSize: '.8rem', lineHeight: 1.7, height: 340, overflowY: 'auto', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-        {MOCK_LOG.map((l, i) => (
-          <div key={i} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+      <div ref={boxRef} style={{ background: '#0a0e16', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', padding: '12px 14px', fontFamily: 'var(--font-mono)', fontSize: '.8rem', lineHeight: 1.7, height: 340, overflowY: 'auto' }}>
+        {log.map((l) => (
+          <div key={l.id} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
             <span style={{ color: '#5a6473' }}>{l.time}</span> <span style={{ color: l.color }}>{l.text}</span>
           </div>
         ))}
@@ -200,32 +258,58 @@ function TabHeader({ title, action, onAction }: { title: string; action?: string
 const listCard: CSSProperties = { border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface)', overflow: 'hidden' };
 const rowCss: CSSProperties = { display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', borderBottom: '1px solid var(--color-border)' };
 
-function FilesTab() {
-  const files = [
-    { icon: '📁', name: 'plugins', size: '—' },
-    { icon: '📁', name: 'world', size: '—' },
-    { icon: '📄', name: 'server.properties', size: '1.2 KB' },
-    { icon: '📄', name: 'eula.txt', size: '154 B' },
-    { icon: '📄', name: 'start.sh', size: '320 B' },
-  ];
+type Entry = [name: string, kind: 'file' | 'dir', size: string];
+const APP_TREE: Record<string, Entry[]> = {
+  '/': [['Dockerfile', 'file', '512 B'], ['docker-compose.yml', 'file', '1.1 KB'], ['src', 'dir', '—'], ['config', 'dir', '—'], ['.env', 'file', '340 B'], ['package.json', 'file', '1.8 KB'], ['node_modules', 'dir', '—']],
+  '/src': [['index.js', 'file', '4.2 KB'], ['routes.js', 'file', '2.9 KB'], ['db.js', 'file', '1.1 KB']],
+  '/config': [['default.json', 'file', '820 B'], ['production.json', 'file', '910 B']],
+};
+const GAME_TREE: Record<string, Entry[]> = {
+  '/': [['server.properties', 'file', '1.4 KB'], ['server.jar', 'file', '48.2 MB'], ['eula.txt', 'file', '189 B'], ['world', 'dir', '—'], ['plugins', 'dir', '—'], ['logs', 'dir', '—'], ['ops.json', 'file', '412 B'], ['whitelist.json', 'file', '2 B']],
+  '/world': [['level.dat', 'file', '8.1 KB'], ['region', 'dir', '—'], ['playerdata', 'dir', '—'], ['session.lock', 'file', '3 B']],
+  '/plugins': [['EssentialsX.jar', 'file', '2.1 MB'], ['WorldEdit.jar', 'file', '4.8 MB'], ['LuckPerms.jar', 'file', '6.2 MB'], ['bStats', 'dir', '—']],
+  '/logs': [['latest.log', 'file', '221 KB'], ['2026-07-21-1.log.gz', 'file', '44 KB']],
+};
+
+function FilesTab({ isGame }: { isGame: boolean }) {
+  const tree = isGame ? GAME_TREE : APP_TREE;
+  const [cwd, setCwd] = useState<string[]>([]);
   const { toast } = useToast();
+  const key = '/' + cwd.join('/');
+  const entries = tree[key === '/' ? '/' : key] ?? [];
+
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-        <span className="mono" style={{ fontSize: '.88rem', color: 'var(--color-primary)' }}>/ home / container</span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+        <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', fontSize: '.88rem' }}>
+          <button className="name-btn" onClick={() => setCwd([])}>container</button>
+          <span className="subtle">/</span>
+          {cwd.map((c, i) => (
+            <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <button className="name-btn" onClick={() => setCwd(cwd.slice(0, i + 1))}>{c}</button>
+              <span className="subtle">/</span>
+            </span>
+          ))}
+        </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn--secondary btn--sm" data-ripple onClick={() => toast('Not wired yet', 'info')}>New folder</button>
-          <button className="btn btn--primary btn--sm" data-ripple onClick={() => toast('Not wired yet', 'info')}>Upload</button>
+          <button className="btn btn--secondary btn--sm" data-ripple onClick={() => toast('New folder is not wired yet', 'info')}>New folder</button>
+          <button className="btn btn--primary btn--sm" data-ripple data-magnetic onClick={() => toast('Upload is not wired yet', 'info')}>Upload</button>
         </div>
       </div>
       <div style={listCard}>
-        {files.map((f) => (
-          <button key={f.name} data-ripple onClick={() => toast('File browser is not wired yet', 'info')} style={{ ...rowCss, width: '100%', textAlign: 'left', border: 'none', borderBottom: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', font: 'inherit' }}>
-            <span style={{ flex: 'none' }}>{f.icon}</span>
-            <span style={{ flex: 1, minWidth: 0, fontSize: '.9rem' }}>{f.name}</span>
-            <span className="subtle tnum" style={{ fontSize: '.8rem' }}>{f.size}</span>
+        {entries.map(([name, kind, size]) => (
+          <button
+            key={name}
+            data-ripple
+            onClick={() => (kind === 'dir' ? setCwd([...cwd, name]) : toast('Opening files is not wired yet', 'info'))}
+            style={{ ...rowCss, width: '100%', textAlign: 'left', border: 'none', borderBottom: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', font: 'inherit' }}
+          >
+            <span style={{ flex: 'none' }}>{kind === 'dir' ? '📁' : '📄'}</span>
+            <span style={{ flex: 1, minWidth: 0, fontSize: '.9rem', color: kind === 'dir' ? 'var(--color-primary)' : 'var(--color-text)', fontWeight: kind === 'dir' ? 600 : 400 }}>{name}</span>
+            <span className="subtle tnum" style={{ fontSize: '.8rem' }}>{size}</span>
           </button>
         ))}
+        {entries.length === 0 && <div className="empty">This folder is empty.</div>}
       </div>
     </>
   );
@@ -233,10 +317,15 @@ function FilesTab() {
 
 function DatabasesTab() {
   const { toast } = useToast();
-  const dbs = [{ name: 's1_main', user: 'u_s1', host: 'db.nexusinfra.local:3306' }];
+  const [dbs, setDbs] = useState([{ name: 's1_main', user: 'u_s1', host: 'db.fra.nexusinfra.io:3306' }]);
+  const create = () => {
+    const name = `s1_db${dbs.length + 1}`;
+    setDbs((xs) => [...xs, { name, user: 'u' + Math.random().toString(16).slice(2, 8), host: 'db.fra.nexusinfra.io:3306' }]);
+    toast(`Database ${name} created`, 'success', 'Database');
+  };
   return (
     <>
-      <TabHeader title="Databases" action="New database" onAction={() => toast('Not wired yet', 'info')} />
+      <TabHeader title="Databases" action="New database" onAction={create} />
       <div style={listCard}>
         {dbs.map((db) => (
           <div key={db.name} style={rowCss}>
@@ -245,6 +334,7 @@ function DatabasesTab() {
             <span className="mono subtle" style={{ fontSize: '.8rem' }}>{db.host}</span>
           </div>
         ))}
+        {dbs.length === 0 && <div className="empty">No databases yet.</div>}
       </div>
     </>
   );
@@ -252,13 +342,18 @@ function DatabasesTab() {
 
 function BackupsTab() {
   const { toast } = useToast();
-  const backups = [
+  const [backups, setBackups] = useState([
     { name: 'auto-2026-07-24', size: '184 MB', rel: '3h ago', locked: false },
     { name: 'pre-update', size: '172 MB', rel: '2d ago', locked: true },
-  ];
+  ]);
+  const create = () => {
+    const name = `manual-${Date.now().toString().slice(-6)}`;
+    setBackups((xs) => [{ name, size: `${150 + ((Math.random() * 80) | 0)} MB`, rel: 'just now', locked: false }, ...xs]);
+    toast(`Backup ${name} started`, 'success', 'Backup');
+  };
   return (
     <>
-      <TabHeader title="Backups" action="Create backup" onAction={() => toast('Not wired yet', 'info')} />
+      <TabHeader title="Backups" action="Create backup" onAction={create} />
       <div style={listCard}>
         {backups.map((b) => (
           <div key={b.name} style={rowCss}>
@@ -308,9 +403,13 @@ function SchedulesTab() {
     { name: 'Nightly backup', cron: '0 4 * * *', human: 'every day at 04:00', action: 'create backup', enabled: true },
     { name: 'Weekly restart', cron: '0 6 * * 1', human: 'Mondays at 06:00', action: 'restart', enabled: false },
   ]);
+  const create = () => {
+    setSchedules((xs) => [...xs, { name: `Task ${xs.length + 1}`, cron: '0 3 * * *', human: 'every day at 03:00', action: 'restart', enabled: true }]);
+    toast('Schedule created', 'success', 'Schedule');
+  };
   return (
     <>
-      <TabHeader title="Schedules" action="New schedule" onAction={() => toast('Not wired yet', 'info')} />
+      <TabHeader title="Schedules" action="New schedule" onAction={create} />
       <div className="stack">
         {schedules.map((s, i) => (
           <div key={s.name} style={{ ...rowCss, border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface)' }}>
@@ -323,7 +422,7 @@ function SchedulesTab() {
                 <span className="mono muted">{s.cron}</span> · {s.human} · {s.action}
               </div>
             </div>
-            <button className="btn btn--secondary btn--sm" data-ripple onClick={() => toast('Not wired yet', 'info')}>Run now</button>
+            <button className="btn btn--secondary btn--sm" data-ripple onClick={() => toast(`Ran “${s.name}”`, 'success', 'Schedule')}>Run now</button>
             <button role="switch" aria-checked={s.enabled} aria-label="Toggle schedule" onClick={() => setSchedules((xs) => xs.map((x, j) => (j === i ? { ...x, enabled: !x.enabled } : x)))} style={{ flex: 'none', width: 44, height: 26, borderRadius: 'var(--radius-full)', border: 'none', cursor: 'pointer', padding: 3, transition: 'background 200ms', background: s.enabled ? 'var(--color-primary)' : 'var(--color-border-strong)' }}>
               <span style={{ display: 'block', width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'transform 200ms var(--ease-out)', transform: s.enabled ? 'translateX(18px)' : 'translateX(0)' }} />
             </button>
@@ -336,14 +435,18 @@ function SchedulesTab() {
 
 function SubusersTab() {
   const { toast } = useToast();
-  const users = [
+  const [users, setUsers] = useState([
     { email: 'owner@nexusinfra.dev', initial: 'O', perms: 'Full access', role: 'owner', soft: 'var(--color-primary-soft)', color: 'var(--color-primary)', canRemove: false },
     { email: 'ops@nexusinfra.dev', initial: 'P', perms: 'Console, files, backups', role: 'admin', soft: 'var(--color-success-soft)', color: 'var(--color-success)', canRemove: true },
     { email: 'viewer@nexusinfra.dev', initial: 'V', perms: 'Read-only', role: 'viewer', soft: 'var(--color-neutral-soft)', color: 'var(--color-neutral)', canRemove: true },
-  ];
+  ]);
+  const remove = (email: string) => {
+    setUsers((xs) => xs.filter((u) => u.email !== email));
+    toast('Access revoked', 'error', 'Subuser');
+  };
   return (
     <>
-      <TabHeader title="Subusers" action="Invite user" onAction={() => toast('Not wired yet', 'info')} />
+      <TabHeader title="Subusers" action="Invite user" onAction={() => toast('Invites are not wired yet', 'info')} />
       <div style={listCard}>
         {users.map((u) => (
           <div key={u.email} style={rowCss}>
@@ -353,7 +456,7 @@ function SubusersTab() {
               <div className="subtle" style={{ fontSize: '.78rem' }}>{u.perms}</div>
             </div>
             <span style={{ flex: 'none', fontSize: '.72rem', fontWeight: 600, padding: '3px 10px', borderRadius: 'var(--radius-full)', background: u.soft, color: u.color }}>{u.role}</span>
-            {u.canRemove && <button className="icon-btn" data-ripple aria-label="Revoke access" onClick={() => toast('Not wired yet', 'info')}>✕</button>}
+            {u.canRemove && <button className="icon-btn" data-ripple aria-label="Revoke access" onClick={() => remove(u.email)}>✕</button>}
           </div>
         ))}
       </div>

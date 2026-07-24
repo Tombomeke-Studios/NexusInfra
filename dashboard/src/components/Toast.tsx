@@ -7,14 +7,17 @@ import { createContext, useCallback, useContext, useState, type ReactNode } from
 type ToastVariant = 'success' | 'error' | 'info';
 interface Toast {
   id: number;
+  heading: string;
   message: string;
   variant: ToastVariant;
   leaving?: boolean;
 }
 
 interface ToastApi {
-  toast: (message: string, variant?: ToastVariant) => void;
+  toast: (message: string, variant?: ToastVariant, title?: string) => void;
 }
+
+const DEFAULT_HEADING: Record<ToastVariant, string> = { success: 'Success', error: 'Stopped', info: 'Working' };
 
 const ToastContext = createContext<ToastApi>({ toast: () => {} });
 
@@ -34,9 +37,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const toast = useCallback(
-    (message: string, variant: ToastVariant = 'info') => {
+    (message: string, variant: ToastVariant = 'info', title?: string) => {
       const id = Date.now() + Math.random();
-      setToasts((ts) => [...ts, { id, message, variant }]);
+      setToasts((ts) => [...ts, { id, message, variant, heading: title || DEFAULT_HEADING[variant] }]);
       setTimeout(() => remove(id), AUTO_DISMISS_MS);
     },
     [remove]
@@ -53,7 +56,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             onClick={() => remove(t.id)}
           >
             <span className="toast__icon">{t.variant === 'success' ? '✓' : t.variant === 'error' ? '!' : 'i'}</span>
-            <span className="toast__msg">{t.message}</span>
+            <span className="toast__msg">
+              <span className="toast__heading">{t.heading}</span>
+              <span className="toast__text">{t.message}</span>
+            </span>
             <span className="toast__bar" />
           </div>
         ))}

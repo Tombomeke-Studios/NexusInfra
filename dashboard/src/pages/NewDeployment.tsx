@@ -23,6 +23,10 @@ export function NewDeployment() {
   const [name, setName] = useState('');
   const [dockerImage, setDockerImage] = useState('');
   const [game, setGame] = useState('minecraft');
+  const [software, setSoftware] = useState('paper');
+  const [version, setVersion] = useState('1.21.4');
+  const [slots, setSlots] = useState(20);
+  const [motd, setMotd] = useState('');
   const [ports, setPorts] = useState<Row[]>([{ key: '', value: '' }]);
   const [env, setEnv] = useState<Row[]>([{ key: '', value: '' }]);
   const [nodes, setNodes] = useState<NodeView[]>([]);
@@ -64,6 +68,14 @@ export function NewDeployment() {
     }
   };
 
+  // Placement headroom (from the selected/emptiest node's live usage).
+  const usedCpu = (n: NodeView) => Math.round(n.cpuPercent ?? 0);
+  const usedRam = (n: NodeView) => (n.ramUsedMb != null && n.ramTotalMb ? Math.round((n.ramUsedMb / n.ramTotalMb) * 100) : 0);
+  const target = placement === 'auto' ? [...nodes].sort((a, b) => usedCpu(a) + usedRam(a) - (usedCpu(b) + usedRam(b)))[0] : nodes.find((n) => n.id === placement);
+  const cpuFree = target ? Math.max(0, 100 - usedCpu(target)) : 100;
+  const ramFree = target ? Math.max(0, 100 - usedRam(target)) : 100;
+  const overCapacity = cpu > cpuFree || ram > ramFree;
+
   return (
     <div style={{ maxWidth: 640, margin: '0 auto', padding: '32px 24px', animation: 'rise 320ms var(--ease-out) both' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
@@ -80,24 +92,13 @@ export function NewDeployment() {
                 { v: 'app', label: 'Application', sub: 'Any Docker image' },
                 { v: 'game', label: 'Game server', sub: 'Minecraft, Valheim, …' },
               ].map((o) => {
-                const active = kind === o.v;
                 return (
                   <button
                     key={o.v}
                     type="button"
                     data-ripple
                     onClick={() => setKind(o.v as 'app' | 'game')}
-                    style={{
-                      flex: 1,
-                      textAlign: 'left',
-                      padding: '13px 15px',
-                      borderRadius: 'var(--radius)',
-                      border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-border-strong)'}`,
-                      background: active ? 'var(--color-primary-soft)' : 'var(--color-surface)',
-                      color: active ? 'var(--color-primary)' : 'var(--color-text)',
-                      cursor: 'pointer',
-                      transition: 'all 160ms',
-                    }}
+                    className={`opt opt--card opt--lg${kind === o.v ? ' is-active' : ''}`}
                   >
                     <span style={{ display: 'block', fontWeight: 650, fontSize: '.92rem' }}>{o.label}</span>
                     <span style={{ display: 'block', fontSize: '.76rem', opacity: 0.82 }}>{o.sub}</span>
@@ -122,8 +123,28 @@ export function NewDeployment() {
             </label>
           ) : (
             <div style={{ marginBottom: 16, padding: 16, border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', background: 'var(--color-surface-2)' }}>
-              <span className="field__label" style={{ fontSize: '.86rem' }}>Game</span>
-              <Seg options={['minecraft', 'valheim', 'rust', 'factorio'].map((g) => ({ value: g, label: g }))} value={game} onChange={setGame} />
+              <div style={{ marginBottom: 14 }}>
+                <span className="field__label" style={{ fontSize: '.86rem' }}>Game</span>
+                <Seg options={['minecraft', 'valheim', 'rust', 'cs2'].map((g) => ({ value: g, label: g }))} value={game} onChange={setGame} />
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <span className="field__label" style={{ fontSize: '.86rem' }}>Software</span>
+                <Seg options={['paper', 'fabric', 'forge', 'vanilla', 'purpur'].map((s) => ({ value: s, label: s }))} value={software} onChange={setSoftware} />
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <span className="field__label" style={{ fontSize: '.86rem' }}>Version</span>
+                <Seg options={['1.21.4', '1.21.1', '1.20.6', '1.20.1', '1.19.4'].map((v) => ({ value: v, label: v }))} value={version} onChange={setVersion} />
+              </div>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <label style={{ flex: 'none', width: 120 }}>
+                  <span className="field__label" style={{ fontSize: '.8rem', color: 'var(--color-text-muted)' }}>Max players</span>
+                  <input className="input mono" type="number" min={1} max={500} value={slots} onChange={(e) => setSlots(Number(e.target.value))} />
+                </label>
+                <label style={{ flex: 1, minWidth: 0 }}>
+                  <span className="field__label" style={{ fontSize: '.8rem', color: 'var(--color-text-muted)' }}>MOTD</span>
+                  <input className="input" value={motd} onChange={(e) => setMotd(e.target.value)} placeholder="A NexusInfra server" />
+                </label>
+              </div>
             </div>
           )}
 
@@ -141,30 +162,44 @@ export function NewDeployment() {
             </span>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {[{ id: 'auto', name: 'Auto', sub: 'emptiest node' }, ...nodes.map((n) => ({ id: n.id, name: n.name, sub: n.health }))].map((o) => {
-                const active = placement === o.id;
                 return (
                   <button
                     key={o.id}
                     type="button"
+                    data-ripple
                     onClick={() => setPlacement(o.id)}
-                    style={{
-                      flex: 1,
-                      minWidth: 112,
-                      textAlign: 'left',
-                      padding: '9px 12px',
-                      borderRadius: 'var(--radius)',
-                      border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-border-strong)'}`,
-                      background: active ? 'var(--color-primary-soft)' : 'var(--color-surface)',
-                      color: active ? 'var(--color-primary)' : 'var(--color-text)',
-                      cursor: 'pointer',
-                      transition: 'all 150ms',
-                    }}
+                    className={`opt opt--card${placement === o.id ? ' is-active' : ''}`}
+                    style={{ minWidth: 112 }}
                   >
                     <span style={{ display: 'block', fontWeight: 600, fontSize: '.86rem' }}>{o.name}</span>
                     <span className="mono" style={{ display: 'block', fontSize: '.72rem', opacity: 0.85 }}>{o.sub}</span>
                   </button>
                 );
               })}
+            </div>
+
+            {/* Headroom on the chosen node */}
+            <div style={{ marginTop: 14, padding: '14px 16px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', background: 'var(--color-surface-2)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+                <span style={{ fontSize: '.82rem', fontWeight: 600 }}>Available on {target ? target.name : 'the chosen node'}</span>
+                <span style={{ fontSize: '.74rem', color: 'var(--color-text-subtle)' }}>after currently committed limits</span>
+              </div>
+              <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+                {[{ label: 'CPU free', free: cpuFree, req: cpu }, { label: 'RAM free', free: ramFree, req: ram }].map((m) => (
+                  <div key={m.label} style={{ flex: 1, minWidth: 160 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                      <span style={{ fontSize: '.78rem', color: 'var(--color-text-muted)' }}>{m.label}</span>
+                      <span className="tnum" style={{ fontSize: '.78rem', fontWeight: 600, color: m.req > m.free ? 'var(--color-danger)' : 'var(--color-success)' }}>{m.free}%</span>
+                    </div>
+                    <div className="meter" style={{ height: 7, background: 'var(--color-surface)' }}>
+                      <div className="meter__fill" style={{ width: `${m.free}%`, background: m.req > m.free ? 'var(--color-danger)' : 'var(--color-success)', transition: 'width 500ms var(--ease-out)' }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {overCapacity && (
+                <div style={{ marginTop: 12, fontSize: '.8rem', fontWeight: 550, color: 'var(--color-danger)' }}>⚠ Requested limits exceed free capacity on this node.</div>
+              )}
             </div>
           </div>
 
@@ -228,32 +263,18 @@ export function NewDeployment() {
 function Seg({ options, value, onChange }: { options: { value: string; label: string }[]; value: string; onChange: (v: string) => void }) {
   return (
     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-      {options.map((o) => {
-        const active = o.value === value;
-        return (
-          <button
-            key={o.value}
-            type="button"
-            onClick={() => onChange(o.value)}
-            style={{
-              flex: 1,
-              minWidth: 70,
-              minHeight: 34,
-              borderRadius: 'var(--radius-sm)',
-              border: `1px solid ${active ? 'var(--color-primary)' : 'var(--color-border-strong)'}`,
-              background: active ? 'var(--color-primary-soft)' : 'var(--color-surface)',
-              color: active ? 'var(--color-primary)' : 'var(--color-text)',
-              fontWeight: 600,
-              fontSize: '.8rem',
-              textTransform: 'capitalize',
-              cursor: 'pointer',
-              transition: 'all 150ms',
-            }}
-          >
-            {o.label}
-          </button>
-        );
-      })}
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          data-ripple
+          onClick={() => onChange(o.value)}
+          className={`opt${o.value === value ? ' is-active' : ''}`}
+          style={{ textTransform: 'capitalize' }}
+        >
+          {o.label}
+        </button>
+      ))}
     </div>
   );
 }
