@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { createDeployment, listDeployments, login, streamLogs, streamStats, listFiles, writeFile, createDatabase, createBackup, createSchedule, registerNode, execCommand, ApiError, TOKEN_KEY, type ContainerStats } from './api';
+import { createDeployment, listDeployments, login, streamLogs, streamStats, listFiles, writeFile, createDatabase, createBackup, createSchedule, registerNode, execCommand, inviteSubuser, ApiError, TOKEN_KEY, type ContainerStats } from './api';
 
 // The client is verified against a mocked fetch: it attaches the Bearer token,
 // posts JSON, and surfaces API errors with their status.
@@ -103,6 +103,15 @@ describe('api client', () => {
     const [url, options] = fetchMock.mock.calls[0];
     expect(url).toContain('/deployments/d1/backups');
     expect(options.method).toBe('POST');
+  });
+
+  it('invites a subuser with email/role in the POST body', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ id: 's1', email: 'a@b.com', role: 'viewer' }, 201));
+    await inviteSubuser('d1', 'a@b.com', 'viewer');
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toContain('/deployments/d1/subusers');
+    expect(options.method).toBe('POST');
+    expect(JSON.parse(options.body as string)).toEqual({ email: 'a@b.com', role: 'viewer' });
   });
 
   it('runs a console command with the command in the POST body', async () => {

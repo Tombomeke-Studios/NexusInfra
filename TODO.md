@@ -61,7 +61,7 @@ Each mock behavior in the ported design becomes real, one issue + branch at a ti
 - [x] Server databases — provision real DBs (#109)
 - [x] Server backups — snapshot & restore volumes (#110)
 - [x] Server schedules — cron tasks (#111)
-- [ ] Subusers — per-server access control (#112, needs #20)
+- [x] Subusers — per-server access management (invite/role/revoke); enforcement needs #20 (#112)
 - [x] Node provisioning — register/deregister real nodes (#113)
 - [x] Game servers — real game images + startup (#114)
 
