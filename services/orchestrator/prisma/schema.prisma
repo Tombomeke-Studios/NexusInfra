@@ -20,6 +20,7 @@ datasource db {
 model Node {
   id            String       @id
   name          String
+  location      String?
   ipAddress     String?
   lastHeartbeat DateTime
   cpuPercent    Float?

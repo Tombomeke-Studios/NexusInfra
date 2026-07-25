@@ -51,6 +51,16 @@ describe('createNodeRegistry', () => {
     expect(node.ramTotalMb).toBe(4000);
   });
 
+  it('does not clobber a registered node name/location on heartbeat (#113)', async () => {
+    await repo.registerNode({ id: 'node-local', name: 'Home box', location: 'home-server' });
+    await registry.handleHeartbeat(nodeHeartbeat('node-local', '2026-07-21T00:00:00.000Z', { cpuPercent: 12 }));
+
+    const [node] = await repo.listNodes();
+    expect(node.name).toBe('Home box'); // not overwritten with the id
+    expect(node.location).toBe('home-server');
+    expect(node.cpuPercent).toBe(12);
+  });
+
   it('ignores non-node-heartbeat events', async () => {
     const service = buildEnvelope('control-room', {
       type: 'heartbeat.service',
@@ -65,6 +75,7 @@ describe('nodeHealth', () => {
   const base: NodeRecord = {
     id: 'n',
     name: 'n',
+    location: null,
     ipAddress: null,
     lastHeartbeat: '2026-07-21T00:00:00.000Z',
     cpuPercent: null,

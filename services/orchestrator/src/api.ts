@@ -9,6 +9,9 @@ import type { DeploymentDetail, NodeRecord, Repository } from './types.js';
 
 const SCHEDULE_ACTIONS = ['restart', 'backup'];
 
+// Short id suffix for an auto-generated node id (not security-sensitive).
+const randomToken = () => Math.random().toString(36).slice(2, 8);
+
 // Where the (single, local) Node Agent's internal HTTP lives. Multi-node will
 // resolve this per node from the registry.
 const NODE_AGENT_URL = process.env.NODE_AGENT_URL || 'http://node-agent:9100';
@@ -236,6 +239,27 @@ export function createApiRouter(deps: ApiDeps): Router {
     const now = Date.now();
     const nodes = await repo.listNodes();
     res.json(nodes.map((n) => ({ ...n, health: nodeHealth(n, now) })));
+  });
+
+  // Register (or relabel) a node's metadata (#113). It reads offline until an agent
+  // started with NODE_ID=<id> heartbeats in. Body: { id?, name?, location? }.
+  router.post('/nodes', async (req: Request, res: Response) => {
+    const { id, name, location } = req.body ?? {};
+    const nodeId = typeof id === 'string' && id.trim() ? id.trim() : `node-${randomToken()}`;
+    const node = await repo.registerNode({
+      id: nodeId,
+      name: typeof name === 'string' && name.trim() ? name.trim() : undefined,
+      location: typeof location === 'string' ? location.trim() || null : undefined,
+    });
+    return res.status(201).json({ ...node, health: nodeHealth(node, Date.now()) });
+  });
+
+  // Deregister a node — refused while it still hosts a running deployment.
+  router.delete('/nodes/:id', async (req: Request, res: Response) => {
+    const running = (await repo.listDeployments()).some((d) => d.nodeId === req.params.id && (d.status === 'running' || d.status === 'pending'));
+    if (running) return res.status(409).json({ error: 'node still hosts a running deployment' });
+    await repo.deleteNode(req.params.id);
+    return res.status(204).end();
   });
 
   // Pipe an SSE stream from the owning Node Agent's internal `/{kind}/:containerId`

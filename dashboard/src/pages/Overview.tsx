@@ -1,5 +1,5 @@
-import { useEffect, useState, type CSSProperties } from 'react';
-import { listNodes, listDeployments, type NodeView, type DeploymentView } from '../api';
+import { useCallback, useEffect, useState, type CSSProperties } from 'react';
+import { listNodes, listDeployments, registerNode, deregisterNode, type NodeView, type DeploymentView } from '../api';
 import { CountUp } from '../components/CountUp';
 import { useToast } from '../components/Toast';
 import { InfoHint } from '../components/InfoHint';
@@ -24,48 +24,56 @@ export function Overview() {
   const [deployments, setDeployments] = useState<DeploymentView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [addingNode, setAddingNode] = useState(false);
-  const [localNodes, setLocalNodes] = useState<NodeView[]>([]); // mock nodes added in the UI
-  const [hidden, setHidden] = useState<string[]>([]);
   const [maint, setMaint] = useState<string[]>([]);
   const { toast } = useToast();
 
-  useEffect(() => {
-    let alive = true;
-    const load = (first: boolean) =>
+  const refresh = useCallback(
+    (first = false) =>
       Promise.all([listNodes(), listDeployments()])
         .then(([n, d]) => {
-          if (!alive) return;
           setNodes(n);
           setDeployments(d);
         })
-        .catch((e) => alive && first && setError(e instanceof Error ? e.message : 'Failed to load'));
-    void load(true);
-    const t = setInterval(() => void load(false), 5000); // live meters
+        .catch((e) => first && setError(e instanceof Error ? e.message : 'Failed to load')),
+    []
+  );
+
+  useEffect(() => {
+    let alive = true;
+    void refresh(true);
+    const t = setInterval(() => alive && void refresh(false), 5000); // live meters
     return () => {
       alive = false;
       clearInterval(t);
     };
-  }, []);
+  }, [refresh]);
 
   const loading = !error && (!nodes || !deployments);
-  // Real (polled) nodes + locally-added mock nodes, minus removed ones.
-  const ns = [...(nodes ?? []), ...localNodes].filter((n) => !hidden.includes(n.id));
+  const ns = nodes ?? [];
   const ds = deployments ?? [];
 
-  const addNode = (cfg: { name: string; location: string; cores: number; mem: number; maint: boolean }) => {
-    const id = `local-${Date.now()}`;
-    const name = cfg.name.trim() || `node-${localNodes.length + 2}`;
-    setLocalNodes((xs) => [
-      ...xs,
-      { id, name, location: cfg.location.trim() || undefined, lastHeartbeat: new Date().toISOString(), cpuPercent: 4 + Math.random() * 10, ramUsedMb: cfg.mem * 1024 * 0.1, ramTotalMb: cfg.mem * 1024, diskUsedGb: 0, diskTotalGb: 0, health: 'healthy' },
-    ]);
-    if (cfg.maint) setMaint((m) => [...m, id]);
-    setAddingNode(false);
-    toast(`${name} provisioned`, 'success', 'Node');
+  // Register a node's metadata (#113). It reads offline until an agent started with
+  // NODE_ID=<id> heartbeats in — so we tell the user how to bring it online.
+  const addNode = async (cfg: { name: string; location: string; maint: boolean }) => {
+    try {
+      const node = await registerNode({ name: cfg.name.trim() || undefined, location: cfg.location.trim() || undefined });
+      if (cfg.maint) setMaint((m) => [...m, node.id]);
+      setAddingNode(false);
+      toast(`${node.name} registered — start its agent with NODE_ID=${node.id}`, 'success', 'Node');
+      await refresh();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Register failed', 'error', 'Node');
+    }
   };
-  const removeNode = (id: string, name: string) => {
-    setHidden((h) => [...h, id]);
-    toast(`${name} removed`, 'error', 'Node');
+  const removeNode = async (id: string, name: string) => {
+    if (!window.confirm(`Deregister ${name}? Its record is removed (the machine itself is untouched).`)) return;
+    try {
+      await deregisterNode(id);
+      toast(`${name} deregistered`, 'error', 'Node');
+      await refresh();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Deregister failed', 'error', 'Node');
+    }
   };
   const toggleMaint = (id: string, name: string) => {
     const on = !maint.includes(id);
@@ -271,25 +279,22 @@ function NodeMeter({ label, pct }: { label: string; pct: number }) {
   );
 }
 
-// Add-node form — adds a mock node with the configured location/size (real
-// provisioning is wired later).
-function AddNodeForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: (cfg: { name: string; location: string; cores: number; mem: number; maint: boolean }) => void }) {
+// Register-node form (#113). Registers a node's metadata (name + location); its
+// CPU/RAM/disk are reported by the agent once it connects, so there are no hardware
+// fields to fill in — a node comes online when you run its agent with NODE_ID.
+function AddNodeForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: (cfg: { name: string; location: string; maint: boolean }) => void }) {
   const [name, setName] = useState('');
   const [location, setLocation] = useState('');
-  const [cores, setCores] = useState(8);
-  const [mem, setMem] = useState(32);
-  const [disk, setDisk] = useState(200);
-  const [over, setOver] = useState(0);
   const [maint, setMaint] = useState(false);
-  const numStyle: CSSProperties = { minHeight: 36 };
 
   return (
     <div style={{ border: '1px solid var(--color-primary)', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface)', boxShadow: 'var(--shadow)', padding: 16, animation: 'pop 220ms var(--ease-out)' }}>
-      <div style={{ fontWeight: 600, marginBottom: 12 }}>
-        New node
-        <InfoHint text="A node is a Docker host NexusInfra runs servers on. Add nodes to grow capacity; the scheduler places each deployment on the emptiest healthy one." label="What is a node?" />
+      <div style={{ fontWeight: 600, marginBottom: 6 }}>
+        Register node
+        <InfoHint text="A node is a Docker host NexusInfra runs servers on. Registering records its name + location; run the agent there with NODE_ID=<id> and it comes online. Its CPU/RAM/disk are reported automatically." label="What is a node?" />
       </div>
-      <input className="input" placeholder="node-2 (optional)" value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 10 }} />
+      <p className="subtle" style={{ fontSize: '.78rem', margin: '0 0 12px' }}>Resources are auto-detected from the node's agent — just give it a name and (optionally) a location.</p>
+      <input className="input" placeholder="node name (optional)" value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 10 }} />
       <label style={{ display: 'block', marginBottom: 14 }}>
         <span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>
           Location <span className="subtle" style={{ fontWeight: 400 }}>(optional)</span>
@@ -297,14 +302,6 @@ function AddNodeForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: (
         </span>
         <input className="input" placeholder="home-server, hetzner-fsn1, …" value={location} onChange={(e) => setLocation(e.target.value)} />
       </label>
-      <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
-        <label style={{ flex: 1, minWidth: 0 }}><span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>vCPU cores<InfoHint text="How many virtual CPU cores this host offers. A server's CPU limit is a share of these cores." label="vCPU cores help" /></span><input className="input mono" type="number" min={1} max={128} value={cores} onChange={(e) => setCores(Number(e.target.value))} style={numStyle} /></label>
-        <label style={{ flex: 1, minWidth: 0 }}><span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>Memory (GB)<InfoHint text="Total RAM on this host. A server's memory limit is a share of this total." label="Memory help" /></span><input className="input mono" type="number" min={1} max={1024} value={mem} onChange={(e) => setMem(Number(e.target.value))} style={numStyle} /></label>
-      </div>
-      <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
-        <label style={{ flex: 1, minWidth: 0 }}><span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>Disk (GB)<InfoHint text="Total disk this host provides for server volumes and container images." label="Disk help" /></span><input className="input mono" type="number" min={10} max={10000} step={10} value={disk} onChange={(e) => setDisk(Number(e.target.value))} style={numStyle} /></label>
-        <label style={{ flex: 1, minWidth: 0 }}><span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>Mem overalloc %<InfoHint text="Let the sum of server memory limits exceed physical RAM by this percentage. Useful when servers rarely peak together — risky if they do." label="Memory overallocation help" /></span><input className="input mono" type="number" min={0} max={200} step={5} value={over} onChange={(e) => setOver(Number(e.target.value))} style={numStyle} /></label>
-      </div>
       <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 14, padding: '9px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', cursor: 'pointer' }}>
         <span style={{ fontSize: '.82rem', fontWeight: 550 }}>Start in maintenance mode<InfoHint text="Register the node but don't schedule new servers onto it yet — for setup, upgrades or draining." label="Maintenance mode help" /></span>
         <button type="button" role="switch" aria-checked={maint} aria-label="Start in maintenance" onClick={() => setMaint((v) => !v)} style={{ flex: 'none', width: 42, height: 24, borderRadius: 'var(--radius-full)', border: 'none', cursor: 'pointer', padding: 3, transition: 'background 200ms', background: maint ? 'var(--color-primary)' : 'var(--color-border-strong)' }}>
@@ -312,7 +309,7 @@ function AddNodeForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: (
         </button>
       </label>
       <div style={{ display: 'flex', gap: 8 }}>
-        <button className="btn btn--primary btn--sm" data-ripple data-burst="success" style={{ flex: 1 }} onClick={() => onCreate({ name, location, cores, mem, maint })}>Create</button>
+        <button className="btn btn--primary btn--sm" data-ripple data-burst="success" style={{ flex: 1 }} onClick={() => onCreate({ name, location, maint })}>Register</button>
         <button className="btn btn--secondary btn--sm" data-ripple onClick={onCancel}>Cancel</button>
       </div>
     </div>

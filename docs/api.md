@@ -179,6 +179,17 @@ unknown, `409` if the deployment is not running.
 
 Registered nodes with their latest resources and derived `health` (`healthy | degraded | offline`).
 
+### `POST /nodes`
+
+Register (or relabel) a node's metadata (#113) — body `{ id?, name?, location? }`. `id` is generated when
+omitted. The node reads **offline** until an agent started with `NODE_ID=<id>` heartbeats in; its
+CPU/RAM/disk are then reported automatically and never overwrite the name/location. `201` with the node.
+
+### `DELETE /nodes/:id`
+
+Deregister a node (remove its record; detaches it from any deployments). `409` if it still hosts a
+running/pending deployment, otherwise `204`. The machine itself is untouched.
+
 ---
 
 ## Event contract (bus API)
