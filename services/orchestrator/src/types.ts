@@ -15,6 +15,7 @@ export type NodeHealth = 'healthy' | 'degraded' | 'offline';
 export interface NodeRecord {
   id: string;
   name: string;
+  location: string | null;
   ipAddress: string | null;
   lastHeartbeat: string; // ISO-8601 UTC
   cpuPercent: number | null;
@@ -146,6 +147,7 @@ export interface DeploymentDetail extends DeploymentView {
 export interface UpsertNodeInput {
   id: string;
   name?: string;
+  location?: string | null;
   ipAddress?: string | null;
   lastHeartbeat: string;
   cpuPercent?: number | null;
@@ -178,9 +180,20 @@ export interface DeploymentStatusPatch {
  * Persistence boundary for the Orchestrator. Implemented by PrismaRepository
  * (production, SQLite) and InMemoryRepository (tests, and a DB-less local mode).
  */
+/** Register/relabel a node's human metadata without touching its liveness/resources (#113). */
+export interface RegisterNodeInput {
+  id: string;
+  name?: string;
+  location?: string | null;
+}
+
 export interface Repository {
   upsertNode(input: UpsertNodeInput): Promise<NodeRecord>;
   listNodes(): Promise<NodeRecord[]>;
+  /** Create or relabel a node (name/location); leaves lastHeartbeat/resources intact. */
+  registerNode(input: RegisterNodeInput): Promise<NodeRecord>;
+  /** Remove a node record; detaches it from any deployments first. */
+  deleteNode(id: string): Promise<void>;
 
   createServerConfig(input: CreateServerConfigInput): Promise<ServerConfigRecord>;
   createDeployment(serverConfigId: string, nodeId: string | null): Promise<DeploymentRecord>;

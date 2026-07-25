@@ -190,7 +190,7 @@ is the migrations directory.
 | `src/types.ts` | Domain records + the `Repository` interface (decouples logic from the DB) |
 | `src/repository.ts` | `InMemoryRepository` — backs unit tests and a DB-less local mode |
 | `src/db.ts` | `getPrisma()` + `PrismaRepository` (SQLite-backed `Repository`) |
-| `src/nodeRegistry.ts` | Consumes `monitoring.heartbeat.node.#`, upserts nodes, derives health (3s/10s) |
+| `src/nodeRegistry.ts` | Consumes `monitoring.heartbeat.node.#`, upserts nodes (liveness/resources only — never clobbers a registered name/location), derives health (3s/10s) |
 | `src/nodeSelection.ts` | Pure least-loaded `selectNode` (healthy nodes, ranked by CPU+RAM load) |
 | `src/dbProvision.ts` | Pure managed-DB helpers: `isDatabaseEngine` guard + `generateDatabaseCredentials` (safe name/user/password) |
 | `src/cron.ts` | Pure 5-field cron matcher (`cronMatches`, `isValidCron`) for the schedule runner |

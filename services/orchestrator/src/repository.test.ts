@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { InMemoryRepository } from './repository.js';
+import { nodeHealth } from './nodeRegistry.js';
 
 // Contract tests for the Repository boundary, run against the in-memory
 // implementation. PrismaRepository (db.ts) implements the same interface and is
@@ -30,6 +31,37 @@ describe('InMemoryRepository', () => {
 
     const nodes = await repo.listNodes();
     expect(nodes).toHaveLength(1);
+  });
+
+  it('registers a node, relabels it, and keeps location across liveness beats', async () => {
+    const reg = await repo.registerNode({ id: 'node-1', name: 'Home box', location: 'home-server' });
+    expect(reg.name).toBe('Home box');
+    expect(reg.location).toBe('home-server');
+    // Registered-but-unseen reads offline (epoch heartbeat).
+    expect(nodeHealth(reg, Date.now())).toBe('offline');
+
+    // A liveness/resource heartbeat must not wipe the name/location.
+    await repo.upsertNode({ id: 'node-1', lastHeartbeat: new Date().toISOString(), cpuPercent: 20 });
+    const seen = (await repo.listNodes())[0];
+    expect(seen.name).toBe('Home box');
+    expect(seen.location).toBe('home-server');
+    expect(seen.cpuPercent).toBe(20);
+
+    // Relabel just the location.
+    const relabelled = await repo.registerNode({ id: 'node-1', location: 'office-rack' });
+    expect(relabelled.location).toBe('office-rack');
+    expect(relabelled.name).toBe('Home box'); // untouched
+  });
+
+  it('deletes a node and detaches it from its deployments', async () => {
+    await repo.registerNode({ id: 'node-1' });
+    const config = await repo.createServerConfig({ userId: 'u', name: 'svc', dockerImage: 'nginx' });
+    const dep = await repo.createDeployment(config.id, 'node-1');
+
+    await repo.deleteNode('node-1');
+    expect(await repo.listNodes()).toEqual([]);
+    // The deployment survives but is detached from the removed node.
+    expect((await repo.getDeployment(dep.id))?.nodeId).toBeNull();
   });
 
   it('creates a deployment joined to its config in listDeployments', async () => {

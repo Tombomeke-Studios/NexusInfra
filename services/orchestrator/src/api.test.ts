@@ -303,6 +303,26 @@ describe('deployment API', () => {
     expect((await request(app).get('/deployments/nope/backups')).status).toBe(404);
   });
 
+  it('registers a node with a name/location and deregisters it', async () => {
+    const reg = await request(app).post('/nodes').send({ name: 'Home box', location: 'home-server' });
+    expect(reg.status).toBe(201);
+    expect(reg.body.name).toBe('Home box');
+    expect(reg.body.location).toBe('home-server');
+    expect(reg.body.health).toBe('offline'); // no heartbeat yet
+    expect(reg.body.id).toMatch(/^node-/); // auto-generated id
+
+    expect((await request(app).get('/nodes')).body).toHaveLength(1);
+    expect((await request(app).delete(`/nodes/${reg.body.id}`)).status).toBe(204);
+    expect((await request(app).get('/nodes')).body).toEqual([]);
+  });
+
+  it('refuses to deregister a node that still hosts a running deployment', async () => {
+    await seedHealthyNode(repo, 'node-busy');
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'abc', nodeId: 'node-busy' });
+    expect((await request(app).delete('/nodes/node-busy')).status).toBe(409);
+  });
+
   it('creates, validates, toggles, runs and deletes a schedule', async () => {
     const ran: string[] = [];
     const schedApp = express();

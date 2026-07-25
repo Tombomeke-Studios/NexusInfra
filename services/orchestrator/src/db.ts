@@ -11,6 +11,7 @@ import type {
   CreateServerDatabaseInput,
   CreateServerScheduleInput,
   NodeRecord,
+  RegisterNodeInput,
   Repository,
   ResourceLimits,
   ServerBackupRecord,
@@ -65,6 +66,7 @@ function toNodeRecord(n: PrismaNode): NodeRecord {
   return {
     id: n.id,
     name: n.name,
+    location: n.location,
     ipAddress: n.ipAddress,
     lastHeartbeat: n.lastHeartbeat.toISOString(),
     cpuPercent: n.cpuPercent,
@@ -156,6 +158,7 @@ export class PrismaRepository implements Repository {
     const update = {
       lastHeartbeat: new Date(input.lastHeartbeat),
       ...(provided(input.name) ? { name: input.name } : {}),
+      ...(provided(input.location) ? { location: input.location } : {}),
       ...(provided(input.ipAddress) ? { ipAddress: input.ipAddress } : {}),
       ...(provided(input.cpuPercent) ? { cpuPercent: input.cpuPercent } : {}),
       ...(provided(input.ramUsedMb) ? { ramUsedMb: input.ramUsedMb } : {}),
@@ -168,6 +171,7 @@ export class PrismaRepository implements Repository {
       create: {
         id: input.id,
         name: input.name ?? input.id,
+        location: input.location ?? null,
         ipAddress: input.ipAddress ?? null,
         lastHeartbeat: new Date(input.lastHeartbeat),
         cpuPercent: input.cpuPercent ?? null,
@@ -184,6 +188,30 @@ export class PrismaRepository implements Repository {
   async listNodes(): Promise<NodeRecord[]> {
     const nodes = await this.client.node.findMany({ orderBy: { id: 'asc' } });
     return nodes.map(toNodeRecord);
+  }
+
+  async registerNode(input: RegisterNodeInput): Promise<NodeRecord> {
+    const node = await this.client.node.upsert({
+      where: { id: input.id },
+      create: {
+        id: input.id,
+        name: input.name ?? input.id,
+        location: input.location ?? null,
+        // Registered-but-unseen → epoch so it reads offline until its agent beats.
+        lastHeartbeat: new Date(0),
+      },
+      update: {
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.location !== undefined ? { location: input.location } : {}),
+      },
+    });
+    return toNodeRecord(node);
+  }
+
+  async deleteNode(id: string): Promise<void> {
+    // Detach deployments first so the FK doesn't block the delete.
+    await this.client.deployment.updateMany({ where: { nodeId: id }, data: { nodeId: null } });
+    await this.client.node.delete({ where: { id } });
   }
 
   async createServerConfig(input: CreateServerConfigInput): Promise<ServerConfigRecord> {

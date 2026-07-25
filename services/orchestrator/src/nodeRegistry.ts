@@ -48,9 +48,11 @@ export function createNodeRegistry(repo: Repository): NodeRegistry {
     if (!nodeId) return;
 
     const r = payload.resources;
+    // Don't send name/location: a heartbeat only refreshes liveness/resources, so a
+    // node registered with a custom name or location (#113) keeps it. On first sight
+    // the create path defaults the name to the id.
     await repo.upsertNode({
       id: nodeId,
-      name: nodeId,
       lastHeartbeat: payload.timestamp ?? new Date().toISOString(),
       cpuPercent: r?.cpuPercent,
       ramUsedMb: r?.ramUsedMb,

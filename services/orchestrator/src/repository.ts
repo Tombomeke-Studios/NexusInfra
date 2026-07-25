@@ -10,6 +10,7 @@ import type {
   DeploymentStatusPatch,
   DeploymentView,
   NodeRecord,
+  RegisterNodeInput,
   Repository,
   ServerBackupRecord,
   ServerConfigRecord,
@@ -40,6 +41,7 @@ export class InMemoryRepository implements Repository {
     const node: NodeRecord = {
       id: input.id,
       name: input.name ?? existing?.name ?? input.id,
+      location: input.location !== undefined ? input.location : (existing?.location ?? null),
       ipAddress: input.ipAddress ?? existing?.ipAddress ?? null,
       lastHeartbeat: input.lastHeartbeat,
       cpuPercent: input.cpuPercent ?? existing?.cpuPercent ?? null,
@@ -54,6 +56,39 @@ export class InMemoryRepository implements Repository {
 
   async listNodes(): Promise<NodeRecord[]> {
     return Array.from(this.nodes.values()).sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  async registerNode(input: RegisterNodeInput): Promise<NodeRecord> {
+    const existing = this.nodes.get(input.id);
+    const node: NodeRecord = existing
+      ? {
+          ...existing,
+          name: input.name ?? existing.name,
+          location: input.location !== undefined ? input.location : existing.location,
+        }
+      : {
+          id: input.id,
+          name: input.name ?? input.id,
+          location: input.location ?? null,
+          ipAddress: null,
+          // Registered-but-unseen → epoch so it reads offline until its agent beats.
+          lastHeartbeat: new Date(0).toISOString(),
+          cpuPercent: null,
+          ramUsedMb: null,
+          ramTotalMb: null,
+          diskUsedGb: null,
+          diskTotalGb: null,
+        };
+    this.nodes.set(node.id, node);
+    return node;
+  }
+
+  async deleteNode(id: string): Promise<void> {
+    // Detach the node from any deployments so the record can be removed cleanly.
+    for (const [depId, d] of this.deployments) {
+      if (d.nodeId === id) this.deployments.set(depId, { ...d, nodeId: null });
+    }
+    this.nodes.delete(id);
   }
 
   async createServerConfig(input: CreateServerConfigInput): Promise<ServerConfigRecord> {
