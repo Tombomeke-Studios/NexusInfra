@@ -124,19 +124,20 @@ function initNetwork(a: { tx: number; ty: number }): () => void {
     W = w;
     H = h;
   };
-  resize();
   window.addEventListener('resize', resize);
 
   const rnd = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
   const col = hexToRgb(getComputedStyle(document.documentElement).getPropertyValue('--color-primary')) || '99,102,241';
-  const N = Math.max(38, Math.min(84, Math.round((W * H) / 18000)));
-  const nodes: NetNode[] = Array.from({ length: N }, () => ({ x: rnd(0, W), y: rnd(0, H), vx: rnd(-0.26, 0.26), vy: rnd(-0.26, 0.26), r: rnd(1.2, 2.9), ph: rnd(0, 6.28) }));
-  const packets: Packet[] = [];
   const LINK = 155;
   const MOUSE = 210;
+  let nodes: NetNode[] = [];
+  const packets: Packet[] = [];
   let raf = 0;
+  let stopped = false;
+  let tries = 0;
 
   const draw = () => {
+    if (stopped) return;
     const mx = a.tx;
     const my = a.ty;
     const t = performance.now() / 1000;
@@ -238,9 +239,24 @@ function initNetwork(a: { tx: number; ty: number }): () => void {
     }
     raf = requestAnimationFrame(draw);
   };
-  raf = requestAnimationFrame(draw);
+
+  // Wait until the canvas has a real layout size before seeding nodes (the design
+  // retries the same way) — seeding against a zero-width canvas renders nothing.
+  const boot = () => {
+    if (stopped) return;
+    if (!(c.clientWidth > 0 || window.innerWidth > 0) && tries++ < 300) {
+      requestAnimationFrame(boot);
+      return;
+    }
+    resize();
+    const n = Math.max(38, Math.min(84, Math.round((W * H) / 18000)));
+    nodes = Array.from({ length: n }, () => ({ x: rnd(0, W), y: rnd(0, H), vx: rnd(-0.26, 0.26), vy: rnd(-0.26, 0.26), r: rnd(1.2, 2.9), ph: rnd(0, 6.28) }));
+    raf = requestAnimationFrame(draw);
+  };
+  boot();
 
   return () => {
+    stopped = true;
     cancelAnimationFrame(raf);
     window.removeEventListener('resize', resize);
   };
