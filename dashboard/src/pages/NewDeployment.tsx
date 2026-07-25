@@ -5,6 +5,7 @@ import { IconPlus } from '../components/Icons';
 import { useToast } from '../components/Toast';
 import { InfoHint } from '../components/InfoHint';
 import { getDeploymentDefaults } from '../prefs';
+import { buildGameDeployment } from '../gameSpec';
 
 // New Deployment — ported from the redesign. The deploy sends name, image, ports,
 // env, the resource limits + restart policy and the kind, all persisted with the
@@ -62,12 +63,13 @@ export function NewDeployment() {
     setBusy(true);
     setError(null);
     try {
-      const image = kind === 'game' ? `nexusinfra/${game}` : dockerImage;
+      // Games map to a real image + startup env/port; apps use the entered image + rows.
+      const g = kind === 'game' ? buildGameDeployment({ game, software, version, slots, motd }) : null;
       await createDeployment({
         name,
-        dockerImage: image,
-        ports: rowsToRecord(ports),
-        env: rowsToRecord(env),
+        dockerImage: g ? g.dockerImage : dockerImage,
+        ports: g ? g.ports : rowsToRecord(ports),
+        env: g ? g.env : rowsToRecord(env),
         type: kind,
         autoRestart: restart !== 'no',
         resourceLimits: {

@@ -80,7 +80,7 @@ export function ServerDetail() {
   if (error) return <div className="page"><p role="alert" className="alert alert--error">{error}</p></div>;
   if (!d) return <div className="page"><div className="empty">Loading…</div></div>;
 
-  const isGame = d.dockerImage.startsWith('nexusinfra/');
+  const isGame = d.type === 'game' || d.dockerImage.startsWith('nexusinfra/');
   const running = d.status === 'running';
 
   return (
@@ -97,7 +97,7 @@ export function ServerDetail() {
             <StatusBadge status={d.status} />
           </div>
           <div className="mono" style={{ marginTop: 5, fontSize: '.85rem', color: 'var(--color-text-subtle)' }}>
-            {isGame ? d.dockerImage.replace('nexusinfra/', '') : 'application'} · {d.dockerImage}
+            {isGame ? 'game server' : 'application'} · {d.dockerImage}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

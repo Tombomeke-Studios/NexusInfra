@@ -242,6 +242,7 @@ export class PrismaRepository implements Repository {
       name: d.serverConfig.name,
       dockerImage: d.serverConfig.dockerImage,
       userId: d.serverConfig.userId,
+      type: d.serverConfig.type,
     }));
   }
 
@@ -342,6 +343,7 @@ export class PrismaRepository implements Repository {
       name: d.serverConfig.name,
       dockerImage: d.serverConfig.dockerImage,
       userId: d.serverConfig.userId,
+      type: d.serverConfig.type,
       events: d.events.map((e) => ({
         id: e.id,
         deploymentId: e.deploymentId,

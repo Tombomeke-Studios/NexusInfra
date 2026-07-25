@@ -30,6 +30,7 @@ export interface DeploymentView {
   id: string;
   name: string;
   dockerImage: string;
+  type: string;
   nodeId: string | null;
   containerId: string | null;
   status: DeploymentStatus;
