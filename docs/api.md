@@ -170,6 +170,19 @@ is unknown, `400` on a bad cron or action.
 | `POST /deployments/:id/schedules/:sid/run` | Run the schedule's action immediately |
 | `DELETE /deployments/:id/schedules/:sid` | Remove the schedule → `204` |
 
+### Subusers
+
+Per-server access control (#112) — who may access a server, by email, with a role (`admin` or `viewer`).
+This is the **management** layer; enforcement arrives with real multi-user login (the FinVault-JWT
+gateway, #20). `404` if the deployment/subuser is unknown, `400` on a bad email/role.
+
+| Method + path | Purpose |
+|---|---|
+| `GET /deployments/:id/subusers` | List the server's subusers |
+| `POST /deployments/:id/subusers` | Invite/relabel by email — body `{ email, role }` (re-inviting updates the role) → `201` |
+| `PATCH /deployments/:id/subusers/:sid` | Change a subuser's role — body `{ role }` |
+| `DELETE /deployments/:id/subusers/:sid` | Revoke access → `204` |
+
 ### `POST /deployments/:id/stop`
 
 Request a running deployment be stopped — emits `infra.server.stop`; the agent stops **and removes**

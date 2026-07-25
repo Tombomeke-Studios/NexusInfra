@@ -330,6 +330,27 @@ describe('deployment API', () => {
     expect((await request(app).delete('/nodes/node-busy')).status).toBe(409);
   });
 
+  it('invites, validates, re-roles and revokes a subuser', async () => {
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    const base = `/deployments/${created.body.id}/subusers`;
+
+    // Bad email / role rejected.
+    expect((await request(app).post(base).send({ email: 'nope', role: 'viewer' })).status).toBe(400);
+    expect((await request(app).post(base).send({ email: 'a@b.com', role: 'owner' })).status).toBe(400);
+
+    const inv = await request(app).post(base).send({ email: 'A@B.com', role: 'viewer' });
+    expect(inv.status).toBe(201);
+    expect(inv.body.email).toBe('a@b.com'); // normalised
+
+    const patched = await request(app).patch(`${base}/${inv.body.id}`).send({ role: 'admin' });
+    expect(patched.body.role).toBe('admin');
+
+    expect((await request(app).get(base)).body).toHaveLength(1);
+    expect((await request(app).delete(`${base}/${inv.body.id}`)).status).toBe(204);
+    expect((await request(app).get(base)).body).toEqual([]);
+  });
+
   it('creates, validates, toggles, runs and deletes a schedule', async () => {
     const ran: string[] = [];
     const schedApp = express();

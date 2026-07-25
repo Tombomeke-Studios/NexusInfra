@@ -8,6 +8,8 @@ import { runScheduleAction, type ScheduleActions } from './scheduler.js';
 import type { DeploymentDetail, NodeRecord, Repository } from './types.js';
 
 const SCHEDULE_ACTIONS = ['restart', 'backup'];
+const SUBUSER_ROLES = ['admin', 'viewer'];
+const isEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 
 // Short id suffix for an auto-generated node id (not security-sensitive).
 const randomToken = () => Math.random().toString(36).slice(2, 8);
@@ -474,6 +476,40 @@ export function createApiRouter(deps: ApiDeps): Router {
     } catch (err) {
       return res.status(502).json({ error: err instanceof Error ? err.message : 'schedule run failed' });
     }
+  });
+
+  // ── Subusers (#112) — per-server access control ─────────────────────────────
+  // Manages who may access a server and their role. Enforcement arrives with the
+  // FinVault-JWT gateway (#20); this is the invite/role/revoke management layer.
+  router.get('/deployments/:id/subusers', async (req: Request, res: Response) => {
+    const detail = await repo.getDeployment(req.params.id);
+    if (!detail) return res.status(404).json({ error: 'deployment not found' });
+    res.json(await repo.listSubusers(detail.id));
+  });
+
+  router.post('/deployments/:id/subusers', async (req: Request, res: Response) => {
+    const detail = await repo.getDeployment(req.params.id);
+    if (!detail) return res.status(404).json({ error: 'deployment not found' });
+    const { email, role } = req.body ?? {};
+    if (typeof email !== 'string' || !isEmail(email)) return res.status(400).json({ error: 'a valid email is required' });
+    if (!SUBUSER_ROLES.includes(role)) return res.status(400).json({ error: 'role must be admin or viewer' });
+    const su = await repo.createSubuser({ deploymentId: detail.id, email: email.trim().toLowerCase(), role });
+    return res.status(201).json(su);
+  });
+
+  router.patch('/deployments/:id/subusers/:sid', async (req: Request, res: Response) => {
+    const su = await repo.getSubuser(req.params.sid);
+    if (!su || su.deploymentId !== req.params.id) return res.status(404).json({ error: 'subuser not found' });
+    const { role } = req.body ?? {};
+    if (!SUBUSER_ROLES.includes(role)) return res.status(400).json({ error: 'role must be admin or viewer' });
+    return res.json(await repo.updateSubuserRole(su.id, role));
+  });
+
+  router.delete('/deployments/:id/subusers/:sid', async (req: Request, res: Response) => {
+    const su = await repo.getSubuser(req.params.sid);
+    if (!su || su.deploymentId !== req.params.id) return res.status(404).json({ error: 'subuser not found' });
+    await repo.deleteSubuser(su.id);
+    return res.status(204).end();
   });
 
   return router;

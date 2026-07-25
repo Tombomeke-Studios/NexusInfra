@@ -10,6 +10,7 @@ import type {
   CreateServerBackupInput,
   CreateServerDatabaseInput,
   CreateServerScheduleInput,
+  CreateServerSubuserInput,
   NodeRecord,
   RegisterNodeInput,
   Repository,
@@ -18,6 +19,7 @@ import type {
   ServerConfigRecord,
   ServerDatabaseRecord,
   ServerScheduleRecord,
+  ServerSubuserRecord,
   UpdateServerScheduleInput,
   UpsertNodeInput,
 } from './types.js';
@@ -40,6 +42,7 @@ type PrismaDeployment = Awaited<ReturnType<PrismaClient['deployment']['findFirst
 type PrismaDatabase = Awaited<ReturnType<PrismaClient['serverDatabase']['findFirstOrThrow']>>;
 type PrismaBackup = Awaited<ReturnType<PrismaClient['serverBackup']['findFirstOrThrow']>>;
 type PrismaSchedule = Awaited<ReturnType<PrismaClient['serverSchedule']['findFirstOrThrow']>>;
+type PrismaSubuser = Awaited<ReturnType<PrismaClient['serverSubuser']['findFirstOrThrow']>>;
 
 function iso(date: Date | null): string | null {
   return date ? date.toISOString() : null;
@@ -130,6 +133,16 @@ function toScheduleRecord(s: PrismaSchedule): ServerScheduleRecord {
     action: s.action,
     enabled: s.enabled,
     lastRunAt: iso(s.lastRunAt),
+    createdAt: s.createdAt.toISOString(),
+  };
+}
+
+function toSubuserRecord(s: PrismaSubuser): ServerSubuserRecord {
+  return {
+    id: s.id,
+    deploymentId: s.deploymentId,
+    email: s.email,
+    role: s.role,
     createdAt: s.createdAt.toISOString(),
   };
 }
@@ -358,6 +371,37 @@ export class PrismaRepository implements Repository {
 
   async deleteSchedule(id: string): Promise<void> {
     await this.client.serverSchedule.delete({ where: { id } });
+  }
+
+  async createSubuser(input: CreateServerSubuserInput): Promise<ServerSubuserRecord> {
+    // Upsert on the (deployment, email) unique key: re-inviting updates the role.
+    const s = await this.client.serverSubuser.upsert({
+      where: { deploymentId_email: { deploymentId: input.deploymentId, email: input.email } },
+      create: { id: randomUUID(), deploymentId: input.deploymentId, email: input.email, role: input.role },
+      update: { role: input.role },
+    });
+    return toSubuserRecord(s);
+  }
+
+  async listSubusers(deploymentId: string): Promise<ServerSubuserRecord[]> {
+    const rows = await this.client.serverSubuser.findMany({ where: { deploymentId }, orderBy: { createdAt: 'asc' } });
+    return rows.map(toSubuserRecord);
+  }
+
+  async getSubuser(id: string): Promise<ServerSubuserRecord | null> {
+    const s = await this.client.serverSubuser.findUnique({ where: { id } });
+    return s ? toSubuserRecord(s) : null;
+  }
+
+  async updateSubuserRole(id: string, role: string): Promise<ServerSubuserRecord | null> {
+    const exists = await this.client.serverSubuser.findUnique({ where: { id } });
+    if (!exists) return null;
+    const s = await this.client.serverSubuser.update({ where: { id }, data: { role } });
+    return toSubuserRecord(s);
+  }
+
+  async deleteSubuser(id: string): Promise<void> {
+    await this.client.serverSubuser.delete({ where: { id } });
   }
 
   async getDeployment(id: string): Promise<DeploymentDetail | null> {

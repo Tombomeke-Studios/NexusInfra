@@ -55,6 +55,13 @@ Cross-project security design: [`../../CONCEPTS/integration/security.md`](../../
 - Tars live on the **node that made them** (single-node MVP); the Orchestrator stores only metadata, not
   the blob. Multi-node placement + off-node backup storage is a later (production) concern.
 
+## Subusers (#112)
+
+- The subuser API manages **who may access a server** (by email) and their role (`admin`/`viewer`), but
+  **does not yet enforce it** — the panel still authenticates as the single stub user. Enforcement (mapping
+  a logged-in identity to its allowed servers/roles) lands with real multi-user login via the FinVault-JWT
+  gateway (#20). Until then this is intentionally a management/record layer, not an access boundary.
+
 ## Known gaps (foundation phase)
 
 - No auth on Control Room HTTP endpoints yet (localhost/dev only) — gated by the gateway later.

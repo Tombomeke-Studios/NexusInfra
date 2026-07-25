@@ -4,6 +4,7 @@ import type {
   CreateServerConfigInput,
   CreateServerDatabaseInput,
   CreateServerScheduleInput,
+  CreateServerSubuserInput,
   DeploymentDetail,
   DeploymentEventRecord,
   DeploymentRecord,
@@ -16,6 +17,7 @@ import type {
   ServerConfigRecord,
   ServerDatabaseRecord,
   ServerScheduleRecord,
+  ServerSubuserRecord,
   UpdateServerScheduleInput,
   UpsertNodeInput,
 } from './types.js';
@@ -35,6 +37,7 @@ export class InMemoryRepository implements Repository {
   private databases = new Map<string, ServerDatabaseRecord>();
   private backups = new Map<string, ServerBackupRecord>();
   private schedules = new Map<string, ServerScheduleRecord>();
+  private subusers = new Map<string, ServerSubuserRecord>();
 
   async upsertNode(input: UpsertNodeInput): Promise<NodeRecord> {
     const existing = this.nodes.get(input.id);
@@ -279,6 +282,42 @@ export class InMemoryRepository implements Repository {
 
   async deleteSchedule(id: string): Promise<void> {
     this.schedules.delete(id);
+  }
+
+  async createSubuser(input: CreateServerSubuserInput): Promise<ServerSubuserRecord> {
+    // One row per (deployment, email): re-inviting updates the role.
+    const existing = Array.from(this.subusers.values()).find((s) => s.deploymentId === input.deploymentId && s.email === input.email);
+    const su: ServerSubuserRecord = {
+      id: existing?.id ?? randomUUID(),
+      deploymentId: input.deploymentId,
+      email: input.email,
+      role: input.role,
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
+    };
+    this.subusers.set(su.id, su);
+    return su;
+  }
+
+  async listSubusers(deploymentId: string): Promise<ServerSubuserRecord[]> {
+    return Array.from(this.subusers.values())
+      .filter((s) => s.deploymentId === deploymentId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async getSubuser(id: string): Promise<ServerSubuserRecord | null> {
+    return this.subusers.get(id) ?? null;
+  }
+
+  async updateSubuserRole(id: string, role: string): Promise<ServerSubuserRecord | null> {
+    const current = this.subusers.get(id);
+    if (!current) return null;
+    const updated = { ...current, role };
+    this.subusers.set(id, updated);
+    return updated;
+  }
+
+  async deleteSubuser(id: string): Promise<void> {
+    this.subusers.delete(id);
   }
 
   private toView(d: DeploymentRecord): DeploymentView | null {

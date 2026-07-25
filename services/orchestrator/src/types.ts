@@ -103,6 +103,22 @@ export interface CreateServerBackupInput {
   sizeBytes: number;
 }
 
+export type SubuserRole = 'admin' | 'viewer';
+
+export interface ServerSubuserRecord {
+  id: string;
+  deploymentId: string;
+  email: string;
+  role: string;
+  createdAt: string;
+}
+
+export interface CreateServerSubuserInput {
+  deploymentId: string;
+  email: string;
+  role: string;
+}
+
 export type ScheduleAction = 'restart' | 'backup';
 
 export interface ServerScheduleRecord {
@@ -224,4 +240,11 @@ export interface Repository {
   getSchedule(id: string): Promise<ServerScheduleRecord | null>;
   updateSchedule(id: string, patch: UpdateServerScheduleInput): Promise<ServerScheduleRecord | null>;
   deleteSchedule(id: string): Promise<void>;
+
+  // Subusers (#112).
+  createSubuser(input: CreateServerSubuserInput): Promise<ServerSubuserRecord>;
+  listSubusers(deploymentId: string): Promise<ServerSubuserRecord[]>;
+  getSubuser(id: string): Promise<ServerSubuserRecord | null>;
+  updateSubuserRole(id: string, role: string): Promise<ServerSubuserRecord | null>;
+  deleteSubuser(id: string): Promise<void>;
 }
