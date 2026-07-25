@@ -113,7 +113,7 @@ export function Servers() {
                           color: 'var(--color-text-subtle)',
                         }}
                       >
-                        {d.dockerImage.startsWith('nexusinfra/') ? 'game' : 'app'}
+                        {d.type === 'game' || d.dockerImage.startsWith('nexusinfra/') ? 'game' : 'app'}
                       </span>
                     </span>
                   </td>

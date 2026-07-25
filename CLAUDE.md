@@ -207,6 +207,7 @@ is the migrations directory.
 | `src/api.ts` | Typed Orchestrator client (login, nodes, deployments, create, stop); attaches the JWT; `ApiError` on non-2xx |
 | `src/session.ts` | Token get/set/clear + `isAuthenticated` (single place that touches the token in localStorage) |
 | `src/prefs.ts` | Persisted client preferences (localStorage): first-run intro flag + customisable New Deployment defaults (`getDeploymentDefaults`) |
+| `src/gameSpec.ts` | Pure `buildGameDeployment` — maps the game picker to a real image + startup env/port (Minecraft/Valheim/Rust/CS2) |
 | `src/pages/Preferences.tsx` | Preferences page — edit/save/reset the New Deployment defaults |
 | `src/routes.tsx` · `src/App.tsx` | Route table (public `/login`; the rest behind `RequireAuth` + `Layout`) wrapped in the router |
 | `src/components/{Layout,RequireAuth}.tsx` | Nav shell + auth-guard route wrapper |

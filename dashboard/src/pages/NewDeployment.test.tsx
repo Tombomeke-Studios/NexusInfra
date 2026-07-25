@@ -22,6 +22,7 @@ describe('NewDeployment', () => {
 
   beforeEach(() => {
     vi.stubGlobal('fetch', fetchMock);
+    fetchMock.mockClear(); // don't let a prior test's POST leak into calls[]
     // The form fetches nodes on mount (placement options); answer that with [].
     fetchMock.mockImplementation((url: string) =>
       typeof url === 'string' && url.includes('/nodes')
@@ -65,6 +66,24 @@ describe('NewDeployment', () => {
         oomKill: false,
       },
     });
+  });
+
+  it('deploys a game server with a real image and startup env', async () => {
+    renderForm();
+
+    await userEvent.click(screen.getByRole('button', { name: /Game server/ }));
+    await userEvent.type(screen.getByLabelText('Name'), 'mc');
+    await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+
+    expect(await screen.findByText('Servers page')).toBeInTheDocument();
+    const call = fetchMock.mock.calls.find(
+      ([u, o]) => typeof u === 'string' && u.includes('/deployments') && o?.method === 'POST'
+    );
+    const body = JSON.parse(call![1].body as string);
+    expect(body.dockerImage).toBe('itzg/minecraft-server');
+    expect(body.type).toBe('game');
+    expect(body.ports).toEqual({ '25565': '25565' });
+    expect(body.env).toMatchObject({ EULA: 'TRUE', TYPE: 'PAPER' });
   });
 
   it('surfaces an API error and stays on the form', async () => {
