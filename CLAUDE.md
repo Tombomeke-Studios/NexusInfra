@@ -187,7 +187,7 @@ is the migrations directory.
 ### services/orchestrator (deployment control plane)
 | Path | Contents |
 |---|---|
-| `prisma/schema.prisma` | Prisma + SQLite schema: `Node`, `ServerConfig`, `Deployment`, `DeploymentEvent`, `ServerDatabase`, `ServerBackup`, `ServerSchedule`. `prisma/migrations` is the schema source of truth |
+| `prisma/schema.prisma` | Prisma + SQLite schema: `Node`, `ServerConfig`, `Deployment`, `DeploymentEvent`, `ServerDatabase`, `ServerBackup`, `ServerSchedule`, `ServerSubuser`. `prisma/migrations` is the schema source of truth |
 | `src/types.ts` | Domain records + the `Repository` interface (decouples logic from the DB) |
 | `src/repository.ts` | `InMemoryRepository` — backs unit tests and a DB-less local mode |
 | `src/db.ts` | `getPrisma()` + `PrismaRepository` (SQLite-backed `Repository`) |

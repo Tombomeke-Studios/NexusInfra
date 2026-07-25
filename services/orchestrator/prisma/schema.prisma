@@ -65,6 +65,21 @@ model Deployment {
   databases      ServerDatabase[]
   backups        ServerBackup[]
   schedules      ServerSchedule[]
+  subusers       ServerSubuser[]
+}
+
+// A person (by email) granted access to a server, with a role (#112). Enforcement
+// arrives with real multi-user auth (the FinVault-JWT gateway, #20); this models
+// who may access what in the meantime.
+model ServerSubuser {
+  id           String     @id
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+  deploymentId String
+  email        String
+  role         String     @default("viewer")
+  createdAt    DateTime   @default(now())
+
+  @@unique([deploymentId, email])
 }
 
 // A recurring task for a server, evaluated by the orchestrator's scheduler on a

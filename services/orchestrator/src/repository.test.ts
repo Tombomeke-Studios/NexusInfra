@@ -162,6 +162,22 @@ describe('InMemoryRepository', () => {
     expect(await repo.getBackup(b.id)).toBeNull();
   });
 
+  it('invites, re-invites (relabels role), lists and revokes subusers', async () => {
+    const su = await repo.createSubuser({ deploymentId: 'dep-1', email: 'a@b.com', role: 'viewer' });
+    expect(su.role).toBe('viewer');
+    // Re-inviting the same email updates the role rather than duplicating.
+    const again = await repo.createSubuser({ deploymentId: 'dep-1', email: 'a@b.com', role: 'admin' });
+    expect(again.id).toBe(su.id);
+    expect((await repo.listSubusers('dep-1'))).toHaveLength(1);
+    expect((await repo.listSubusers('dep-1'))[0].role).toBe('admin');
+
+    const promoted = await repo.updateSubuserRole(su.id, 'viewer');
+    expect(promoted?.role).toBe('viewer');
+
+    await repo.deleteSubuser(su.id);
+    expect(await repo.getSubuser(su.id)).toBeNull();
+  });
+
   it('creates, updates, lists and deletes schedules', async () => {
     const s = await repo.createSchedule({ deploymentId: 'dep-1', name: 'Nightly', cron: '0 4 * * *', action: 'backup' });
     expect(s.enabled).toBe(true);

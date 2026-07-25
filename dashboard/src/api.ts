@@ -312,6 +312,33 @@ export function runSchedule(id: string, sid: string): Promise<{ status: string }
   return request(`/deployments/${id}/schedules/${sid}/run`, { method: 'POST' });
 }
 
+// ── Subusers (#112) ───────────────────────────────────────────────────────────
+export type SubuserRole = 'admin' | 'viewer';
+
+export interface ServerSubuser {
+  id: string;
+  deploymentId: string;
+  email: string;
+  role: string;
+  createdAt: string;
+}
+
+export function listSubusers(id: string): Promise<ServerSubuser[]> {
+  return request(`/deployments/${id}/subusers`);
+}
+
+export function inviteSubuser(id: string, email: string, role: SubuserRole): Promise<ServerSubuser> {
+  return request(`/deployments/${id}/subusers`, { method: 'POST', body: JSON.stringify({ email, role }) });
+}
+
+export function updateSubuserRole(id: string, sid: string, role: SubuserRole): Promise<ServerSubuser> {
+  return request(`/deployments/${id}/subusers/${sid}`, { method: 'PATCH', body: JSON.stringify({ role }) });
+}
+
+export function removeSubuser(id: string, sid: string): Promise<void> {
+  return request(`/deployments/${id}/subusers/${sid}`, { method: 'DELETE' });
+}
+
 // ── Console exec (#68) ────────────────────────────────────────────────────────
 export interface ExecResult {
   stdout: string;

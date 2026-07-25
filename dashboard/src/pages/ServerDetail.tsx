@@ -26,6 +26,10 @@ import {
   updateSchedule,
   deleteSchedule,
   runSchedule,
+  listSubusers,
+  inviteSubuser,
+  updateSubuserRole,
+  removeSubuser,
   type DeploymentDetail,
   type FileEntry,
   type ServerDatabase,
@@ -33,6 +37,8 @@ import {
   type ServerBackup,
   type ServerSchedule,
   type ScheduleAction,
+  type ServerSubuser,
+  type SubuserRole,
 } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
 import { useToast } from '../components/Toast';
@@ -133,7 +139,7 @@ export function ServerDetail() {
       {tab === 'backups' && <BackupsTab id={d.id} running={running} />}
       {tab === 'network' && <NetworkTab />}
       {tab === 'schedules' && <SchedulesTab id={d.id} />}
-      {tab === 'subusers' && <SubusersTab />}
+      {tab === 'subusers' && <SubusersTab id={d.id} />}
       {tab === 'startup' && <StartupTab image={d.dockerImage} isGame={isGame} envs={d.events.length} />}
       {tab === 'settings' && <SettingsTab onDelete={() => toast('Delete is not wired yet', 'info')} />}
     </div>
@@ -361,15 +367,7 @@ function ConsoleTab({ id, running, isGame, containerId }: { id: string; running:
   );
 }
 
-// ── The remaining tabs are static/mock UI, wired up later ─────────────────
-function TabHeader({ title, action, onAction }: { title: string; action?: string; onAction?: () => void }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-      <strong style={{ fontSize: '.92rem' }}>{title}</strong>
-      {action && <button className="btn btn--primary btn--sm" data-ripple data-burst="primary" onClick={onAction}>{action}</button>}
-    </div>
-  );
-}
+// Shared row/card styles for the option tabs (Files, Databases, Backups, …).
 const listCard: CSSProperties = { border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface)', overflow: 'hidden' };
 const rowCss: CSSProperties = { display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', borderBottom: '1px solid var(--color-border)' };
 
@@ -841,32 +839,107 @@ function SchedulesTab({ id }: { id: string }) {
   );
 }
 
-function SubusersTab() {
+// ── Subusers — real per-server access control (#112) ────────────────────────
+const ROLE_COLOR: Record<string, { soft: string; color: string }> = {
+  admin: { soft: 'var(--color-success-soft)', color: 'var(--color-success)' },
+  viewer: { soft: 'var(--color-neutral-soft)', color: 'var(--color-neutral)' },
+};
+
+function SubusersTab({ id }: { id: string }) {
   const { toast } = useToast();
-  const [users, setUsers] = useState([
-    { email: 'owner@nexusinfra.dev', initial: 'O', perms: 'Full access', role: 'owner', soft: 'var(--color-primary-soft)', color: 'var(--color-primary)', canRemove: false },
-    { email: 'ops@nexusinfra.dev', initial: 'P', perms: 'Console, files, backups', role: 'admin', soft: 'var(--color-success-soft)', color: 'var(--color-success)', canRemove: true },
-    { email: 'viewer@nexusinfra.dev', initial: 'V', perms: 'Read-only', role: 'viewer', soft: 'var(--color-neutral-soft)', color: 'var(--color-neutral)', canRemove: true },
-  ]);
-  const remove = (email: string) => {
-    setUsers((xs) => xs.filter((u) => u.email !== email));
-    toast('Access revoked', 'error', 'Subuser');
+  const [users, setUsers] = useState<ServerSubuser[]>([]);
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState<SubuserRole>('viewer');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setUsers(await listSubusers(id));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load subusers');
+    }
+  }, [id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const invite = async () => {
+    setBusy(true);
+    try {
+      await inviteSubuser(id, email.trim(), role);
+      toast(`Invited ${email.trim()}`, 'success', 'Subuser');
+      setEmail('');
+      await load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Invite failed', 'error', 'Subuser');
+    } finally {
+      setBusy(false);
+    }
   };
+  const changeRole = async (u: ServerSubuser, r: SubuserRole) => {
+    try {
+      await updateSubuserRole(id, u.id, r);
+      await load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Update failed', 'error', 'Subuser');
+    }
+  };
+  const revoke = async (u: ServerSubuser) => {
+    if (!window.confirm(`Revoke access for ${u.email}?`)) return;
+    try {
+      await removeSubuser(id, u.id);
+      toast('Access revoked', 'error', 'Subuser');
+      await load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Revoke failed', 'error', 'Subuser');
+    }
+  };
+
   return (
     <>
-      <TabHeader title="Subusers" action="Invite user" onAction={() => toast('Invites are not wired yet', 'info')} />
-      <div style={listCard}>
-        {users.map((u) => (
-          <div key={u.email} style={rowCss}>
-            <span style={{ flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: '50%', background: 'var(--color-primary-soft)', color: 'var(--color-primary)', fontWeight: 700, fontSize: '.85rem' }}>{u.initial}</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: '.88rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email}</div>
-              <div className="subtle" style={{ fontSize: '.78rem' }}>{u.perms}</div>
-            </div>
-            <span style={{ flex: 'none', fontSize: '.72rem', fontWeight: 600, padding: '3px 10px', borderRadius: 'var(--radius-full)', background: u.soft, color: u.color }}>{u.role}</span>
-            {u.canRemove && <button className="icon-btn" data-ripple aria-label="Revoke access" onClick={() => remove(u.email)}>✕</button>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <strong style={{ fontSize: '.92rem' }}>Subusers<InfoHint text="Grant other people access to this server by email, as admin (manage) or viewer (read-only). Access is enforced once real multi-user login lands (via the FinVault gateway); for now this manages who's on the list." label="Subusers help" /></strong>
+      </div>
+
+      <div className="card" style={{ padding: 14, marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <label style={{ flex: '1 1 200px', minWidth: 0 }}>
+          <span className="field__label" style={{ fontSize: '.78rem' }}>Email</span>
+          <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="teammate@example.com" onKeyDown={(e) => e.key === 'Enter' && void invite()} />
+        </label>
+        <div>
+          <span className="field__label" style={{ fontSize: '.78rem' }}>Role</span>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {(['viewer', 'admin'] as SubuserRole[]).map((r) => (
+              <button key={r} type="button" data-ripple onClick={() => setRole(r)} className={`opt${role === r ? ' is-active' : ''}`} style={{ textTransform: 'capitalize' }}>{r}</button>
+            ))}
           </div>
-        ))}
+        </div>
+        <button className="btn btn--primary btn--sm" data-ripple data-burst="primary" onClick={invite} disabled={busy} style={{ minHeight: 40 }}>Invite user</button>
+      </div>
+
+      {error && <p role="alert" className="alert alert--error" style={{ marginBottom: 12 }}>{error}</p>}
+      <div style={listCard}>
+        {users.map((u) => {
+          const rc = ROLE_COLOR[u.role] ?? ROLE_COLOR.viewer;
+          return (
+            <div key={u.id} style={rowCss}>
+              <span style={{ flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: '50%', background: 'var(--color-primary-soft)', color: 'var(--color-primary)', fontWeight: 700, fontSize: '.85rem' }}>{u.email[0]?.toUpperCase()}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: '.88rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email}</div>
+                <div className="subtle" style={{ fontSize: '.78rem' }}>{u.role === 'admin' ? 'Manage server' : 'Read-only'}</div>
+              </div>
+              <select className="select" value={u.role} onChange={(e) => void changeRole(u, e.target.value as SubuserRole)} aria-label={`Role for ${u.email}`} style={{ width: 'auto', minHeight: 32, padding: '0 8px', fontSize: '.78rem', color: rc.color, background: rc.soft, borderColor: rc.soft }}>
+                <option value="viewer">viewer</option>
+                <option value="admin">admin</option>
+              </select>
+              <button className="icon-btn" data-ripple aria-label={`Revoke ${u.email}`} onClick={() => revoke(u)}>✕</button>
+            </div>
+          );
+        })}
+        {users.length === 0 && <div className="empty">No subusers yet — you have full access as the owner.</div>}
       </div>
     </>
   );
