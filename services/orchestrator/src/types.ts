@@ -53,6 +53,7 @@ export interface DeploymentView extends DeploymentRecord {
   name: string;
   dockerImage: string;
   userId: string;
+  type: string;
 }
 
 export type DatabaseEngine = 'mysql' | 'mariadb' | 'postgres';
