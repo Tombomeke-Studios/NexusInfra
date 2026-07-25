@@ -6,6 +6,7 @@ import { Overview } from './pages/Overview';
 import { NewDeployment } from './pages/NewDeployment';
 import { Servers } from './pages/Servers';
 import { ServerDetail } from './pages/ServerDetail';
+import { NodeDetail } from './pages/NodeDetail';
 import { Preferences } from './pages/Preferences';
 
 // Route table: /login is public; everything else sits behind RequireAuth inside
@@ -20,6 +21,7 @@ export function AppRoutes() {
           <Route path="/new" element={<NewDeployment />} />
           <Route path="/servers" element={<Servers />} />
           <Route path="/servers/:id" element={<ServerDetail />} />
+          <Route path="/nodes/:id" element={<NodeDetail />} />
           <Route path="/preferences" element={<Preferences />} />
         </Route>
       </Route>

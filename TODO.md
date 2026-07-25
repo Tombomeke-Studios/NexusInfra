@@ -94,7 +94,7 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 
 - [ ] Real-time container log streaming via WebSocket (#17)
 - [ ] API Gateway: JWT validation, routing, WebSocket proxy (#20)
-- [ ] Dashboard: node detail view (resource history) (#125)
+- [x] Dashboard: node detail view (resource history) (#125)
 - [ ] Replace stub login with real FinVault JWT via the Gateway
 
 ### Phase 4 — Billing integration (`feature/billing-bridge`)

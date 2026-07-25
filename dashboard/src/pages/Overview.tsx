@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { listNodes, listDeployments, registerNode, deregisterNode, type NodeView, type DeploymentView } from '../api';
 import { CountUp } from '../components/CountUp';
 import { useToast } from '../components/Toast';
@@ -26,6 +27,7 @@ export function Overview() {
   const [addingNode, setAddingNode] = useState(false);
   const [maint, setMaint] = useState<string[]>([]);
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   const refresh = useCallback(
     (first = false) =>
@@ -180,7 +182,7 @@ export function Overview() {
             <article key={n.id} className="card node-card spotlight" data-spotlight style={{ ['--i']: i } as CSSProperties}>
               <div style={{ padding: 20 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18, gap: 8 }}>
-                  <strong style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.name}</strong>
+                  <button className="name-btn" data-ripple onClick={() => navigate(`/nodes/${n.id}`)} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 700, fontSize: '1rem' }}>{n.name}</button>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, flex: 'none' }}>
                     <span
                       style={{

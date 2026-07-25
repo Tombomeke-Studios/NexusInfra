@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { Overview } from './Overview';
 
 // Overview loads nodes + deployments from the API; the mocked fetch answers by
@@ -28,7 +29,7 @@ describe('Overview', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('shows the running-server count and a tile per node', async () => {
-    render(<Overview />);
+    render(<Overview />, { wrapper: MemoryRouter });
 
     // One of two deployments is running — assert the value on the running stat.
     const runningLabel = await screen.findByText('Running servers');
