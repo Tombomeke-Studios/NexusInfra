@@ -7,6 +7,7 @@ import {
   restartDeployment,
   streamLogs,
   streamStats,
+  execCommand,
   listFiles,
   readFile,
   writeFile,
@@ -314,22 +315,25 @@ function ConsoleTab({ id, running, isGame, containerId }: { id: string; running:
     if (boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;
   }, [log]);
 
-  const send = () => {
+  // Run the command in the container via real `docker exec` (#68). Each command is
+  // a fresh `sh -c` (stateless — a `cd` doesn't persist); a full PTY is #71.
+  const send = async () => {
     const c = cmd.trim();
     if (!c) return;
-    // Command exec isn't wired yet (#68/#71) — echo locally with a mock response.
     append(`> ${c}`, '#c9d1d9');
-    const resp = /^help$/i.test(c)
-      ? isGame
-        ? '/help /list /stop /op /say /tp'
-        : 'available: status, restart, env, logs'
-      : /^list$/i.test(c) && isGame
-        ? 'There are 7/20 players online'
-        : isGame
-          ? `Issued server command: ${c}`
-          : `${c}: ok`;
-    append(resp, '#7ee787');
     setCmd('');
+    if (!running) {
+      append('server is not running', '#e3b341');
+      return;
+    }
+    try {
+      const { stdout, stderr, exitCode } = await execCommand(id, c);
+      const out = (stdout + (stderr ? (stdout ? '\n' : '') + stderr : '')).replace(/\n$/, '');
+      if (out) for (const line of out.split('\n')) append(line, exitCode === 0 ? '#c9d1d9' : '#f85149');
+      if (exitCode !== 0) append(`exit code ${exitCode}`, '#e3b341');
+    } catch (e) {
+      append(e instanceof Error ? e.message : 'command failed', '#f85149');
+    }
   };
 
   return (
@@ -350,8 +354,8 @@ function ConsoleTab({ id, running, isGame, containerId }: { id: string; running:
       </div>
       <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
         <span className="mono" style={{ display: 'inline-flex', alignItems: 'center', paddingLeft: 12, color: 'var(--color-text-subtle)', border: '1px solid var(--color-border-strong)', borderRight: 'none', borderRadius: 'var(--radius) 0 0 var(--radius)', background: 'var(--color-surface)' }}>$</span>
-        <input className="input mono" value={cmd} onChange={(e) => setCmd(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && send()} placeholder="type a command and press Enter" style={{ borderLeft: 'none', borderRadius: 0, fontSize: '.85rem' }} />
-        <button className="btn btn--primary" data-ripple onClick={send} style={{ borderRadius: '0 var(--radius) var(--radius) 0' }}>Send</button>
+        <input className="input mono" value={cmd} onChange={(e) => setCmd(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void send()} placeholder="run a shell command (ls, ps, cat logs/…) and press Enter" style={{ borderLeft: 'none', borderRadius: 0, fontSize: '.85rem' }} />
+        <button className="btn btn--primary" data-ripple onClick={() => void send()} style={{ borderRadius: '0 var(--radius) var(--radius) 0' }}>Send</button>
       </div>
     </>
   );

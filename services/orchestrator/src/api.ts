@@ -323,6 +323,9 @@ export function createApiRouter(deps: ApiDeps): Router {
   router.post('/deployments/:id/files/rename', (req, res) => withContainer(req, res, (c) => fetch(`${fileBase(c)}/rename`, asJson('POST', req.body))));
   router.delete('/deployments/:id/files', (req, res) => withContainer(req, res, (c) => fetch(`${fileBase(c)}?path=${q(req.query.path)}`, { method: 'DELETE' })));
 
+  // ── Console (#68) — run a one-shot command in the running container ─────────
+  router.post('/deployments/:id/exec', (req, res) => withContainer(req, res, (c) => fetch(`${NODE_AGENT_URL}/exec/${c}`, asJson('POST', req.body))));
+
   // ── Managed databases (#109) ────────────────────────────────────────────────
   // A database is its own engine container the owning node starts, with generated
   // credentials the Orchestrator records and hands back to the user.

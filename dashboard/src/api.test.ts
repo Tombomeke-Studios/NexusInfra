@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { createDeployment, listDeployments, login, streamLogs, streamStats, listFiles, writeFile, createDatabase, createBackup, createSchedule, registerNode, ApiError, TOKEN_KEY, type ContainerStats } from './api';
+import { createDeployment, listDeployments, login, streamLogs, streamStats, listFiles, writeFile, createDatabase, createBackup, createSchedule, registerNode, execCommand, ApiError, TOKEN_KEY, type ContainerStats } from './api';
 
 // The client is verified against a mocked fetch: it attaches the Bearer token,
 // posts JSON, and surfaces API errors with their status.
@@ -103,6 +103,16 @@ describe('api client', () => {
     const [url, options] = fetchMock.mock.calls[0];
     expect(url).toContain('/deployments/d1/backups');
     expect(options.method).toBe('POST');
+  });
+
+  it('runs a console command with the command in the POST body', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ stdout: 'ok', stderr: '', exitCode: 0 }, 200));
+    const r = await execCommand('d1', 'ls -la');
+    expect(r.stdout).toBe('ok');
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toContain('/deployments/d1/exec');
+    expect(options.method).toBe('POST');
+    expect(JSON.parse(options.body as string)).toEqual({ command: 'ls -la' });
   });
 
   it('registers a node with name/location in the POST body', async () => {

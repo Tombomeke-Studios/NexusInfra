@@ -81,9 +81,9 @@ after picking it up. Depends on / overlaps the API Gateway (#20).
 
 - [x] Node Agent: stream container logs (SSE) (#66) · Dashboard live logs (#70) — done in #115
 - [x] Node Agent: per-container resource stats (docker stats) (#67) · Dashboard live stats (#72)
-- [ ] Node Agent: interactive exec/console into a container (#68)
-- [ ] WebSocket transport for exec/terminal (gateway, JWT) (#69 — logs/stats use SSE already)
-- [ ] Dashboard: interactive terminal (xterm.js) for a server (#71)
+- [x] Node Agent: exec/console into a container (`POST /exec`, one-shot `sh -c`) (#68) — Console command input is real
+- [ ] WebSocket transport for a persistent exec/terminal session (gateway, JWT) (#69 — logs/stats use SSE; one-shot exec uses HTTP)
+- [ ] Dashboard: full interactive terminal (xterm.js, persistent PTY) for a server (#71)
 
 ### Phase 3+ — Dashboard, other slices
 

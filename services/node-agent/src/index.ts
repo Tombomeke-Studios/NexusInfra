@@ -6,6 +6,7 @@ import { createAgent } from './agent.js';
 import { createFileRouter } from './fileRoutes.js';
 import { createDatabaseRouter } from './dbRoutes.js';
 import { createBackupRouter } from './bkRoutes.js';
+import { createExecRouter } from './execRoutes.js';
 
 // ── Node Agent ────────────────────────────────────────────────────────────────
 // Runs on a Docker host. Consumes server lifecycle commands addressed to this
@@ -61,6 +62,9 @@ app.use(createDatabaseRouter(runtime));
 
 // ── HTTP: backups (#110) — tar snapshot/restore of a container path ───────────
 app.use(createBackupRouter(runtime));
+
+// ── HTTP: console (#68) — one-shot command exec in a container ────────────────
+app.use(createExecRouter(runtime));
 
 app.listen(PORT, () => console.log(`[Node Agent ${NODE_ID}] HTTP listening on http://localhost:${PORT}`));
 

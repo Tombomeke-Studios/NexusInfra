@@ -198,6 +198,13 @@ describe('deployment API', () => {
     expect((await request(app).get('/deployments/nope/stats')).status).toBe(404);
   });
 
+  it('gates the console exec on the deployment being running', async () => {
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    expect((await request(app).post(`/deployments/${created.body.id}/exec`).send({ command: 'ls' })).status).toBe(409);
+    expect((await request(app).post('/deployments/nope/exec').send({ command: 'ls' })).status).toBe(404);
+  });
+
   it('gates file management on the deployment being running', async () => {
     await seedHealthyNode(repo);
     const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
