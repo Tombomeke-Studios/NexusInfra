@@ -17,6 +17,7 @@ export type NodeHealth = 'healthy' | 'degraded' | 'offline';
 export interface NodeView {
   id: string;
   name: string;
+  location?: string; // free-form label for a self-hosted node (e.g. "home-server")
   lastHeartbeat: string;
   cpuPercent: number | null;
   ramUsedMb: number | null;
