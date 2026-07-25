@@ -55,6 +55,10 @@ export interface ContainerRuntime {
   snapshotPath(containerId: string, path: string): Promise<Buffer>;
   /** Restore a tar buffer into a container path. */
   restoreArchive(containerId: string, path: string, tar: Buffer): Promise<void>;
+
+  // ── Console (#68) — run a one-shot command in the container ───────────────────
+  /** Run a command (argv) in the container, returning its output + exit code. */
+  execCommand(containerId: string, cmd: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }>;
 }
 
 /**
@@ -241,6 +245,12 @@ export class DockerodeRuntime implements ContainerRuntime {
 
   // Run a command in the container, collecting demuxed stdout/stderr and the exit
   // code. Cmd is an argv array — never a shell string — so paths can't inject.
+  // Public wrapper for the console (#68): the user runs commands in their own
+  // container, so a shell string (sh -c) is the intent — no injection concern here.
+  execCommand(containerId: string, cmd: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    return this.exec(containerId, cmd);
+  }
+
   private async exec(containerId: string, cmd: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     const exec = await this.docker.getContainer(containerId).exec({ Cmd: cmd, AttachStdout: true, AttachStderr: true });
     const stream = await exec.start({});

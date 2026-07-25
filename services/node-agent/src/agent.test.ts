@@ -47,6 +47,9 @@ class FakeRuntime implements ContainerRuntime {
     return Buffer.alloc(0);
   }
   async restoreArchive(): Promise<void> {}
+  async execCommand(): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    return { stdout: '', stderr: '', exitCode: 0 };
+  }
 }
 
 const NODE_ID = 'node-1';
