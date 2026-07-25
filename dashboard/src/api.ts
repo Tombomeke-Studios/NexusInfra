@@ -312,6 +312,18 @@ export function runSchedule(id: string, sid: string): Promise<{ status: string }
   return request(`/deployments/${id}/schedules/${sid}/run`, { method: 'POST' });
 }
 
+// ── Console exec (#68) ────────────────────────────────────────────────────────
+export interface ExecResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+/** Run a one-shot command in the running container and return its output. */
+export function execCommand(id: string, command: string): Promise<ExecResult> {
+  return request(`/deployments/${id}/exec`, { method: 'POST', body: JSON.stringify({ command }) });
+}
+
 /** Streams a deployment's container logs (SSE). See {@link streamSse}. */
 export function streamLogs(id: string, onLine: (line: string) => void, signal: AbortSignal): Promise<void> {
   return streamSse(`/deployments/${id}/logs`, onLine, signal);

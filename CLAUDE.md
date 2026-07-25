@@ -179,6 +179,7 @@ is the migrations directory.
 | `src/dbRoutes.ts` | `createDatabaseRouter` — internal DB provision/deprovision HTTP (starts/stops an engine container) |
 | `src/backups.ts` | Pure backup helpers: `backupRef`, `isSafeRef`, `backupFilePath` (traversal-safe tar paths) |
 | `src/bkRoutes.ts` | `createBackupRouter` — internal backup HTTP: tar snapshot/restore/delete of a container path (stored on the node) |
+| `src/execRoutes.ts` | `createExecRouter` — internal console HTTP: one-shot `sh -c` command exec in a container (#68) |
 | `src/agent.ts` | Command handling: consumes server.start/stop/restart for this node, publishes server.started/stopped/crashed; dependency-injected for testing |
 | `src/agent.test.ts` | Unit tests with a fake runtime + captured publisher (no Docker/broker needed) |
 | `src/index.ts` | Entry: DockerodeRuntime + agent, binds `nexusinfra.node-agent.{nodeId}`, HTTP `/health` + internal SSE `/logs/:containerId` · `/stats/:containerId` + file CRUD (`fileRoutes`) |
