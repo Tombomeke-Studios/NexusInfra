@@ -116,6 +116,15 @@ export function listNodes(): Promise<NodeView[]> {
   return request('/nodes');
 }
 
+/** Register (or relabel) a node's metadata (#113). It reads offline until its agent connects. */
+export function registerNode(input: { id?: string; name?: string; location?: string }): Promise<NodeView> {
+  return request('/nodes', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function deregisterNode(id: string): Promise<void> {
+  return request(`/nodes/${id}`, { method: 'DELETE' });
+}
+
 export function listDeployments(): Promise<DeploymentView[]> {
   return request('/deployments');
 }
