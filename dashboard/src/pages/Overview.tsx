@@ -52,12 +52,12 @@ export function Overview() {
   const ns = [...(nodes ?? []), ...localNodes].filter((n) => !hidden.includes(n.id));
   const ds = deployments ?? [];
 
-  const addNode = (cfg: { name: string; region: string; cores: number; mem: number; maint: boolean }) => {
+  const addNode = (cfg: { name: string; location: string; cores: number; mem: number; maint: boolean }) => {
     const id = `local-${Date.now()}`;
-    const name = cfg.name.trim() || `node-${cfg.region}-${localNodes.length + 2}`;
+    const name = cfg.name.trim() || `node-${localNodes.length + 2}`;
     setLocalNodes((xs) => [
       ...xs,
-      { id, name, lastHeartbeat: new Date().toISOString(), cpuPercent: 4 + Math.random() * 10, ramUsedMb: cfg.mem * 1024 * 0.1, ramTotalMb: cfg.mem * 1024, diskUsedGb: 0, diskTotalGb: 0, health: 'healthy' },
+      { id, name, location: cfg.location.trim() || undefined, lastHeartbeat: new Date().toISOString(), cpuPercent: 4 + Math.random() * 10, ramUsedMb: cfg.mem * 1024 * 0.1, ramTotalMb: cfg.mem * 1024, diskUsedGb: 0, diskTotalGb: 0, health: 'healthy' },
     ]);
     if (cfg.maint) setMaint((m) => [...m, id]);
     setAddingNode(false);
@@ -204,8 +204,9 @@ export function Overview() {
                     </button>
                   </span>
                 </div>
-                <div style={{ display: 'flex', gap: 12, fontSize: '.76rem', color: 'var(--color-text-subtle)', fontFamily: 'var(--font-mono)', marginBottom: 14 }}>
+                <div style={{ display: 'flex', gap: 12, fontSize: '.76rem', color: 'var(--color-text-subtle)', fontFamily: 'var(--font-mono)', marginBottom: 14, flexWrap: 'wrap' }}>
                   <span>{cores} vCPU</span><span>·</span><span>{memGB} GB</span><span>·</span><span>{svCount} servers</span>
+                  {n.location && (<><span>·</span><span>📍 {n.location}</span></>)}
                 </div>
                 <NodeMeter label="Live CPU" pct={cpu} />
                 <NodeMeter label="Live RAM" pct={ram} />
@@ -270,11 +271,11 @@ function NodeMeter({ label, pct }: { label: string; pct: number }) {
   );
 }
 
-// Add-node form — adds a mock node with the configured region/size (real
+// Add-node form — adds a mock node with the configured location/size (real
 // provisioning is wired later).
-function AddNodeForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: (cfg: { name: string; region: string; cores: number; mem: number; maint: boolean }) => void }) {
+function AddNodeForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: (cfg: { name: string; location: string; cores: number; mem: number; maint: boolean }) => void }) {
   const [name, setName] = useState('');
-  const [region, setRegion] = useState('fra');
+  const [location, setLocation] = useState('');
   const [cores, setCores] = useState(8);
   const [mem, setMem] = useState(32);
   const [disk, setDisk] = useState(200);
@@ -288,18 +289,14 @@ function AddNodeForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: (
         New node
         <InfoHint text="A node is a Docker host NexusInfra runs servers on. Add nodes to grow capacity; the scheduler places each deployment on the emptiest healthy one." label="What is a node?" />
       </div>
-      <input className="input" placeholder="node-fra-2 (optional)" value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 10 }} />
-      <span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>
-        Region
-        <InfoHint text="The datacenter location this node runs in. Pin latency-sensitive or region-locked servers to a specific region." label="Region help" />
-      </span>
-      <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
-        {['fra', 'nyc', 'sgp', 'ams'].map((r) => (
-          <button key={r} type="button" data-ripple onClick={() => setRegion(r)} className={`opt${region === r ? ' is-active' : ''}`} style={{ minHeight: 32, minWidth: 0, fontSize: '.76rem', textTransform: 'uppercase' }}>
-            {r}
-          </button>
-        ))}
-      </div>
+      <input className="input" placeholder="node-2 (optional)" value={name} onChange={(e) => setName(e.target.value)} style={{ marginBottom: 10 }} />
+      <label style={{ display: 'block', marginBottom: 14 }}>
+        <span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>
+          Location <span className="subtle" style={{ fontWeight: 400 }}>(optional)</span>
+          <InfoHint text="A free-form label for where this machine lives — it's your own hardware, so name it however helps you: home-server, office-rack, hetzner-fsn1. Purely for your own organisation." label="Location help" />
+        </span>
+        <input className="input" placeholder="home-server, hetzner-fsn1, …" value={location} onChange={(e) => setLocation(e.target.value)} />
+      </label>
       <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
         <label style={{ flex: 1, minWidth: 0 }}><span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>vCPU cores<InfoHint text="How many virtual CPU cores this host offers. A server's CPU limit is a share of these cores." label="vCPU cores help" /></span><input className="input mono" type="number" min={1} max={128} value={cores} onChange={(e) => setCores(Number(e.target.value))} style={numStyle} /></label>
         <label style={{ flex: 1, minWidth: 0 }}><span className="field__label" style={{ fontSize: '.76rem', color: 'var(--color-text-muted)' }}>Memory (GB)<InfoHint text="Total RAM on this host. A server's memory limit is a share of this total." label="Memory help" /></span><input className="input mono" type="number" min={1} max={1024} value={mem} onChange={(e) => setMem(Number(e.target.value))} style={numStyle} /></label>
@@ -315,7 +312,7 @@ function AddNodeForm({ onCancel, onCreate }: { onCancel: () => void; onCreate: (
         </button>
       </label>
       <div style={{ display: 'flex', gap: 8 }}>
-        <button className="btn btn--primary btn--sm" data-ripple data-burst="success" style={{ flex: 1 }} onClick={() => onCreate({ name, region, cores, mem, maint })}>Create</button>
+        <button className="btn btn--primary btn--sm" data-ripple data-burst="success" style={{ flex: 1 }} onClick={() => onCreate({ name, location, cores, mem, maint })}>Create</button>
         <button className="btn btn--secondary btn--sm" data-ripple onClick={onCancel}>Cancel</button>
       </div>
     </div>
