@@ -124,6 +124,13 @@ form on the agent, and file operations run as argv arrays (no shell) so a path c
 | `POST /deployments/:id/files/rename` | Move/rename — body `{ from, to }` |
 | `DELETE /deployments/:id/files?path=/f` | Delete a file or directory (recursive) → `204` |
 
+### `POST /deployments/:id/exec`  *(running deployment)*
+
+Run a one-shot shell command in the running container (#68) — body `{ command }`, executed as `sh -c`.
+Returns `{ stdout, stderr, exitCode }`. Proxied to the owning Node Agent's internal `/exec/:containerId`.
+`404` if unknown, `409` if not running, `400` on an empty command or exec failure. Each call is a fresh
+shell (stateless — a `cd` doesn't persist); a full interactive PTY is a later slice (#71).
+
 ### Managed databases  *(running deployment)*
 
 Each database is its own engine container the owning Node Agent starts, with credentials the Orchestrator
