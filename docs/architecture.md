@@ -39,6 +39,15 @@ Envelope: `{ eventId, timestamp, source, event: { type, payload } }`. Payloads a
 encrypted when `FINVAULT_MESSAGE_KEY` is set; the `type` stays plaintext for routing. Read payloads
 via `readPayload()` only.
 
+**Publish durability (#167).** Durable queues protect a message once the broker has *accepted* it —
+they do nothing for a publish that never landed. Events that carry state (the Node Agent's
+`server.started/stopped/crashed` reports) therefore go through a `PublishOutbox`: a failed publish is
+held and replayed **in FIFO order** when the broker returns, so a brief outage can't leave a deployment
+stuck in the wrong status. The outbox is bounded (drop-oldest, with a reported `droppedCount`) and
+in-memory, so it survives a broker blip but not a process restart. Heartbeats deliberately bypass it —
+they're ephemeral, and replaying a stale pulse is worse than losing it. The Node Agent's `/health`
+exposes `pendingEvents` / `droppedEvents`.
+
 ### Routing keys in use
 
 | Routing key | Publisher | Consumer |
