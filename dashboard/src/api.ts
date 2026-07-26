@@ -130,6 +130,61 @@ export function getConfig(): Promise<AppConfig> {
   return request('/config');
 }
 
+// ── Billing (hosted edition; proxied through the orchestrator, #149) ───────────
+export interface CreditWallet {
+  userId: string;
+  balance: number;
+  currency: string;
+}
+
+export interface BillingPlan {
+  id: string;
+  name: string;
+  pricePerHour: number;
+  currency: string;
+  freeHoursPerMonth: number;
+  maxServers: number;
+  maxDatabases: number;
+}
+
+export interface BillingUsage {
+  hours: number;
+  cost: number;
+  plan: BillingPlan;
+}
+
+export interface LedgerEntry {
+  id: string;
+  userId: string;
+  type: 'topup' | 'charge';
+  amount: number;
+  currency: string;
+  reference: string;
+  status: 'pending' | 'confirmed' | 'failed';
+  description: string;
+  createdAt: string;
+}
+
+export function getWallet(): Promise<CreditWallet> {
+  return request('/billing/wallet');
+}
+
+export function getUsage(): Promise<BillingUsage> {
+  return request('/billing/usage');
+}
+
+export function getBillingPlan(): Promise<BillingPlan> {
+  return request('/billing/plan');
+}
+
+export function getLedger(): Promise<LedgerEntry[]> {
+  return request('/billing/ledger');
+}
+
+export function topUp(amount: number): Promise<{ status: string; reference: string }> {
+  return request('/billing/topup', { method: 'POST', body: JSON.stringify({ amount }) });
+}
+
 export function listNodes(): Promise<NodeView[]> {
   return request('/nodes');
 }

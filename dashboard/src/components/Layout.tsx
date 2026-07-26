@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { logout } from '../session';
+import { useEdition } from '../edition';
 import { hasSeenIntro, markIntroSeen } from '../prefs';
 import { ThemeToggle } from './ThemeToggle';
 import { IntroTour } from './IntroTour';
@@ -12,6 +13,7 @@ import { IconHexagon, IconLogout } from './Icons';
 export function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { isHosted } = useEdition();
   const [introOpen, setIntroOpen] = useState(() => !hasSeenIntro());
 
   const closeIntro = () => {
@@ -44,6 +46,11 @@ export function Layout() {
           <NavLink to="/preferences" className="navlink" data-ripple>
             Preferences
           </NavLink>
+          {isHosted && (
+            <NavLink to="/billing" className="navlink" data-ripple>
+              Billing
+            </NavLink>
+          )}
         </nav>
         <ThemeToggle />
         <button className="btn btn--ghost btn--sm" onClick={() => setIntroOpen(true)} data-ripple aria-label="Open the intro tour" title="Intro & help">

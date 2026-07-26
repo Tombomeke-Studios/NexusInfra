@@ -232,6 +232,17 @@ running/pending deployment, otherwise `204`. The machine itself is untouched.
 
 ---
 
+### Billing proxy (authenticated) — hosted edition
+
+The dashboard's Billing page (#149) talks only to the Orchestrator, which proxies to the Billing Bridge
+and **injects the caller's authenticated userId** from the JWT (the client never sends a user id):
+
+- `GET /billing/wallet` · `GET /billing/usage` · `GET /billing/ledger` · `GET /billing/plan`
+- `POST /billing/topup` — body `{ amount }`
+
+Each forwards to the matching Billing Bridge route below for the authenticated user. `502` if the
+Billing Bridge is unreachable. These are inert in the community edition (no Billing Bridge running).
+
 ## Billing Bridge (`:9300`) — hosted edition only
 
 Usage-based billing for the hosted edition. In the community edition only `GET /health` is served (it

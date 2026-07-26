@@ -8,10 +8,13 @@ import { Servers } from './pages/Servers';
 import { ServerDetail } from './pages/ServerDetail';
 import { NodeDetail } from './pages/NodeDetail';
 import { Preferences } from './pages/Preferences';
+import { Billing } from './pages/Billing';
+import { useEdition } from './edition';
 
 // Route table: /login is public; everything else sits behind RequireAuth inside
 // the app shell (Layout). Split from App so tests can mount it in a MemoryRouter.
 export function AppRoutes() {
+  const { isHosted } = useEdition();
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
@@ -23,6 +26,8 @@ export function AppRoutes() {
           <Route path="/servers/:id" element={<ServerDetail />} />
           <Route path="/nodes/:id" element={<NodeDetail />} />
           <Route path="/preferences" element={<Preferences />} />
+          {/* Billing is hosted-edition only (#149). */}
+          {isHosted && <Route path="/billing" element={<Billing />} />}
         </Route>
       </Route>
     </Routes>

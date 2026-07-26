@@ -3,8 +3,8 @@
 # 🗺️ NexusInfra — Roadmap & TODO
 
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
-![Phase](https://img.shields.io/badge/next-Phase_4_·_Billing_(2_editions)-3b82f6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-245_passing-6e9f18?style=flat-square)
+![Phase](https://img.shields.io/badge/next-Phase_5_·_Production-3b82f6?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-250_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -24,7 +24,7 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 | **2 · Core** | Node Agent (Docker lifecycle), Orchestrator (registry · placement · lifecycle) | ✅ Done |
 | **3 · Dashboard (MVP)** | React/Vite panel · stub JWT login · deploy loop end to end | ✅ Done |
 | **3+ · Panel functional + UX** | Every mock tab made real (files/db/backups/schedules/subusers/console/nodes/games) + tooltips, intro, prefs, node detail | ✅ Done |
-| **4 · Billing (2 editions)** | Open-core split (community vs hosted) + Billing Bridge ↔ FinVault, usage-based charging | 📋 **Next** — see [docs/billing.md](docs/billing.md) |
+| **4 · Billing (2 editions)** | Open-core split (community vs hosted) + Billing Bridge ↔ FinVault, usage-based charging | ✅ Done (#144–#149) · #150 cleanup left |
 | **5 · Production** | Multi-node, metrics, security hardening, Postgres, API Gateway | 📋 Backlog |
 
 ---
@@ -103,7 +103,7 @@ gateway work" above.)_
 - [x] `billing-bridge` service: pricing/quotas (pure, tested) + persistence + runtime tracking + credit wallet + top-up flow (#146)
 - [x] `billing-bridge`: monthly cycle runner — charge credit → suspend on short balance → `invoice.generate` (#147)
 - [x] Orchestrator: enforce plan quotas (max servers/databases) + consume `billing.server.suspend` → stop servers (#148)
-- [ ] Dashboard: **Billing** page (balance, top-up via FinVault, usage breakdown, history) — hosted only (#149)
+- [x] Dashboard: **Billing** page (balance, top-up via FinVault, usage breakdown, history) — hosted only (#149)
 
 ### Phase 3+ — remaining console / gateway work
 
