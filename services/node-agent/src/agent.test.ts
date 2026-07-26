@@ -50,6 +50,9 @@ class FakeRuntime implements ContainerRuntime {
   async execCommand(): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     return { stdout: '', stderr: '', exitCode: 0 };
   }
+  execInteractive() {
+    return { write() {}, resize() {}, onData() {}, onExit() {}, close() {} };
+  }
 }
 
 const NODE_ID = 'node-1';

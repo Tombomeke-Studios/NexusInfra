@@ -208,6 +208,15 @@ Request a running deployment be restarted — emits `infra.server.restart` with 
 the agent restarts the container and reports `server.started`. `202` while restarting, `404` if
 unknown, `409` if the deployment is not running.
 
+### `WS /deployments/:id/terminal`
+
+Interactive terminal (#71) — a WebSocket that opens a TTY shell (`sh`) in the running container. The JWT
+rides as a `?token=<jwt>` query param (browsers can't set WS headers); `?cols=&rows=` set the initial
+size. The Orchestrator validates the token, resolves the owning container, and pipes the socket to the
+Node Agent's internal `/terminal/:containerId` WS. Client→server frames are JSON (`{type:"input",data}`
+/ `{type:"resize",cols,rows}`); server→client is raw terminal output. The socket closes on invalid
+token, unknown/not-running deployment, or when the shell exits.
+
 ### `DELETE /deployments/:id`
 
 Permanently delete a deployment. If it is running, the container is stopped first (emits

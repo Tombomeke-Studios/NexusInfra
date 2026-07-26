@@ -6,6 +6,7 @@ import { lineSplitter } from './logs.js';
 import { parseDockerStats, type ContainerStats } from './stats.js';
 import { resourceLimitsToHostConfig } from './limits.js';
 import { buildTarball, normalizeContainerPath, parseLsOutput, type FileEntry } from './files.js';
+import type { TerminalSession } from './terminal.js';
 
 // NodeResources is the shared event-payload type (shared/src/events.ts) — the
 // host snapshot reported to the Control Room via the node heartbeat.
@@ -59,6 +60,10 @@ export interface ContainerRuntime {
   // ── Console (#68) — run a one-shot command in the container ───────────────────
   /** Run a command (argv) in the container, returning its output + exit code. */
   execCommand(containerId: string, cmd: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }>;
+
+  // ── Interactive terminal (#71) — a TTY shell in the container ─────────────────
+  /** Open an interactive shell (TTY) in the container; returns a bidirectional session. */
+  execInteractive(containerId: string, opts: { cols?: number; rows?: number }): TerminalSession;
 }
 
 /**
@@ -249,6 +254,60 @@ export class DockerodeRuntime implements ContainerRuntime {
   // container, so a shell string (sh -c) is the intent — no injection concern here.
   execCommand(containerId: string, cmd: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     return this.exec(containerId, cmd);
+  }
+
+  // Interactive shell (#71). With Tty:true the hijacked duplex stream is the raw
+  // terminal — no stdout/stderr demuxing. Docker exec is set up asynchronously; a
+  // small outbound queue holds keystrokes typed before the stream is ready.
+  execInteractive(containerId: string, opts: { cols?: number; rows?: number }): TerminalSession {
+    const dataCbs: ((data: string) => void)[] = [];
+    const exitCbs: (() => void)[] = [];
+    let stream: NodeJS.ReadWriteStream | null = null;
+    let execRef: Docker.Exec | null = null;
+    const pending: string[] = [];
+    let closed = false;
+
+    const exit = () => { if (!exitCbs.length) return; exitCbs.forEach((cb) => cb()); };
+
+    void (async () => {
+      try {
+        const exec = await this.docker.getContainer(containerId).exec({
+          Cmd: ['sh'],
+          Tty: true,
+          AttachStdin: true,
+          AttachStdout: true,
+          AttachStderr: true,
+        });
+        execRef = exec;
+        const s = (await exec.start({ hijack: true, stdin: true, Tty: true } as Docker.ExecStartOptions)) as unknown as NodeJS.ReadWriteStream;
+        stream = s;
+        if (opts.cols && opts.rows) void exec.resize({ w: opts.cols, h: opts.rows }).catch(() => {});
+        for (const chunk of pending) s.write(chunk);
+        pending.length = 0;
+        s.on('data', (chunk: Buffer) => dataCbs.forEach((cb) => cb(chunk.toString('utf8'))));
+        s.on('end', exit);
+        s.on('error', exit);
+      } catch {
+        exit();
+      }
+    })();
+
+    return {
+      write(data: string) {
+        if (stream) stream.write(data);
+        else pending.push(data);
+      },
+      resize(cols: number, rows: number) {
+        void execRef?.resize({ w: cols, h: rows }).catch(() => {});
+      },
+      onData(cb) { dataCbs.push(cb); },
+      onExit(cb) { exitCbs.push(cb); },
+      close() {
+        if (closed) return;
+        closed = true;
+        try { stream?.end(); } catch { /* already closed */ }
+      },
+    };
   }
 
   private async exec(containerId: string, cmd: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
