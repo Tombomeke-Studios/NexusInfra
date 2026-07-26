@@ -150,6 +150,7 @@ is the migrations directory.
 | RabbitMQ management UI | http://localhost:15672 (guest/guest) |
 | Control Room health / status | http://localhost:9000/health · /status |
 | Orchestrator API | http://localhost:9200 (login `admin`/`admin`) |
+| Billing Bridge (hosted only) | http://localhost:9300/health · billing routes when `NEXUS_EDITION=hosted` |
 
 ## 7. Codebase map — where is what
 
@@ -202,6 +203,22 @@ is the migrations directory.
 | `src/lifecycle.ts` | Consumes `infra.server.started/stopped/crashed`, updates deployment status + audit |
 | `src/index.ts` | Entry: PrismaRepository + consumers on `nexusinfra.orchestrator`, mounts API, starts the schedule runner (restart/backup actions), HTTP `/health` (`:9200`) |
 | `src/*.test.ts` | Unit tests with the in-memory repo + captured publisher (no Docker/broker/DB needed) |
+| `Dockerfile` | Multi-stage build; runtime applies `prisma migrate deploy` then starts |
+
+### services/billing-bridge (usage billing — hosted edition only)
+| Path | Contents |
+|---|---|
+| `src/pricing.ts` | Pure pricing: `BillingPlan` + `resourceFactor` (CPU/RAM → multiplier) + `billableHours`/`computeCharge` + `roundCurrency` |
+| `src/quotas.ts` | Pure plan quota checks (`quotaLimit`, `withinQuota`) for servers/databases |
+| `src/tracking.ts` | Pure runtime math: `hoursBetween` + `accruedHours` (open interval counts up to now) |
+| `src/wallet.ts` | Pure credit-wallet math: `applyTopUp`/`applyCharge`/`canCover` |
+| `src/types.ts` | Domain records + the `Repository` interface (plans, intervals, wallet, ledger, cycles) |
+| `src/repository.ts` | `InMemoryRepository` — backs unit tests and a DB-less mode |
+| `src/db.ts` | `getPrisma()` + `PrismaRepository` (SQLite) + `ensureDefaultPlan` seed |
+| `src/service.ts` | `createBillingService` — events→intervals, wallet, and the FinVault top-up flow (`payment.request`/confirmed/failed); dependency-injected |
+| `src/api.ts` | `createBillingRouter` — HTTP: wallet/usage/ledger/plan/quota + `POST /topup` |
+| `src/index.ts` | Entry: PrismaRepository + service; consumes deployment/runtime + `bank.payment.*`; HTTP `/health` (+ billing routes when hosted) on `:9300`; inert in community |
+| `prisma/schema.prisma` | Prisma + SQLite: `BillingPlan`, `UserPlan`, `ServerBilling`, `CreditWallet`, `CreditLedger`, `BillingCycle`. `prisma/migrations` is the source of truth |
 | `Dockerfile` | Multi-stage build; runtime applies `prisma migrate deploy` then starts |
 
 ### dashboard (React web panel)

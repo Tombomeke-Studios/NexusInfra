@@ -66,6 +66,28 @@ services:
     depends_on:
       - rabbitmq
 
+  # Billing Bridge — hosted edition only. With NEXUS_EDITION=community (default)
+  # it stays inert (health only, no billing); set it to `hosted` to turn on
+  # usage tracking, the credit wallet and the FinVault top-up flow.
+  billing-bridge:
+    build:
+      context: .
+      dockerfile: services/billing-bridge/Dockerfile
+    container_name: nexusinfra-billing-bridge
+    ports:
+      - "9300:9300"
+    environment:
+      - PORT=9300
+      - NEXUS_EDITION=${NEXUS_EDITION:-community}
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
+      - DATABASE_URL=file:/data/billing.db
+      - BILLING_WALLET_ID=${BILLING_WALLET_ID:-nexusinfra}
+    volumes:
+      - billing_data:/data
+    depends_on:
+      - rabbitmq
+
   dashboard:
     build:
       context: ./dashboard
@@ -80,3 +102,4 @@ services:
 volumes:
   rabbitmq_data:
   orchestrator_data:
+  billing_data:

@@ -223,6 +223,41 @@ running/pending deployment, otherwise `204`. The machine itself is untouched.
 
 ---
 
+## Billing Bridge (`:9300`) — hosted edition only
+
+Usage-based billing for the hosted edition. In the community edition only `GET /health` is served (it
+reports the running `edition`); the routes below are mounted only when `NEXUS_EDITION=hosted`. Identity
+is the FinVault `userId` (a path param for now; the API Gateway will bind it from the JWT later).
+
+### `GET /billing/:userId/wallet`
+
+The user's prepaid credit balance: `{ userId, balance, currency }` (a zero wallet is created on first read).
+
+### `GET /billing/:userId/usage`
+
+Accrued runtime and projected cost this cycle: `{ hours, cost, plan }`. The plan's monthly free-hour
+grant is spent across the user's runtime intervals; billable hours are charged at each server's
+resource factor (derived from its CPU/RAM limits).
+
+### `GET /billing/:userId/ledger`
+
+The append-only credit ledger (top-ups + charges), newest first.
+
+### `GET /billing/:userId/plan`
+
+The user's pricing/quota plan (rate, free hours, `maxServers`, `maxDatabases`).
+
+### `GET /billing/:userId/quota?resource=servers|databases&current=N`
+
+Quota check used by the Orchestrator (#148): `{ allowed, limit }` — whether creating one more of
+`resource` stays within the plan given the user already has `current`. `400` on a bad resource/count.
+
+### `POST /billing/:userId/topup`
+
+Start a credit top-up funded via FinVault — body `{ amount, currency? }`. Records a **pending** ledger
+entry and emits `payment.request` to FinVault; credit is added only on `payment.confirmed`. `202` with
+`{ status: "pending", reference, entry }`; `400` on a non-positive amount.
+
 ## Event contract (bus API)
 
 The full event union is defined in `shared/src/events.ts` — that file is the contract's source of
@@ -232,9 +267,9 @@ truth. Summary:
 |---|---|---|
 | `heartbeat.service` / `heartbeat.node` | any → control-room | 1s pulse; node variant carries a resources block |
 | `server.start` / `server.stopped` / `server.started` / `server.crashed` | orchestrator ↔ node-agent | container lifecycle |
-| `deployment.created` / `deployment.failed` | orchestrator → bus | deployment audit events |
-| `payment.request` | billing-bridge → FinVault | payload shape matches FinVault's `payment.request` exactly |
-| `payment.confirmed` / `payment.failed` | FinVault → billing-bridge | consumed to keep/suspend servers |
+| `deployment.created` / `deployment.failed` | orchestrator → bus | audit; `deployment.created` also carries `resourceLimits` for billing tracking |
+| `payment.request` | billing-bridge → FinVault | credit top-up charge; payload shape matches FinVault's `payment.request` exactly |
+| `payment.confirmed` / `payment.failed` | FinVault → billing-bridge | consumed to add / mark-failed a top-up's credit |
 | `billing.server.suspend` | billing-bridge → orchestrator | stop a user's servers when credit is exhausted (hosted; NexusInfra-only key) |
 | `invoice.generate` | billing-bridge → FinVault | monthly invoice record for a closed cycle (hosted; NexusInfra-only key) |
 

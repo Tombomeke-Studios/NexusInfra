@@ -1,0 +1,84 @@
+// Billing Bridge persistence — Prisma + SQLite (FinVault pattern, PostgreSQL-ready).
+// This schema (and its generated migrations/) is the source of truth for the
+// billing data model; docs describe it in prose only (see CLAUDE.md doc rules).
+// Hosted edition only — the community edition never runs this service.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// A tunable pricing + quota plan. Rates/limits live in the DB so they change
+// without a code deploy. Users default to the "standard" plan.
+model BillingPlan {
+  id                String   @id
+  name              String
+  pricePerHour      Float
+  currency          String   @default("EUR")
+  freeHoursPerMonth Float    @default(0)
+  maxServers        Int      @default(5)
+  maxDatabases      Int      @default(5)
+  createdAt         DateTime @default(now())
+}
+
+// Maps a user to their plan. Absent → the default plan.
+model UserPlan {
+  userId String @id
+  planId String
+}
+
+// One runtime interval for a deployment: opened on server.started, closed on
+// server.stopped/crashed. Summed per cycle to compute charges.
+model ServerBilling {
+  id           String    @id
+  userId       String
+  deploymentId String
+  planId       String
+  limits       String    @default("{}")
+  startedAt    DateTime
+  stoppedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([userId])
+  @@index([deploymentId])
+}
+
+// A user's prepaid credit balance held in NexusInfra.
+model CreditWallet {
+  userId   String @id
+  balance  Float  @default(0)
+  currency String @default("EUR")
+}
+
+// Append-only credit movements: top-ups (funded via FinVault) and usage charges.
+model CreditLedger {
+  id          String   @id
+  userId      String
+  type        String
+  amount      Float
+  currency    String   @default("EUR")
+  reference   String   @unique
+  status      String   @default("pending")
+  description String   @default("")
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+}
+
+// A user's monthly billing cycle. Driven by the cycle runner (#147).
+model BillingCycle {
+  id          String   @id
+  userId      String
+  periodStart DateTime
+  periodEnd   DateTime
+  totalCost   Float    @default(0)
+  currency    String   @default("EUR")
+  status      String   @default("open")
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+}
