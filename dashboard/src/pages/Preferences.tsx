@@ -48,9 +48,6 @@ export function Preferences() {
         <Field label="Restart policy">
           <Seg options={[{ value: 'no', label: 'Never' }, { value: 'on-failure', label: 'On failure' }, { value: 'always', label: 'Always' }]} value={d.restart} onChange={(v) => set('restart', v as DeploymentDefaults['restart'])} />
         </Field>
-        <Field label="Default database engine">
-          <Seg options={['mysql', 'mariadb', 'postgres'].map((v) => ({ value: v, label: v }))} value={d.dbEngine} onChange={(v) => set('dbEngine', v as DeploymentDefaults['dbEngine'])} />
-        </Field>
 
         <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 14px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', cursor: 'pointer', marginTop: 4 }}>
           <span style={{ fontSize: '.86rem', fontWeight: 550 }}>OOM killer by default</span>

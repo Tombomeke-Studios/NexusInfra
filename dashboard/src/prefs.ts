@@ -15,7 +15,6 @@ export interface DeploymentDefaults {
   io: 'low' | 'normal' | 'high';
   restart: 'no' | 'on-failure' | 'always';
   oom: boolean;
-  dbEngine: 'mysql' | 'mariadb' | 'postgres';
 }
 
 export const DEFAULT_DEPLOYMENT: DeploymentDefaults = {
@@ -27,7 +26,6 @@ export const DEFAULT_DEPLOYMENT: DeploymentDefaults = {
   io: 'normal',
   restart: 'on-failure',
   oom: false,
-  dbEngine: 'mysql',
 };
 
 export interface Prefs {
