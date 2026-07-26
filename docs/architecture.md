@@ -20,6 +20,15 @@ event contracts, or infra topology.
 | `services/gateway` | Planned (#20) | JWT validation, routing, WebSocket proxy |
 | Live container console | ✅ Logs + stats (SSE) | Orchestrator proxies the agent's `/logs` + `/stats` SSE to the dashboard; interactive terminal planned (#68/#71) |
 
+## Editions (open-core)
+
+One codebase, two editions via `NEXUS_EDITION=community|hosted` (default `community`; anything
+unrecognised falls back to community). **Community** is the standalone self-hosted manager with no
+billing/FinVault dependency; **hosted** turns on usage-based billing for the multi-tenant
+hosting-provider scenario. Services resolve their edition from `shared`'s `getEdition()`; the
+dashboard reads it from the Orchestrator's public `GET /config` (`{ edition }`) and renders billing
+UI only in hosted. Full design: [billing.md](billing.md).
+
 ## Event bus
 
 Single durable **topic exchange `finvault.events`** shared with FinVault, plus fanout DLX

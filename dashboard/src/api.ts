@@ -118,6 +118,18 @@ export function login(username: string, password: string): Promise<{ token: stri
   return request('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
 }
 
+// ── Runtime config (edition flag) ─────────────────────────────────────────────
+export type Edition = 'community' | 'hosted';
+
+export interface AppConfig {
+  edition: Edition;
+}
+
+/** Public config — read before login to decide whether billing UI renders (#144). */
+export function getConfig(): Promise<AppConfig> {
+  return request('/config');
+}
+
 export function listNodes(): Promise<NodeView[]> {
   return request('/nodes');
 }
