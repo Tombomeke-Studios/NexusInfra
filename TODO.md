@@ -112,6 +112,11 @@ gateway work" above.)_
 - [ ] API Gateway: JWT validation, routing, WebSocket proxy (#20) — unblocks the terminal + real subuser enforcement
 - [ ] Replace stub login with real FinVault JWT via the Gateway (#17, #20)
 
+### 🐛 Bugs / fixes (open)
+
+- [ ] Delete server button is a no-op — wire `DELETE /deployments/:id` end to end (#156)
+- [ ] Control Room not surfaced/up in the running stack — verify it starts + show its health in the panel (#157)
+
 ### Small cleanups / follow-ups
 
 - [ ] Remove the default DB engine from Preferences (engine is chosen at creation) (#150)
