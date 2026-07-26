@@ -2,9 +2,9 @@
 
 # 🗺️ NexusInfra — Roadmap & TODO
 
-![MVP](https://img.shields.io/badge/MVP-complete-16a34a?style=flat-square)
-![Phase](https://img.shields.io/badge/current-Phase_2_·_Core-3b82f6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-178_passing-6e9f18?style=flat-square)
+![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
+![Phase](https://img.shields.io/badge/next-Phase_4_·_Billing_(2_editions)-3b82f6?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-179_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -23,29 +23,37 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 | **1 · Foundation** | Monorepo, `shared` event contract, Control Room, CI, docs | ✅ Done |
 | **2 · Core** | Node Agent (Docker lifecycle), Orchestrator (registry · placement · lifecycle) | ✅ Done |
 | **3 · Dashboard (MVP)** | React/Vite panel · stub JWT login · deploy loop end to end | ✅ Done |
-| **3+ · Dashboard extras** | Live logs, API Gateway, detail views | 📋 Backlog |
-| **4 · Billing** | Billing Bridge ↔ FinVault, usage-based charging | 📋 Backlog |
-| **5 · Production** | Multi-node, metrics, security hardening, Postgres | 📋 Backlog |
+| **3+ · Panel functional + UX** | Every mock tab made real (files/db/backups/schedules/subusers/console/nodes/games) + tooltips, intro, prefs, node detail | ✅ Done |
+| **4 · Billing (2 editions)** | Open-core split (community vs hosted) + Billing Bridge ↔ FinVault, usage-based charging | 📋 **Next** — see [docs/billing.md](docs/billing.md) |
+| **5 · Production** | Multi-node, metrics, security hardening, Postgres, API Gateway | 📋 Backlog |
 
 ---
 
 ## Current state
 
-> **The MVP server panel is complete, polished, and verified running end to end.**
+> **The panel is feature-complete and every tab is real — verified live.**
 > `docker-compose up` brings up RabbitMQ + Control Room + Node Agent + Orchestrator + dashboard; the
-> dashboard is at **http://localhost:8095** (`admin` / `admin`). The UI has a full design system
-> (light/dark theme), restyled pages, plus **restart**, a **deployment detail drawer**, and **toasts**.
-> Verified live end to end: **deploy → running → stop (container removed) → start again → running**,
-> plus **restart**; an in-use host port surfaces as **crashed** with the exact Docker reason.
+> dashboard is at **http://localhost:8095** (`admin` / `admin`). The node-agent mounts the Docker
+> socket, so all container operations run against real containers.
+>
+> **Verified live end to end (via the API against a real `nginx:alpine` container):** deploy → running →
+> stop/start/restart; **file** list/read/**write**/mkdir/**new-file**/rename/delete; **console exec**
+> (`docker exec`, with a tracked `cwd` and working `cd`); **databases** (spins up a real `postgres:16`/
+> mysql container per DB); **backups** (real tar snapshot); **node** register/deregister + location;
+> **live logs (SSE)** + **live stats (`docker stats`)** in the console/header.
 >
 > **Ports** — Control Room `9000` · Node Agent `9100` · Orchestrator `9200` · dashboard `8095`
 > (Docker) / `5173` (Vite dev).
 >
-> **Latest:** the redesign is fully ported (UI/UX present) and **making the mock features functional**
-> has begun. ✅ **Live logs** and ✅ **live stats** are real — a running server's container logs stream
-> to the Console tab and its CPU/memory/network stream from real `docker stats` to the header meters
-> (mock fallback when no backend). **Next up:** the interactive terminal (#68/#71), then the
-> panel-feature backlog below.
+> **Next up — Phase 4 billing, as TWO editions (open-core):** the current app is the **community**
+> (standalone, free) edition. A **hosted** edition adds usage-based billing via FinVault behind an
+> edition flag — because paying for servers you host yourself makes no sense; billing only fits the
+> hosting-provider scenario. Full design + decisions in **[docs/billing.md](docs/billing.md)**; slices
+> are issues **#144–#149** (+ small cleanup #150). **A new session should start there.**
+>
+> **Rebuild reminder:** after merging dashboard/service changes, the running `:8095` stack serves a
+> stale image until you `docker compose up -d --build <service>`. (Cost us a "the background isn't
+> there" scare — it was a 30h-old image.)
 
 ---
 
@@ -73,40 +81,40 @@ Make the panel understandable and tailorable — the options should explain them
 - [x] First-run onboarding / guided intro — nodes especially (#123)
 - [x] User preferences: form defaults + customisation, persisted (#124)
 
-### Phase 3+ — Live server console (logs · terminal · stats)
-
-A per-server console like other panels: live logs, an interactive terminal, and CPU/RAM/network.
-Needs a WebSocket transport (not the RabbitMQ command bus) authenticated by JWT. Big group; build
-after picking it up. Depends on / overlaps the API Gateway (#20).
+### Phase 3+ — Live server console (logs · exec · stats) — done
 
 - [x] Node Agent: stream container logs (SSE) (#66) · Dashboard live logs (#70) — done in #115
 - [x] Node Agent: per-container resource stats (docker stats) (#67) · Dashboard live stats (#72)
 - [x] Node Agent: exec/console into a container (`POST /exec`, one-shot `sh -c`) (#68) — Console command input is real
-- [ ] WebSocket transport for a persistent exec/terminal session (gateway, JWT) (#69 — logs/stats use SSE; one-shot exec uses HTTP)
-- [ ] Dashboard: full interactive terminal (xterm.js, persistent PTY) for a server (#71)
-
-### Phase 3+ — Dashboard, other slices
-
-Backlog items get their own GitHub issue at the latest when their group is promoted to an active
-`feature/<topic>` branch (bugs get one immediately). Items without a `(#N)` still need one created.
-
-### Phase 3+ — Dashboard, later slices
-
-- [ ] Real-time container log streaming via WebSocket (#17)
-- [ ] API Gateway: JWT validation, routing, WebSocket proxy (#20)
 - [x] Dashboard: node detail view (resource history) (#125)
-- [ ] Replace stub login with real FinVault JWT via the Gateway
 
-### Phase 4 — Billing integration (`feature/billing-bridge`)
+_(The persistent-PTY terminal #69/#71 and the API Gateway #20 are listed under "remaining console /
+gateway work" above.)_
 
-- [ ] Billing Bridge: service scaffold + persistence (billing plans, server billing, cycles) (#18)
-- [ ] Billing Bridge: runtime tracking from `deployment.started` / `deployment.stopped` (#18)
-- [ ] Billing Bridge: pricing tiers + free-hours / credit model (#18)
-- [ ] Billing Bridge: periodic `payment.request` to FinVault at cycle end (#19)
-- [ ] Billing Bridge: consume `payment.confirmed` / `payment.failed`; suspend on failure (#19)
-- [ ] Orchestrator: consume `billing.server.suspend` → stop the user's servers
-- [ ] Billing Bridge: monthly `invoice.generate`
-- [ ] Dashboard: Billing page (cost breakdown, payment history, credit balance)
+### Phase 4 — Billing, as two editions (open-core) — **START HERE next session**
+
+> **Decision:** one codebase, `NEXUS_EDITION=community|hosted` (default community). Community = the
+> standalone manager we have now (no billing/FinVault). Hosted = the imagined hosting-provider scenario
+> with usage billing. Full design, data model, pricing, wallet + suspend flow: **[docs/billing.md](docs/billing.md)**.
+> Build the slices **in order** (each is a normal feature branch + PR):
+
+- [ ] Edition flag `community|hosted` across services + `GET /config`; dashboard hides/shows billing (#144)
+- [ ] `shared`: add `billing.server.suspend` + `invoice.generate` events (envelope/encryption unchanged) (#145)
+- [ ] `billing-bridge` service: pricing/quotas (pure, tested) + persistence + runtime tracking + credit wallet + top-up flow (#146)
+- [ ] `billing-bridge`: monthly cycle runner — charge credit → suspend on short balance → `invoice.generate` (#147)
+- [ ] Orchestrator: enforce plan quotas (max servers/databases) + consume `billing.server.suspend` → stop servers (#148)
+- [ ] Dashboard: **Billing** page (balance, top-up via FinVault, usage breakdown, history) — hosted only (#149)
+
+### Phase 3+ — remaining console / gateway work
+
+- [ ] WebSocket transport for a persistent exec/terminal session (gateway, JWT) (#69 — one-shot exec already works over HTTP)
+- [ ] Dashboard: full interactive terminal (xterm.js, persistent PTY) for a server (#71)
+- [ ] API Gateway: JWT validation, routing, WebSocket proxy (#20) — unblocks the terminal + real subuser enforcement
+- [ ] Replace stub login with real FinVault JWT via the Gateway (#17, #20)
+
+### Small cleanups / follow-ups
+
+- [ ] Remove the default DB engine from Preferences (engine is chosen at creation) (#150)
 
 ### Phase 5 — Production hardening (`feature/production`)
 
@@ -121,6 +129,18 @@ Backlog items get their own GitHub issue at the latest when their group is promo
 ---
 
 ## Done
+
+### `feature/files-console-ux` — merged in #143 (fixes)
+
+- [x] Fix false "New folder" API error (empty-body 2xx); add **New file**; console shows **cwd** + `cd` works (#142)
+
+### `feature/subusers` — merged in #140 · `feature/console-exec` — #139 · `feature/node-detail` — #138
+
+- [x] Subusers management (#112) · real Console `docker exec` (#68) · node detail view (#125)
+
+### `feature/node-location-label` — merged in #136 (panel UX)
+
+- [x] Node "Region" → free-form "Location" label (self-hosted; no fixed cloud regions) (#135)
 
 ### `feature/user-preferences` — merged in #130 (panel UX)
 
