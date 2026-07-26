@@ -4,7 +4,7 @@
 
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/next-Phase_5_·_Production-3b82f6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-250_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-252_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -115,7 +115,7 @@ gateway work" above.)_
 ### 🐛 Bugs / fixes (open)
 
 - [x] Delete server button is a no-op — wire `DELETE /deployments/:id` end to end (#156)
-- [ ] Control Room not surfaced/up in the running stack — verify it starts + show its health in the panel (#157)
+- [x] Control Room not surfaced/up in the running stack — verify it starts + show its health in the panel (#157)
 
 ### Small cleanups / follow-ups
 

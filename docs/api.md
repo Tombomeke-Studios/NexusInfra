@@ -232,6 +232,13 @@ running/pending deployment, otherwise `204`. The machine itself is untouched.
 
 ---
 
+### `GET /monitoring`
+
+Surfaces the Control Room's live service/node health to the dashboard (#157) — the panel talks only to
+the Orchestrator, which proxies the Control Room's `/status`. Returns `{ monitored: [{ source, status,
+lastSeenMsAgo }], reachable }`. If the Control Room is unreachable, `200` with `{ monitored: [],
+reachable: false }` so the panel can show it as down rather than erroring.
+
 ### Billing proxy (authenticated) — hosted edition
 
 The dashboard's Billing page (#149) talks only to the Orchestrator, which proxies to the Billing Bridge
