@@ -2,7 +2,7 @@ import os from 'os';
 import { createServer } from 'http';
 import express from 'express';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { consumeRabbitQueue, startNodeHeartbeat } from 'shared';
+import { consumeRabbitQueue, publishRabbitEvent, PublishOutbox, startNodeHeartbeat, startOutboxFlusher } from 'shared';
 import { DockerodeRuntime } from './runtime.js';
 import { createAgent } from './agent.js';
 import { createFileRouter } from './fileRoutes.js';
@@ -19,13 +19,34 @@ const NODE_ID = process.env.NODE_ID || `node-${os.hostname()}`;
 const PORT = Number(process.env.PORT) || 9100;
 
 const runtime = new DockerodeRuntime();
-const agent = createAgent({ nodeId: NODE_ID, runtime });
+
+// Lifecycle reports go through an outbox (#167): if the broker is briefly
+// unreachable, a server.started/stopped/crashed is held and replayed in order
+// instead of being dropped — otherwise the Orchestrator's deployment state would
+// stay permanently wrong. Heartbeats deliberately bypass it: they're ephemeral,
+// so replaying a stale pulse would be worse than losing it.
+const reportOutbox = new PublishOutbox(publishRabbitEvent, {
+  onDrop: (event) =>
+    console.error(`[Node Agent ${NODE_ID}] Outbox full — dropped ${event.envelope.event.type} (queued at ${new Date(event.enqueuedAt).toISOString()})`),
+});
+startOutboxFlusher(reportOutbox);
+
+const agent = createAgent({ nodeId: NODE_ID, runtime, publish: (key, envelope) => reportOutbox.publish(key, envelope) });
 
 // ── HTTP: health probe ────────────────────────────────────────────────────────
 const app = express();
 app.use(express.json({ limit: '4mb' })); // file writes carry content in the body
 app.get('/health', (_req, res) => {
-  res.json({ service: 'node-agent', nodeId: NODE_ID, status: 'healthy', uptimeSec: Math.round(process.uptime()) });
+  res.json({
+    service: 'node-agent',
+    nodeId: NODE_ID,
+    status: 'healthy',
+    uptimeSec: Math.round(process.uptime()),
+    // Outbox depth (#167): non-zero means reports are queued because the broker is
+    // unreachable; `droppedEvents` means real loss and warrants attention.
+    pendingEvents: reportOutbox.pending,
+    droppedEvents: reportOutbox.droppedCount,
+  });
 });
 
 // ── HTTP: container log stream (SSE) ──────────────────────────────────────────
