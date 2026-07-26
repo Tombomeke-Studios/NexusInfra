@@ -24,7 +24,7 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 | **2 · Core** | Node Agent (Docker lifecycle), Orchestrator (registry · placement · lifecycle) | ✅ Done |
 | **3 · Dashboard (MVP)** | React/Vite panel · stub JWT login · deploy loop end to end | ✅ Done |
 | **3+ · Panel functional + UX** | Every mock tab made real (files/db/backups/schedules/subusers/console/nodes/games) + tooltips, intro, prefs, node detail | ✅ Done |
-| **4 · Billing (2 editions)** | Open-core split (community vs hosted) + Billing Bridge ↔ FinVault, usage-based charging | ✅ Done (#144–#149) · #150 cleanup left |
+| **4 · Billing (2 editions)** | Open-core split (community vs hosted) + Billing Bridge ↔ FinVault, usage-based charging | ✅ Done (#144–#150) |
 | **5 · Production** | Multi-node, metrics, security hardening, Postgres, API Gateway | 📋 Backlog |
 
 ---
@@ -119,7 +119,7 @@ gateway work" above.)_
 
 ### Small cleanups / follow-ups
 
-- [ ] Remove the default DB engine from Preferences (engine is chosen at creation) (#150)
+- [x] Remove the default DB engine from Preferences (engine is chosen at creation) (#150)
 
 ### Phase 5 — Production hardening (`feature/production`)
 

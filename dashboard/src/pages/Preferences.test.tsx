@@ -18,18 +18,18 @@ describe('Preferences', () => {
 
   it('persists an edited default on save', async () => {
     renderPrefs();
-    // Pick Postgres as the default engine, then save.
-    await userEvent.click(screen.getByRole('button', { name: 'postgres' }));
+    // Pick the "Game server" default type, then save.
+    await userEvent.click(screen.getByRole('button', { name: 'Game server' }));
     await userEvent.click(screen.getByRole('button', { name: 'Save preferences' }));
-    expect(getDeploymentDefaults().dbEngine).toBe('postgres');
+    expect(getDeploymentDefaults().type).toBe('game');
   });
 
   it('reverts to the built-in defaults on reset', async () => {
-    setDeploymentDefaults({ cpu: 95, dbEngine: 'mariadb' });
+    setDeploymentDefaults({ cpu: 95, type: 'game' });
     renderPrefs();
     await userEvent.click(screen.getByRole('button', { name: 'Reset to defaults' }));
     const d = getDeploymentDefaults();
     expect(d.cpu).toBe(50);
-    expect(d.dbEngine).toBe('mysql');
+    expect(d.type).toBe('app');
   });
 });

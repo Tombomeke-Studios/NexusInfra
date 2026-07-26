@@ -30,10 +30,10 @@ describe('prefs', () => {
   });
 
   it('merges deployment-default overrides over the built-ins', () => {
-    setDeploymentDefaults({ cpu: 80, dbEngine: 'postgres' });
+    setDeploymentDefaults({ cpu: 80, restart: 'always' });
     const d = getDeploymentDefaults();
     expect(d.cpu).toBe(80);
-    expect(d.dbEngine).toBe('postgres');
+    expect(d.restart).toBe('always');
     expect(d.ram).toBe(DEFAULT_DEPLOYMENT.ram); // untouched fields keep the built-in
     // A second patch merges rather than replacing.
     setDeploymentDefaults({ ram: 65 });

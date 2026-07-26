@@ -44,7 +44,6 @@ import {
 import { StatusBadge } from '../components/StatusBadge';
 import { useToast } from '../components/Toast';
 import { InfoHint } from '../components/InfoHint';
-import { getDeploymentDefaults } from '../prefs';
 
 // Server detail — ported from the redesign. The header/status/actions are real;
 // the resource stats and every tab's content are UI/mock for now and get wired
@@ -569,7 +568,7 @@ const DB_ENGINES: DatabaseEngine[] = ['mysql', 'mariadb', 'postgres'];
 function DatabasesTab({ id, running }: { id: string; running: boolean }) {
   const { toast } = useToast();
   const [dbs, setDbs] = useState<ServerDatabase[]>([]);
-  const [engine, setEngine] = useState<DatabaseEngine>(() => getDeploymentDefaults().dbEngine);
+  const [engine, setEngine] = useState<DatabaseEngine>('mysql');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
