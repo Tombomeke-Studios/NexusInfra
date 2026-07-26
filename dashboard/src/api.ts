@@ -194,6 +194,8 @@ export interface MonitoredService {
   source: string;
   status: NodeHealth;
   lastSeenMsAgo: number;
+  /** Share of observed time this source was healthy, 0–100 (#165). */
+  uptimePercent?: number;
 }
 
 export interface MonitoringSnapshot {
