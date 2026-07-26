@@ -21,13 +21,39 @@ Live monitoring snapshot of every heartbeat source seen on the bus.
 ```json
 {
   "monitored": [
-    { "source": "control-room", "status": "healthy", "lastSeenMsAgo": 412 }
+    { "source": "control-room", "status": "healthy", "lastSeenMsAgo": 412, "uptimePercent": 99.87 }
   ],
   "thresholds": { "degradedMs": 3000, "offlineMs": 10000 }
 }
 ```
 
-`status` ∈ `healthy | degraded | offline` derived from last-seen age.
+`status` ∈ `healthy | degraded | offline` derived from last-seen age. `uptimePercent` (#165) is the
+share of observed time the source was healthy, since it was first seen.
+
+### `GET /uptime`
+
+Reliability detail per source: cumulative uptime plus recent status transitions.
+
+```json
+{
+  "sources": [
+    {
+      "source": "orchestrator",
+      "status": "healthy",
+      "lastSeenMsAgo": 300,
+      "uptimePercent": 96.5,
+      "firstSeen": 1800000000000,
+      "observedMs": 200000,
+      "healthyMs": 193000,
+      "transitions": [{ "from": "healthy", "to": "degraded", "at": 1800000100000 }]
+    }
+  ],
+  "thresholds": { "degradedMs": 3000, "offlineMs": 10000 }
+}
+```
+
+Transitions are oldest-first and capped per source (ring buffer) so memory stays bounded. State is
+in-memory, so it resets when the Control Room restarts — persisted history is a later phase.
 
 ---
 
