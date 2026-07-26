@@ -1,5 +1,7 @@
 import os from 'os';
+import { createServer } from 'http';
 import express from 'express';
+import { WebSocketServer, type WebSocket } from 'ws';
 import { consumeRabbitQueue, startNodeHeartbeat } from 'shared';
 import { DockerodeRuntime } from './runtime.js';
 import { createAgent } from './agent.js';
@@ -7,6 +9,7 @@ import { createFileRouter } from './fileRoutes.js';
 import { createDatabaseRouter } from './dbRoutes.js';
 import { createBackupRouter } from './bkRoutes.js';
 import { createExecRouter } from './execRoutes.js';
+import { attachTerminal, type TerminalSocket } from './terminal.js';
 
 // ── Node Agent ────────────────────────────────────────────────────────────────
 // Runs on a Docker host. Consumes server lifecycle commands addressed to this
@@ -66,7 +69,41 @@ app.use(createBackupRouter(runtime));
 // ── HTTP: console (#68) — one-shot command exec in a container ────────────────
 app.use(createExecRouter(runtime));
 
-app.listen(PORT, () => console.log(`[Node Agent ${NODE_ID}] HTTP listening on http://localhost:${PORT}`));
+// ── WebSocket: interactive terminal (#71) ─────────────────────────────────────
+// Internal WS endpoint (reached only via the Orchestrator's WS proxy) that opens
+// a TTY shell in the container and bridges it to the socket. Path:
+// /terminal/:containerId?cols=&rows=.
+const server = createServer(app);
+const wss = new WebSocketServer({ noServer: true });
+
+/** Adapt a `ws` socket to the minimal TerminalSocket the bridge expects. */
+function toTerminalSocket(ws: WebSocket): TerminalSocket {
+  return {
+    on(event, cb) {
+      if (event === 'message') ws.on('message', (data: Buffer) => (cb as (d: string) => void)(data.toString('utf8')));
+      else ws.on('close', cb as () => void);
+    },
+    send: (data) => ws.send(data),
+    close: () => ws.close(),
+  };
+}
+
+server.on('upgrade', (req, socket, head) => {
+  const url = new URL(req.url ?? '', 'http://node-agent');
+  const match = /^\/terminal\/([^/]+)$/.exec(url.pathname);
+  if (!match) {
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    const cols = Number(url.searchParams.get('cols')) || 80;
+    const rows = Number(url.searchParams.get('rows')) || 24;
+    const session = runtime.execInteractive(match[1], { cols, rows });
+    attachTerminal(toTerminalSocket(ws), session);
+  });
+});
+
+server.listen(PORT, () => console.log(`[Node Agent ${NODE_ID}] HTTP listening on http://localhost:${PORT}`));
 
 // ── Event bus: consume server lifecycle commands ──────────────────────────────
 async function start() {
