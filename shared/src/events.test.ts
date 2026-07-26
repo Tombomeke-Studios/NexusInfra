@@ -65,3 +65,31 @@ describe('Event envelope', () => {
     expect((envelope.event.payload as any).name).toBe('control-room');
   });
 });
+
+describe('Billing events (hosted edition, #145)', () => {
+  it('round-trips billing.server.suspend through the (encrypted) envelope', () => {
+    process.env.FINVAULT_MESSAGE_KEY = KEY;
+    const envelope = buildEnvelope('billing-bridge', {
+      type: 'billing.server.suspend',
+      payload: { userId: 'u-1', deploymentIds: ['d-1', 'd-2'], reason: 'credit exhausted' },
+    });
+    expect(envelope.event.type).toBe('billing.server.suspend');
+    expect((envelope.event.payload as any).encrypted).toBe(true);
+    const recovered = readPayload(envelope.event);
+    expect(recovered.userId).toBe('u-1');
+    expect(recovered.deploymentIds).toEqual(['d-1', 'd-2']);
+    expect(recovered.reason).toBe('credit exhausted');
+    delete process.env.FINVAULT_MESSAGE_KEY;
+  });
+
+  it('carries invoice.generate plaintext when no key is set', () => {
+    delete process.env.FINVAULT_MESSAGE_KEY;
+    const envelope = buildEnvelope('billing-bridge', {
+      type: 'invoice.generate',
+      payload: { reference: 'INV-2026-07-u1', userId: 'u-1', periodStart: '2026-07-01T00:00:00.000Z', periodEnd: '2026-08-01T00:00:00.000Z', amount: 12.5, currency: 'EUR' },
+    });
+    expect(envelope.event.type).toBe('invoice.generate');
+    expect((envelope.event.payload as any).reference).toBe('INV-2026-07-u1');
+    expect((envelope.event.payload as any).amount).toBe(12.5);
+  });
+});

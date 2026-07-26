@@ -55,8 +55,11 @@ command keys and ignore commands whose payload `nodeId` is not theirs. The Orche
 queue `nexusinfra.orchestrator` to the node heartbeat topic (to maintain its node registry) and the
 three `infra.server.*` report keys (to update deployment state).
 
-Planned keys (defined in `shared/src/events.ts`, not yet flowing): `bank.payment.*` — see the
-[CONCEPTS routing-key table](../../CONCEPTS/integration/rabbitmq-architecture.md).
+Planned keys (defined in `shared/src/events.ts`, not yet flowing): `payment.*` (billing bridge ↔
+FinVault) plus the hosted-edition billing keys `billing.server.suspend` (billing-bridge →
+orchestrator) and `invoice.generate` (billing-bridge → FinVault) — the latter two are NexusInfra-only
+routing keys added in #145; the envelope/encryption contract is unchanged. See the
+[CONCEPTS routing-key table](../../CONCEPTS/integration/rabbitmq-architecture.md) and [billing.md](billing.md).
 
 ## Heartbeat / status model
 
