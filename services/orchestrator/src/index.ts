@@ -1,8 +1,12 @@
+import { createServer } from 'http';
 import express from 'express';
 import cors from 'cors';
+import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import { buildEnvelope, consumeRabbitQueue, publishRabbitEvent, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
 import { PrismaRepository } from './db.js';
-import { createApiRouter } from './api.js';
+import { createApiRouter, resolveContainerTarget } from './api.js';
+import { verifyToken } from './auth.js';
+import { pipeSockets, toWsUrl, type DuplexSocket } from './wsProxy.js';
 import { createBillingProxyRouter } from './billingProxy.js';
 import { createMonitoringRouter } from './monitoring.js';
 import { createConfigRouter } from './config.js';
@@ -66,7 +70,53 @@ app.use(createApiRouter({ repo, scheduleActions }));
 app.use(createBillingProxyRouter());
 // Surfaces the Control Room's live service/node monitoring to the dashboard (#157).
 app.use(createMonitoringRouter());
-app.listen(PORT, () => console.log(`[Orchestrator] HTTP listening on http://localhost:${PORT}`));
+
+// ── WebSocket: interactive terminal proxy (#71) ───────────────────────────────
+// The dashboard opens ws://…/deployments/:id/terminal?token=<jwt>. We validate the
+// JWT, resolve the owning container, dial the Node Agent's internal /terminal WS,
+// and pipe the two together.
+const server = createServer(app);
+const wss = new WebSocketServer({ noServer: true });
+
+/** Adapt a `ws` socket to the DuplexSocket the pipe expects. */
+function toDuplex(ws: WebSocket): DuplexSocket {
+  return {
+    on(event, cb) {
+      if (event === 'message') ws.on('message', (data: RawData) => (cb as (d: string) => void)(data.toString()));
+      else ws.on('close', cb as () => void);
+    },
+    send: (data) => ws.send(data),
+    close: () => ws.close(),
+  };
+}
+
+server.on('upgrade', async (req, socket, head) => {
+  const url = new URL(req.url ?? '', 'http://orchestrator');
+  const match = /^\/deployments\/([^/]+)\/terminal$/.exec(url.pathname);
+  if (!match) return socket.destroy();
+
+  // Auth: the JWT rides as a query param (browsers can't set WS headers).
+  const token = url.searchParams.get('token');
+  if (!token) return socket.destroy();
+  try {
+    verifyToken(token);
+  } catch {
+    return socket.destroy();
+  }
+
+  const target = resolveContainerTarget(await repo.getDeployment(match[1]));
+  if (target.status !== 200) return socket.destroy();
+
+  const cols = url.searchParams.get('cols') ?? '80';
+  const rows = url.searchParams.get('rows') ?? '24';
+  wss.handleUpgrade(req, socket, head, (clientWs) => {
+    const upstream = new WebSocket(`${toWsUrl(NODE_AGENT_URL)}/terminal/${target.containerId}?cols=${cols}&rows=${rows}`);
+    upstream.on('open', () => pipeSockets(toDuplex(clientWs), toDuplex(upstream)));
+    upstream.on('error', () => clientWs.close());
+  });
+});
+
+server.listen(PORT, () => console.log(`[Orchestrator] HTTP + WS listening on http://localhost:${PORT}`));
 
 // Evaluate schedules once a minute (restart/backup on a cron).
 startScheduler(repo, scheduleActions);
