@@ -111,4 +111,11 @@ export class InMemoryRepository implements Repository {
   async listCycles(userId: string): Promise<BillingCycleRecord[]> {
     return this.cycles.filter((c) => c.userId === userId).map((c) => ({ ...c }));
   }
+
+  async listBillableUserIds(): Promise<string[]> {
+    const ids = new Set<string>();
+    for (const i of this.intervals) ids.add(i.userId);
+    for (const userId of this.wallets.keys()) ids.add(userId);
+    return [...ids];
+  }
 }

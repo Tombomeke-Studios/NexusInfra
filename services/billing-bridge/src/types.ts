@@ -103,4 +103,7 @@ export interface Repository {
   // Cycles
   createCycle(input: CreateCycleInput): Promise<BillingCycleRecord>;
   listCycles(userId: string): Promise<BillingCycleRecord[]>;
+
+  /** Distinct users with any billing activity (intervals or a wallet) — the set the cycle runner bills. */
+  listBillableUserIds(): Promise<string[]>;
 }

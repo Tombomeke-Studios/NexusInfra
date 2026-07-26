@@ -216,6 +216,7 @@ is the migrations directory.
 | `src/repository.ts` | `InMemoryRepository` — backs unit tests and a DB-less mode |
 | `src/db.ts` | `getPrisma()` + `PrismaRepository` (SQLite) + `ensureDefaultPlan` seed |
 | `src/service.ts` | `createBillingService` — events→intervals, wallet, and the FinVault top-up flow (`payment.request`/confirmed/failed); dependency-injected |
+| `src/cycle.ts` | Monthly cycle runner: pure `computeCycleCost`/period helpers + `runBillingCycle` (charge credit → `billing.server.suspend` on short balance → `invoice.generate`) + `startCycleRunner` (hourly poll, idempotent) |
 | `src/api.ts` | `createBillingRouter` — HTTP: wallet/usage/ledger/plan/quota + `POST /topup` |
 | `src/index.ts` | Entry: PrismaRepository + service; consumes deployment/runtime + `bank.payment.*`; HTTP `/health` (+ billing routes when hosted) on `:9300`; inert in community |
 | `prisma/schema.prisma` | Prisma + SQLite: `BillingPlan`, `UserPlan`, `ServerBilling`, `CreditWallet`, `CreditLedger`, `BillingCycle`. `prisma/migrations` is the source of truth |
