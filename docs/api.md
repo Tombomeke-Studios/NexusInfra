@@ -88,7 +88,9 @@ Request:
 a re-start reuses them. The limits ride on `server.start` and the Node Agent enforces them on the
 container — RAM/CPU caps, swap, block-I/O weight, restart policy and the OOM killer (#107). Responses:
 `201` with the deployment (including its event trail), `400` on missing fields, `503` when no healthy
-node is available. On success the Orchestrator emits `infra.server.start` for the chosen node.
+node is available. In the hosted edition, `409` when the plan's `maxServers` quota is reached (checked
+against the Billing Bridge; community edition never limits). On success the Orchestrator emits
+`infra.server.start` for the chosen node.
 
 ### `GET /deployments`
 

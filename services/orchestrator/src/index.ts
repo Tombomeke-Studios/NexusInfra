@@ -1,12 +1,13 @@
 import express from 'express';
 import cors from 'cors';
-import { buildEnvelope, consumeRabbitQueue, publishRabbitEvent, startHeartbeat, type EventEnvelope } from 'shared';
+import { buildEnvelope, consumeRabbitQueue, publishRabbitEvent, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
 import { PrismaRepository } from './db.js';
 import { createApiRouter } from './api.js';
 import { createConfigRouter } from './config.js';
 import { createAuthRouter, requireAuth } from './auth.js';
 import { createNodeRegistry } from './nodeRegistry.js';
 import { createLifecycle } from './lifecycle.js';
+import { createSuspendHandler, type SuspendPayload } from './suspend.js';
 import { startScheduler, type ScheduleActions } from './scheduler.js';
 
 // ── Orchestrator ────────────────────────────────────────────────────────────
@@ -21,6 +22,7 @@ const NODE_AGENT_URL = process.env.NODE_AGENT_URL || 'http://node-agent:9100';
 const repo = new PrismaRepository();
 const registry = createNodeRegistry(repo);
 const lifecycle = createLifecycle(repo);
+const suspend = createSuspendHandler({ repo });
 
 // Actions the schedule runner (#111) performs for a due schedule: restart the
 // server (over the bus) or snapshot a backup (via the owning node agent).
@@ -69,10 +71,12 @@ async function start() {
   try {
     await consumeRabbitQueue(
       'nexusinfra.orchestrator',
-      ['monitoring.heartbeat.node.#', 'infra.server.started', 'infra.server.stopped', 'infra.server.crashed'],
+      ['monitoring.heartbeat.node.#', 'infra.server.started', 'infra.server.stopped', 'infra.server.crashed', 'billing.server.suspend'],
       async (envelope: EventEnvelope) => {
         if (envelope.event.type === 'heartbeat.node') {
           await registry.handleHeartbeat(envelope);
+        } else if (envelope.event.type === 'billing.server.suspend') {
+          await suspend(readPayload(envelope.event) as unknown as SuspendPayload);
         } else {
           await lifecycle.handleReport(envelope);
         }

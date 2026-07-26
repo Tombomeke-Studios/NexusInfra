@@ -50,7 +50,7 @@ via `readPayload()` only.
 | `infra.deployment.created` | orchestrator | billing-bridge (learns owner + limits for tracking, hosted) |
 | `bank.payment.request` | billing-bridge | FinVault (credit top-up charge) |
 | `bank.payment.confirmed` / `bank.payment.failed` | FinVault | billing-bridge (add/mark-failed credit) |
-| `billing.server.suspend` | billing-bridge (cycle runner) | orchestrator (stop servers — consumer wired in #148) |
+| `billing.server.suspend` | billing-bridge (cycle runner) | orchestrator (stops the named servers) |
 | `invoice.generate` | billing-bridge (cycle runner) | FinVault (monthly invoice record) |
 | `monitoring.heartbeat.node.{id}` | node-agent | control-room **and** orchestrator (node registry) |
 
@@ -61,10 +61,13 @@ three `infra.server.*` report keys (to update deployment state). In the hosted e
 Bridge binds queue `nexusinfra.billing-bridge` to `infra.deployment.created`, the three
 `infra.server.*` report keys, and `bank.payment.confirmed`/`.failed`.
 
-The monthly cycle runner (billing-bridge, hosted) publishes `billing.server.suspend` (→ orchestrator,
-consumer wired in #148) and `invoice.generate` (→ FinVault) — NexusInfra-only routing keys added in
-#145; the envelope/encryption contract is unchanged, and the payment `type`s stay wire-compatible with
-FinVault. See the [CONCEPTS routing-key table](../../CONCEPTS/integration/rabbitmq-architecture.md)
+The monthly cycle runner (billing-bridge, hosted) publishes `billing.server.suspend` — the Orchestrator
+consumes it and stops the named deployments — and `invoice.generate` (→ FinVault). These are
+NexusInfra-only routing keys added in #145; the envelope/encryption contract is unchanged, and the
+payment `type`s stay wire-compatible with FinVault. In the hosted edition the Orchestrator also
+enforces the plan's `maxServers`/`maxDatabases` at create-time by asking the Billing Bridge
+(`GET /billing/:userId/quota`), failing open if it's unreachable so a billing outage never blocks
+deploys. See the [CONCEPTS routing-key table](../../CONCEPTS/integration/rabbitmq-architecture.md)
 and [billing.md](billing.md).
 
 ## Heartbeat / status model
