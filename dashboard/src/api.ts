@@ -167,6 +167,11 @@ export function startDeployment(id: string): Promise<{ status: string; deploymen
   return request(`/deployments/${id}/start`, { method: 'POST' });
 }
 
+/** Permanently delete a deployment (stops it first if running). */
+export function deleteDeployment(id: string): Promise<void> {
+  return request(`/deployments/${id}`, { method: 'DELETE' });
+}
+
 /** Live per-container resource stats — the dashboard renders these live (#72). */
 export interface ContainerStats {
   cpuPercent: number;

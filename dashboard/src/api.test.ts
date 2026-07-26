@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { createDeployment, listDeployments, login, streamLogs, streamStats, listFiles, writeFile, makeDir, createDatabase, createBackup, createSchedule, registerNode, execCommand, inviteSubuser, ApiError, TOKEN_KEY, type ContainerStats } from './api';
+import { createDeployment, deleteDeployment, listDeployments, login, streamLogs, streamStats, listFiles, writeFile, makeDir, createDatabase, createBackup, createSchedule, registerNode, execCommand, inviteSubuser, ApiError, TOKEN_KEY, type ContainerStats } from './api';
 
 // The client is verified against a mocked fetch: it attaches the Bearer token,
 // posts JSON, and surfaces API errors with their status.
@@ -44,6 +44,15 @@ describe('api client', () => {
     expect(url).toContain('/auth/login');
     expect(options.method).toBe('POST');
     expect((options.headers as Record<string, string>).authorization).toBeUndefined();
+  });
+
+  it('deletes a deployment with a DELETE request', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(undefined, 204));
+    await deleteDeployment('d1');
+
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toContain('/deployments/d1');
+    expect(options.method).toBe('DELETE');
   });
 
   it('posts the deployment body as JSON', async () => {

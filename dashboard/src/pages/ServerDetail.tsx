@@ -5,6 +5,7 @@ import {
   startDeployment,
   stopDeployment,
   restartDeployment,
+  deleteDeployment,
   streamLogs,
   streamStats,
   execCommand,
@@ -84,6 +85,17 @@ export function ServerDetail() {
     }
   };
 
+  const onDelete = async () => {
+    if (!window.confirm(`Delete ${d?.name}? This permanently removes the server and its files. This cannot be undone.`)) return;
+    try {
+      await deleteDeployment(id);
+      toast('Server deleted', 'success', 'Deleted');
+      navigate('/servers');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Failed to delete server', 'error');
+    }
+  };
+
   if (error) return <div className="page"><p role="alert" className="alert alert--error">{error}</p></div>;
   if (!d) return <div className="page"><div className="empty">Loading…</div></div>;
 
@@ -141,7 +153,7 @@ export function ServerDetail() {
       {tab === 'schedules' && <SchedulesTab id={d.id} />}
       {tab === 'subusers' && <SubusersTab id={d.id} />}
       {tab === 'startup' && <StartupTab image={d.dockerImage} isGame={isGame} envs={d.events.length} />}
-      {tab === 'settings' && <SettingsTab onDelete={() => toast('Delete is not wired yet', 'info')} />}
+      {tab === 'settings' && <SettingsTab onDelete={onDelete} />}
     </div>
   );
 }

@@ -144,6 +144,37 @@ describe('deployment API', () => {
     expect(payload.containerId).toBe('abc123');
   });
 
+  it('deletes a running deployment: stops it, then removes it', async () => {
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'abc123' });
+
+    const res = await request(app).delete(`/deployments/${created.body.id}`);
+    expect(res.status).toBe(204);
+
+    // It stopped the container first…
+    const stop = published.find((p) => p.key === 'infra.server.stop');
+    expect(stop).toBeDefined();
+    // …and the deployment is gone.
+    expect(await repo.getDeployment(created.body.id)).toBeNull();
+    expect((await request(app).get('/deployments')).body).toHaveLength(0);
+  });
+
+  it('deletes a not-running deployment without a stop command', async () => {
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+
+    const res = await request(app).delete(`/deployments/${created.body.id}`);
+    expect(res.status).toBe(204);
+    expect(published.some((p) => p.key === 'infra.server.stop')).toBe(false);
+    expect(await repo.getDeployment(created.body.id)).toBeNull();
+  });
+
+  it('returns 404 deleting an unknown deployment', async () => {
+    const res = await request(app).delete('/deployments/nope');
+    expect(res.status).toBe(404);
+  });
+
   it('refuses to restart a deployment that is not running', async () => {
     await seedHealthyNode(repo);
     const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
