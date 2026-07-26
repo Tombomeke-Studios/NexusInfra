@@ -46,6 +46,14 @@ describe('api client', () => {
     expect((options.headers as Record<string, string>).authorization).toBeUndefined();
   });
 
+  it('builds a terminal WebSocket URL with the token and dimensions', async () => {
+    const { terminalWsUrl } = await import('./api');
+    const url = terminalWsUrl('d1', 100, 30, { host: 'panel.example', secure: true, token: 'tok 1' });
+    expect(url).toBe('wss://panel.example/api/deployments/d1/terminal?token=tok%201&cols=100&rows=30');
+    const insecure = terminalWsUrl('d1', 80, 24, { host: 'localhost:5173', secure: false, token: 'abc' });
+    expect(insecure).toBe('ws://localhost:5173/api/deployments/d1/terminal?token=abc&cols=80&rows=24');
+  });
+
   it('deletes a deployment with a DELETE request', async () => {
     fetchMock.mockResolvedValue(jsonResponse(undefined, 204));
     await deleteDeployment('d1');

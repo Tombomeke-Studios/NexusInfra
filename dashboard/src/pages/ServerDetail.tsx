@@ -44,11 +44,12 @@ import {
 import { StatusBadge } from '../components/StatusBadge';
 import { useToast } from '../components/Toast';
 import { InfoHint } from '../components/InfoHint';
+import { Terminal } from '../components/Terminal';
 
 // Server detail — ported from the redesign. The header/status/actions are real;
 // the resource stats and every tab's content are UI/mock for now and get wired
 // up later (console → #66–#72, files/databases/backups/etc. → their own work).
-const TABS = ['console', 'files', 'databases', 'backups', 'network', 'schedules', 'subusers', 'startup', 'settings'] as const;
+const TABS = ['console', 'terminal', 'files', 'databases', 'backups', 'network', 'schedules', 'subusers', 'startup', 'settings'] as const;
 type Tab = (typeof TABS)[number];
 
 export function ServerDetail() {
@@ -145,6 +146,7 @@ export function ServerDetail() {
 
       {/* Tab content */}
       {tab === 'console' && <ConsoleTab id={d.id} running={running} isGame={isGame} containerId={d.containerId} />}
+      {tab === 'terminal' && <TerminalTab id={d.id} running={running} />}
       {tab === 'files' && <FilesTab id={d.id} running={running} />}
       {tab === 'databases' && <DatabasesTab id={d.id} running={running} />}
       {tab === 'backups' && <BackupsTab id={d.id} running={running} />}
@@ -284,6 +286,22 @@ const lineColor = (t: string) =>
 
 // Single-quote a value for safe embedding in the `sh -c` string we build.
 const shQuote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+
+// Interactive terminal tab (#71): a full xterm.js shell over the exec WebSocket.
+// Only meaningful while the server runs; a fresh terminal is mounted per session.
+function TerminalTab({ id, running }: { id: string; running: boolean }) {
+  if (!running) {
+    return <div className="card" style={{ padding: 22 }}><div className="empty">Start the server to open an interactive terminal.</div></div>;
+  }
+  return (
+    <div className="card" style={{ padding: 14 }}>
+      <p className="subtle" style={{ margin: '0 0 10px', fontSize: '.82rem' }}>
+        A live shell (<code>sh</code>) inside the container. Type <code>exit</code> or leave the tab to end the session.
+      </p>
+      <Terminal id={id} />
+    </div>
+  );
+}
 
 function ConsoleTab({ id, running, isGame, containerId }: { id: string; running: boolean; isGame: boolean; containerId: string | null }) {
   const [cmd, setCmd] = useState('');

@@ -446,6 +446,24 @@ export function execCommand(id: string, command: string): Promise<ExecResult> {
   return request(`/deployments/${id}/exec`, { method: 'POST', body: JSON.stringify({ command }) });
 }
 
+/**
+ * WebSocket URL for a deployment's interactive terminal (#71). The JWT rides as a
+ * query param (browsers can't set WS headers). `location` is injectable for tests.
+ */
+export function terminalWsUrl(
+  id: string,
+  cols: number,
+  rows: number,
+  location: { host: string; secure: boolean; token: string | null } = { host: window.location.host, secure: window.location.protocol === 'https:', token: getToken() }
+): string {
+  const query = `token=${encodeURIComponent(location.token ?? '')}&cols=${cols}&rows=${rows}`;
+  const path = `/deployments/${id}/terminal?${query}`;
+  // When BASE is an absolute http(s) URL, swap the scheme to ws(s); otherwise it's
+  // a relative path (`/api`) served on the current origin.
+  if (BASE.startsWith('http')) return `${BASE.replace(/^http/, 'ws')}${path}`;
+  return `${location.secure ? 'wss' : 'ws'}://${location.host}${BASE}${path}`;
+}
+
 /** Streams a deployment's container logs (SSE). See {@link streamSse}. */
 export function streamLogs(id: string, onLine: (line: string) => void, signal: AbortSignal): Promise<void> {
   return streamSse(`/deployments/${id}/logs`, onLine, signal);
