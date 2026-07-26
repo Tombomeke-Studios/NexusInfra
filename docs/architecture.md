@@ -17,7 +17,7 @@ event contracts, or infra topology.
 | `services/orchestrator` | ✅ Built | Node registry, deployment API + least-loaded node selection, lifecycle events |
 | `dashboard` | ✅ Built (MVP) | React/Vite panel: login, overview, deployment form, live server list + stop |
 | `services/billing-bridge` | ✅ Built (hosted) | Runtime tracking, credit wallet + ledger, FinVault top-up flow, plan quotas — inert in community edition (#146) |
-| `services/gateway` | Planned (#20) | JWT validation, routing, WebSocket proxy |
+| `services/gateway` | ✅ Built (HTTP) | Single entry point: CORS, per-client rate limiting, JWT validation, reverse proxy to the orchestrator (#20). WS terminal proxy pending (#69/#71) |
 | Live container console | ✅ Logs + stats (SSE) | Orchestrator proxies the agent's `/logs` + `/stats` SSE to the dashboard; interactive terminal planned (#68/#71) |
 
 ## Editions (open-core)

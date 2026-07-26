@@ -90,6 +90,27 @@ services:
     depends_on:
       - rabbitmq
 
+  # API Gateway (#20) — single external entry point: CORS, per-client rate
+  # limiting, JWT validation, and a reverse proxy to the Orchestrator. Available
+  # on :9400; the dashboard still calls the Orchestrator directly for now (rewire
+  # nginx /api → gateway once the WS terminal proxy lands).
+  gateway:
+    build:
+      context: .
+      dockerfile: services/gateway/Dockerfile
+    container_name: nexusinfra-gateway
+    ports:
+      - "9400:9400"
+    environment:
+      - PORT=9400
+      - ORCHESTRATOR_URL=http://orchestrator:9200
+      - JWT_SECRET=${JWT_SECRET:-dev-secret}
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
+    depends_on:
+      - orchestrator
+      - rabbitmq
+
   dashboard:
     build:
       context: ./dashboard
