@@ -67,8 +67,8 @@ the panel is **not** the owner of the hardware (a hosting-provider scenario). So
 | `billing.server.suspend` | Billing Bridge → Orchestrator | Stop a user's servers when credit is exhausted |
 | `invoice.generate` | NexusInfra → FinVault | Monthly invoice record |
 
-> `billing.server.suspend` and `invoice.generate` are **not yet in `shared/events.ts`** — they get added
-> (NexusInfra-only routing keys; the envelope/encryption contract is unchanged).
+> `billing.server.suspend` and `invoice.generate` are defined in `shared/src/events.ts` (added in #145;
+> NexusInfra-only routing keys, the envelope/encryption contract unchanged).
 
 ## How it links to the app (FinVault)
 

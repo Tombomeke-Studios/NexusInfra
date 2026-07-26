@@ -27,7 +27,13 @@ export type NexusInfraEvent =
   // ── Billing bridge → FinVault (payload shapes match FinVault's events.ts) ──
   | { type: 'payment.request'; payload: { reference: string; senderWalletId: string; receiverWalletId: string; amount: number; currency: string; description: string } }
   | { type: 'payment.confirmed'; payload: { transactionId: string; reference: string; amount: number; senderWalletId: string; receiverWalletId: string } }
-  | { type: 'payment.failed'; payload: { transactionId: string; reference: string; reason: string } };
+  | { type: 'payment.failed'; payload: { transactionId: string; reference: string; reason: string } }
+  // ── Billing (hosted edition, NexusInfra-only routing keys) ───────────
+  // Envelope + encryption are unchanged; these are internal to NexusInfra.
+  // Billing Bridge → Orchestrator: stop this user's servers when credit runs out.
+  | { type: 'billing.server.suspend'; payload: { userId: string; deploymentIds: string[]; reason: string } }
+  // NexusInfra → FinVault: a monthly invoice record for a closed billing cycle.
+  | { type: 'invoice.generate'; payload: { reference: string; userId: string; periodStart: string; periodEnd: string; amount: number; currency: string } };
 
 export interface NodeResources {
   cpuPercent: number;

@@ -235,6 +235,8 @@ truth. Summary:
 | `deployment.created` / `deployment.failed` | orchestrator → bus | deployment audit events |
 | `payment.request` | billing-bridge → FinVault | payload shape matches FinVault's `payment.request` exactly |
 | `payment.confirmed` / `payment.failed` | FinVault → billing-bridge | consumed to keep/suspend servers |
+| `billing.server.suspend` | billing-bridge → orchestrator | stop a user's servers when credit is exhausted (hosted; NexusInfra-only key) |
+| `invoice.generate` | billing-bridge → FinVault | monthly invoice record for a closed cycle (hosted; NexusInfra-only key) |
 
 Envelopes and encryption: see [architecture.md](architecture.md#event-bus). Payload shapes for the
 `payment.*` trio must never drift from FinVault's `shared/src/events.ts`.
