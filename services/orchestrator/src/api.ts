@@ -138,7 +138,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     const deployment = await repo.createDeployment(config.id, node.id);
     await repo.appendDeploymentEvent(deployment.id, 'created', `placed on node ${node.id}`);
 
-    await emit('infra.deployment.created', { type: 'deployment.created', payload: { deploymentId: deployment.id, userId: config.userId } });
+    await emit('infra.deployment.created', { type: 'deployment.created', payload: { deploymentId: deployment.id, userId: config.userId, resourceLimits: config.resourceLimits } });
     await emit(KEY_START, {
       type: 'server.start',
       payload: {
