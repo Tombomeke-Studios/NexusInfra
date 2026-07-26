@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { createDeployment, listDeployments, login, streamLogs, streamStats, listFiles, writeFile, createDatabase, createBackup, createSchedule, registerNode, execCommand, inviteSubuser, ApiError, TOKEN_KEY, type ContainerStats } from './api';
+import { createDeployment, listDeployments, login, streamLogs, streamStats, listFiles, writeFile, makeDir, createDatabase, createBackup, createSchedule, registerNode, execCommand, inviteSubuser, ApiError, TOKEN_KEY, type ContainerStats } from './api';
 
 // The client is verified against a mocked fetch: it attaches the Bearer token,
 // posts JSON, and surfaces API errors with their status.
@@ -155,6 +155,12 @@ describe('api client', () => {
     const samples: ContainerStats[] = [];
     await streamStats('d1', (st) => samples.push(st), new AbortController().signal);
     expect(samples).toEqual([sample]);
+  });
+
+  it('resolves an empty-body 2xx response (e.g. mkdir 201) instead of throwing', async () => {
+    // A 201 with no JSON body: res.json() would throw — the client treats it as no content.
+    fetchMock.mockResolvedValue({ ok: true, status: 201, json: async () => { throw new SyntaxError('Unexpected end of JSON input'); } } as unknown as Response);
+    await expect(makeDir('d1', '/newfolder')).resolves.toBeUndefined();
   });
 
   it('throws ApiError carrying the status and message on failure', async () => {

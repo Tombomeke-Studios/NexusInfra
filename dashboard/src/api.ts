@@ -105,7 +105,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 
   if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  // Some 2xx responses have no body (e.g. mkdir returns 201 with no payload);
+  // parsing an empty body would throw, so treat "no JSON" as no content.
+  try {
+    return (await res.json()) as T;
+  } catch {
+    return undefined as T;
+  }
 }
 
 export function login(username: string, password: string): Promise<{ token: string }> {

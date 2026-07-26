@@ -271,8 +271,12 @@ const gameLog = (): [string, string] =>
 const lineColor = (t: string) =>
   /error|fatal|exit code|oomkilled|panic/i.test(t) ? '#f85149' : /warn|slow|overload|can't keep up/i.test(t) ? '#e3b341' : '#c9d1d9';
 
+// Single-quote a value for safe embedding in the `sh -c` string we build.
+const shQuote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+
 function ConsoleTab({ id, running, isGame, containerId }: { id: string; running: boolean; isGame: boolean; containerId: string | null }) {
   const [cmd, setCmd] = useState('');
+  const [cwd, setCwd] = useState('/'); // tracked client-side so cd persists + shows
   const [log, setLog] = useState<LogLine[]>([]);
   const seqRef = useRef(0);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -321,19 +325,30 @@ function ConsoleTab({ id, running, isGame, containerId }: { id: string; running:
     if (boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;
   }, [log]);
 
-  // Run the command in the container via real `docker exec` (#68). Each command is
-  // a fresh `sh -c` (stateless — a `cd` doesn't persist); a full PTY is #71.
+  // Run the command via real `docker exec` (#68). Each call is a fresh `sh -c`, so
+  // we prepend `cd <cwd> &&` to make the tracked working directory stick, and treat
+  // `cd` specially: run it, then read back `pwd` to update the prompt. A full
+  // persistent PTY is #71.
   const send = async () => {
     const c = cmd.trim();
     if (!c) return;
-    append(`> ${c}`, '#c9d1d9');
+    append(`${cwd} $ ${c}`, '#7ee787');
     setCmd('');
     if (!running) {
       append('server is not running', '#e3b341');
       return;
     }
+    // A `cd` (alone or with a target): resolve the new directory and update cwd.
+    const cdMatch = /^cd(\s+(.*))?$/.exec(c);
     try {
-      const { stdout, stderr, exitCode } = await execCommand(id, c);
+      if (cdMatch) {
+        const target = (cdMatch[2] ?? '').trim();
+        const r = await execCommand(id, `cd ${shQuote(cwd)} && cd ${target ? shQuote(target) : ''} && pwd`);
+        if (r.exitCode === 0) setCwd(r.stdout.trim() || '/');
+        else append((r.stderr || `cd: ${target}: no such directory`).replace(/\n$/, ''), '#f85149');
+        return;
+      }
+      const { stdout, stderr, exitCode } = await execCommand(id, `cd ${shQuote(cwd)} && ${c}`);
       const out = (stdout + (stderr ? (stdout ? '\n' : '') + stderr : '')).replace(/\n$/, '');
       if (out) for (const line of out.split('\n')) append(line, exitCode === 0 ? '#c9d1d9' : '#f85149');
       if (exitCode !== 0) append(`exit code ${exitCode}`, '#e3b341');
@@ -359,7 +374,10 @@ function ConsoleTab({ id, running, isGame, containerId }: { id: string; running:
         ))}
       </div>
       <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-        <span className="mono" style={{ display: 'inline-flex', alignItems: 'center', paddingLeft: 12, color: 'var(--color-text-subtle)', border: '1px solid var(--color-border-strong)', borderRight: 'none', borderRadius: 'var(--radius) 0 0 var(--radius)', background: 'var(--color-surface)' }}>$</span>
+        <span className="mono" title={cwd} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 10px', maxWidth: 220, color: 'var(--color-text-subtle)', border: '1px solid var(--color-border-strong)', borderRight: 'none', borderRadius: 'var(--radius) 0 0 var(--radius)', background: 'var(--color-surface)', fontSize: '.8rem', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', direction: 'rtl' }}>{cwd}</span>
+          <span style={{ color: 'var(--color-primary)' }}>$</span>
+        </span>
         <input className="input mono" value={cmd} onChange={(e) => setCmd(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void send()} placeholder="run a shell command (ls, ps, cat logs/…) and press Enter" style={{ borderLeft: 'none', borderRadius: 0, fontSize: '.85rem' }} />
         <button className="btn btn--primary" data-ripple onClick={() => void send()} style={{ borderRadius: '0 var(--radius) var(--radius) 0' }}>Send</button>
       </div>
@@ -431,6 +449,10 @@ function FilesTab({ id, running }: { id: string; running: boolean }) {
     const name = window.prompt('New folder name');
     if (name?.trim()) void act(() => makeDir(id, joinPath(cwd, name.trim())), `Created ${name.trim()}`);
   };
+  const newFile = () => {
+    const name = window.prompt('New file name');
+    if (name?.trim()) setEditing({ path: joinPath(cwd, name.trim()), content: '' });
+  };
   const rename = (entry: FileEntry) => {
     const name = window.prompt('Rename to', entry.name);
     if (name?.trim() && name.trim() !== entry.name) void act(() => renamePath(id, joinPath(cwd, entry.name), joinPath(cwd, name.trim())), 'Renamed');
@@ -463,6 +485,7 @@ function FilesTab({ id, running }: { id: string; running: boolean }) {
           ))}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn--secondary btn--sm" data-ripple onClick={newFile}>New file</button>
           <button className="btn btn--secondary btn--sm" data-ripple onClick={newFolder}>New folder</button>
           <button className="btn btn--primary btn--sm" data-ripple data-magnetic onClick={() => fileInput.current?.click()}>Upload</button>
           <input ref={fileInput} type="file" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void onUpload(f); e.target.value = ''; }} />
