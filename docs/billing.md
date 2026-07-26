@@ -1,18 +1,40 @@
 # Billing & FinVault integration — design
 
 Status: **design / to build** (Phase 4). This captures *how* NexusInfra charges for usage and links to
-FinVault. The event contract (`payment.request/confirmed/failed`) already exists in `shared/events.ts`,
-wire-compatible with FinVault over the shared `finvault.events` exchange. Product decisions below were
-made with the user; see [`../../CONCEPTS/integration/billing-bridge.md`](../../CONCEPTS/integration/billing-bridge.md)
-for the cross-project design.
+FinVault. The payment event contract (`payment.request/confirmed/failed`) already exists in
+`shared/events.ts`, wire-compatible with FinVault over the shared `finvault.events` exchange. Product
+decisions below were made with the user; see
+[`../../CONCEPTS/integration/billing-bridge.md`](../../CONCEPTS/integration/billing-bridge.md) for the
+cross-project design.
 
-## Model (decided)
+## Two editions (decided)
+
+Charging for servers you host **yourself** makes no sense — billing only applies when the person using
+the panel is **not** the owner of the hardware (a hosting-provider scenario). So NexusInfra ships as
+**one codebase with an edition flag**, not two forks (open-core pattern, cf. GitLab CE/EE):
+
+| | **Community** (default) | **Hosted** ("paid") |
+|---|---|---|
+| Use case | Self-hosted manager, à la Pterodactyl | Imagined multi-tenant hosting provider |
+| Billing / FinVault | **off** | **on** |
+| Credit wallet, top-ups, quotas-with-payment | hidden | active |
+| Billing page in the dashboard | hidden | shown |
+| Billing Bridge service | not run | runs |
+
+- **Edition flag:** `NEXUS_EDITION=community|hosted` (services) + the dashboard reads it from a small
+  public config endpoint (e.g. `GET /config` → `{ edition }`) so the Billing page / usage badges only
+  render in `hosted`. Default is `community` — the standalone manager stays clean and fully usable.
+- Everything below (pricing, wallet, cycle, events) is the **hosted** edition. Community mode simply
+  doesn't load any of it and has no FinVault dependency.
+
+## Model — hosted edition (decided)
 
 - **Usage-based, resource-scaled pricing.** Cost per server = runtime hours × a base hourly rate ×
   a resource factor derived from the server's chosen CPU/RAM limits. Rates live in `billing_plans` so
   they're tunable without a code change.
 - **Quotas per plan.** A plan also caps **how many servers and databases** a user may have (and can cap
-  other extras, e.g. backups). Enforced at create-time in the Orchestrator (409 when over quota).
+  other extras, e.g. backups). Enforced at create-time in the Orchestrator (409 when over quota) — only
+  in hosted edition.
 - **Prepaid credit wallet in NexusInfra.** Each user has a **credit balance** held in NexusInfra. Usage
   each cycle draws it down. You **top up** the balance **via FinVault** — so you can fund the wallet
   without linking a card directly to NexusInfra.
@@ -55,15 +77,21 @@ for the cross-project design.
   that user; FinVault resolves the wallet. Until the gateway lands, the stub login stands in.
 - **Money never touches NexusInfra directly.** NexusInfra only holds a **credit balance**; the actual
   charge happens in FinVault (card/wallet), decoupled over RabbitMQ with AES-GCM-encrypted payloads.
-- **Both run standalone.** The integration is optional and event-driven; NexusInfra works without FinVault
-  (no top-ups, no charging), FinVault works without NexusInfra.
+- **Both run standalone.** The integration is optional and event-driven; NexusInfra (either edition) works
+  without FinVault, FinVault works without NexusInfra.
 
-## Build plan
+## Build plan (Phase 4 — the hosted edition, behind the flag)
 
-1. `shared`: add `billing.server.suspend` + `invoice.generate` event types.
-2. `services/billing-bridge`: pure pricing/quotas (`computeCharge`, `resourceFactor`) + tests; persistence
-   (repository interface, in-memory + Prisma); consume `deployment.created` + `server.started/stopped` →
-   `server_billing` intervals; credit wallet + ledger; top-up (`payment.request`) + result handling.
-3. Cycle runner: monthly aggregation → charge credit → `billing.server.suspend` when short; `invoice.generate`.
-4. Orchestrator: enforce plan quotas at create-time; consume `billing.server.suspend` → stop servers.
-5. Dashboard: **Billing** page — credit balance, top-up (amount → FinVault), usage/cost breakdown, history.
+1. **Edition flag** (#144): `NEXUS_EDITION` across services + `GET /config` → dashboard hides/shows
+   billing. Community stays the default; no behaviour change unless `hosted`.
+2. **shared** (#145): add `billing.server.suspend` + `invoice.generate` event types.
+3. **billing-bridge service** (#146): pure pricing/quotas (`computeCharge`, `resourceFactor`) + tests;
+   persistence (repository interface, in-memory + Prisma); consume `deployment.created` +
+   `server.started/stopped` → `server_billing` intervals; credit wallet + ledger; top-up
+   (`payment.request`) + result handling.
+4. **cycle runner** (#147): monthly aggregation → charge credit → `billing.server.suspend` when short;
+   `invoice.generate`.
+5. **orchestrator** (#148): enforce plan quotas at create-time (hosted) + consume `billing.server.suspend`
+   → stop servers.
+6. **dashboard Billing page** (#149): credit balance, top-up (amount → FinVault), usage/cost breakdown,
+   history — shown only in hosted edition.
