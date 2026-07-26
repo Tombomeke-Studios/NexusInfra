@@ -4,7 +4,7 @@
 
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/next-Phase_5_·_Production-3b82f6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-286_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-305_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -42,14 +42,24 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > mysql container per DB); **backups** (real tar snapshot); **node** register/deregister + location;
 > **live logs (SSE)** + **live stats (`docker stats`)** in the console/header.
 >
-> **Ports** — Control Room `9000` · Node Agent `9100` · Orchestrator `9200` · dashboard `8095`
-> (Docker) / `5173` (Vite dev).
+> **Ports** — Control Room `9000` · Node Agent `9100` · Orchestrator `9200` · Billing Bridge `9300`
+> (hosted only) · API Gateway `9400` · dashboard `8095` (Docker) / `5173` (Vite dev).
 >
-> **Next up — Phase 4 billing, as TWO editions (open-core):** the current app is the **community**
-> (standalone, free) edition. A **hosted** edition adds usage-based billing via FinVault behind an
-> edition flag — because paying for servers you host yourself makes no sense; billing only fits the
-> hosting-provider scenario. Full design + decisions in **[docs/billing.md](docs/billing.md)**; slices
-> are issues **#144–#149** (+ small cleanup #150). **A new session should start there.**
+> **Phase 4 billing is complete (#144–#150)** — one codebase, two editions via
+> `NEXUS_EDITION=community|hosted` (default `community`). Community is the standalone manager with no
+> billing/FinVault; hosted adds resource-scaled usage pricing, plan quotas, a prepaid credit wallet
+> topped up via FinVault, a monthly cycle runner and suspend-on-empty-balance. Design:
+> **[docs/billing.md](docs/billing.md)**.
+>
+> **Also since:** interactive **xterm.js terminal** over a JWT-authenticated WebSocket (#71), the
+> **API Gateway** HTTP core (#20 — CORS, rate limiting, JWT, reverse proxy), **Delete server** wired end
+> to end (#156), Control Room health surfaced in the panel (#157) plus **uptime % / transitions** (#165).
+>
+> **⚠️ Not yet verified live:** the terminal's PTY/WebSocket path and the gateway are unit-tested but
+> have not been exercised against a running stack — do a `docker compose up -d --build` pass.
+>
+> **Next up — Phase 5 production hardening.** Remaining work is mostly environment-dependent
+> (multi-node, Postgres, metrics, HTTPS) or blocked on FinVault (#17 real JWT).
 >
 > **Rebuild reminder:** after merging dashboard/service changes, the running `:8095` stack serves a
 > stale image until you `docker compose up -d --build <service>`. (Cost us a "the background isn't
@@ -91,7 +101,7 @@ Make the panel understandable and tailorable — the options should explain them
 _(The persistent-PTY terminal #69/#71 and the API Gateway #20 are listed under "remaining console /
 gateway work" above.)_
 
-### Phase 4 — Billing, as two editions (open-core) — **START HERE next session**
+### Phase 4 — Billing, as two editions (open-core) — ✅ done
 
 > **Decision:** one codebase, `NEXUS_EDITION=community|hosted` (default community). Community = the
 > standalone manager we have now (no billing/FinVault). Hosted = the imagined hosting-provider scenario
@@ -125,7 +135,7 @@ gateway work" above.)_
 
 - [ ] Multi-node: run several node agents; verify resource-aware placement across them (#21)
 - [ ] Node Agent: auto-restart on crash + offline command queue / replay on reconnect
-- [ ] Control Room: uptime % / history + alerting via the Notification/Mail service + DLQ monitoring
+- [~] Control Room: uptime % / history (#165 — **done**, in-memory) + alerting via the Notification/Mail service + DLQ monitoring (still to do)
 - [ ] Metrics: InfluxDB + Grafana dashboards
 - [ ] Security: secrets handling, rate limiting, service-to-service auth, HTTPS
 - [ ] Production docker-compose + deployment docs; migrate SQLite → PostgreSQL via Prisma

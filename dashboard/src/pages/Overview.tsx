@@ -316,12 +316,15 @@ function ServicesStrip({ monitoring }: { monitoring: MonitoringSnapshot | null }
           {list.map((s) => (
             <span
               key={s.source}
-              title={`last seen ${Math.round(s.lastSeenMsAgo / 1000)}s ago`}
+              title={`last seen ${Math.round(s.lastSeenMsAgo / 1000)}s ago${s.uptimePercent != null ? ` · ${s.uptimePercent}% uptime since first seen` : ''}`}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '5px 12px', borderRadius: 'var(--radius-full)', border: '1px solid var(--color-border)', fontSize: '.82rem' }}
             >
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot(s.status) }} />
               <span style={{ fontFamily: 'var(--font-mono)' }}>{s.source}</span>
               <span style={{ color: 'var(--color-text-subtle)', textTransform: 'capitalize' }}>{s.status}</span>
+              {s.uptimePercent != null && (
+                <span className="tnum" style={{ color: 'var(--color-text-subtle)' }}>{s.uptimePercent}%</span>
+              )}
             </span>
           ))}
         </div>

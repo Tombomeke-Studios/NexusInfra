@@ -12,7 +12,7 @@ event contracts, or infra topology.
 | Service | Status | Role |
 |---|---|---|
 | `shared` (library) | ✅ Built | Event contract + RabbitMQ helpers, wire-compatible with FinVault |
-| `services/control-room` | ✅ Built | Heartbeat monitoring, status thresholds, HTTP status API |
+| `services/control-room` | ✅ Built | Heartbeat monitoring, status thresholds, uptime % + status transitions, HTTP status/uptime API |
 | `services/node-agent` | ✅ Built | Docker container lifecycle (with resource-limit/restart enforcement) + node heartbeat/resource reporting |
 | `services/orchestrator` | ✅ Built | Node registry, deployment API + least-loaded node selection, lifecycle events |
 | `dashboard` | ✅ Built (MVP) | React/Vite panel: login, overview, deployment form, live server list + stop |
@@ -73,7 +73,12 @@ and [billing.md](billing.md).
 ## Heartbeat / status model
 
 1s pulse per source. Control Room derives status from last-seen age: **healthy** < 3s ≤ **degraded**
-< 10s ≤ **offline**. State is in-memory (foundation phase); uptime history is a later phase.
+< 10s ≤ **offline**.
+
+It also tracks **uptime % and status transitions** per source (#165): elapsed time is attributed by
+splitting each span exactly at the healthy threshold, so uptime stays accurate even when evaluation is
+coarse or irregular. Transitions are kept in a per-source capped ring buffer. State is still
+**in-memory** — it resets on restart; persisting history (and alerting on it) is a later phase.
 
 ## Persistence
 

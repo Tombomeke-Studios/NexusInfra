@@ -167,7 +167,8 @@ is the migrations directory.
 ### services/control-room (heartbeat monitoring)
 | Path | Contents |
 |---|---|
-| `src/index.ts` | HTTP `/health` + `/status`, consumes `monitoring.heartbeat.#`, healthy→degraded(3s)→offline(10s) tracking |
+| `src/monitor.ts` | Pure monitor core: `statusFor`, `healthyOverlapMs` (exact threshold splitting) + `Monitor` — per-source liveness, status transitions (capped ring buffer) and uptime % ; every method takes an explicit `now` |
+| `src/index.ts` | Wiring: HTTP `/health` · `/status` (+ `uptimePercent`) · `/uptime` (transitions + cumulative), consumes `monitoring.heartbeat.#`, healthy→degraded(3s)→offline(10s) |
 | `Dockerfile` | Multi-stage workspace build (pattern shared by all services) |
 
 ### services/node-agent (Docker host agent)
@@ -183,9 +184,10 @@ is the migrations directory.
 | `src/backups.ts` | Pure backup helpers: `backupRef`, `isSafeRef`, `backupFilePath` (traversal-safe tar paths) |
 | `src/bkRoutes.ts` | `createBackupRouter` — internal backup HTTP: tar snapshot/restore/delete of a container path (stored on the node) |
 | `src/execRoutes.ts` | `createExecRouter` — internal console HTTP: one-shot `sh -c` command exec in a container (#68) |
+| `src/terminal.ts` | `attachTerminal` — pure bridge wiring a WebSocket to an interactive TTY session (`runtime.execInteractive`); JSON `input`/`resize` frames in, raw output out (#71) |
 | `src/agent.ts` | Command handling: consumes server.start/stop/restart for this node, publishes server.started/stopped/crashed; dependency-injected for testing |
 | `src/agent.test.ts` | Unit tests with a fake runtime + captured publisher (no Docker/broker needed) |
-| `src/index.ts` | Entry: DockerodeRuntime + agent, binds `nexusinfra.node-agent.{nodeId}`, HTTP `/health` + internal SSE `/logs/:containerId` · `/stats/:containerId` + file CRUD (`fileRoutes`) |
+| `src/index.ts` | Entry: DockerodeRuntime + agent, binds `nexusinfra.node-agent.{nodeId}`, HTTP `/health` + internal SSE `/logs/:containerId` · `/stats/:containerId` + file CRUD + internal WS `/terminal/:containerId` (PTY shell, #71) |
 
 ### services/orchestrator (deployment control plane)
 | Path | Contents |
@@ -205,6 +207,7 @@ is the migrations directory.
 | `src/suspend.ts` | `createSuspendHandler` — consumes `billing.server.suspend` (hosted), stops each named running deployment + audits it |
 | `src/billingProxy.ts` | `createBillingProxyRouter` — authenticated `/billing/*` proxy → Billing Bridge, injecting the JWT user id (dashboard never sends a user id) |
 | `src/monitoring.ts` | `createMonitoringRouter` — `GET /monitoring` proxies the Control Room's `/status` to the dashboard (`reachable:false` if it's down) |
+| `src/wsProxy.ts` | Pure `pipeSockets` + `toWsUrl` — the terminal WS proxy plumbing; `index.ts` authenticates the JWT, resolves the container, and pipes the client WS ↔ the Node Agent's `/terminal` WS (#71) |
 | `src/index.ts` | Entry: PrismaRepository + consumers on `nexusinfra.orchestrator`, mounts API, starts the schedule runner (restart/backup actions), HTTP `/health` (`:9200`) |
 | `src/*.test.ts` | Unit tests with the in-memory repo + captured publisher (no Docker/broker/DB needed) |
 | `Dockerfile` | Multi-stage build; runtime applies `prisma migrate deploy` then starts |
@@ -249,6 +252,7 @@ is the migrations directory.
 | `src/routes.tsx` · `src/App.tsx` | Route table (public `/login`; the rest behind `RequireAuth` + `Layout`) wrapped in the router |
 | `src/components/{Layout,RequireAuth}.tsx` | Nav shell + auth-guard route wrapper |
 | `src/components/InfoHint.tsx` | Accessible "?" tooltip for contextual option help (hover/focus); used across the option forms |
+| `src/components/Terminal.tsx` | xterm.js interactive terminal (#71) — dynamically imports xterm, connects the exec WebSocket (`terminalWsUrl`); mounted by the server-detail Terminal tab |
 | `src/components/IntroTour.tsx` | First-run intro walkthrough (skippable, re-openable from the nav Help button) |
 | `src/pages/{Login,Overview,NewDeployment,Servers}.tsx` | Login, node health/overview (+ Platform-services strip from Control Room monitoring, #157), deployment form, live server list + stop |
 | `src/pages/Billing.tsx` | Billing page (hosted only): credit balance, top-up via FinVault, cycle usage/cost, payment history — route + nav link gated on `useEdition().isHosted` |
