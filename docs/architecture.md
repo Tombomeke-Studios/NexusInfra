@@ -16,7 +16,7 @@ event contracts, or infra topology.
 | `services/node-agent` | ✅ Built | Docker container lifecycle (with resource-limit/restart enforcement) + node heartbeat/resource reporting |
 | `services/orchestrator` | ✅ Built | Node registry, deployment API + least-loaded node selection, lifecycle events |
 | `dashboard` | ✅ Built (MVP) | React/Vite panel: login, overview, deployment form, live server list + stop |
-| `services/billing-bridge` | Planned (#18, #19) | Runtime tracking → FinVault payments |
+| `services/billing-bridge` | ✅ Built (hosted) | Runtime tracking, credit wallet + ledger, FinVault top-up flow, plan quotas — inert in community edition (#146) |
 | `services/gateway` | Planned (#20) | JWT validation, routing, WebSocket proxy |
 | Live container console | ✅ Logs + stats (SSE) | Orchestrator proxies the agent's `/logs` + `/stats` SSE to the dashboard; interactive terminal planned (#68/#71) |
 
@@ -46,20 +46,25 @@ via `readPayload()` only.
 | `monitoring.heartbeat.service.{name}` | every service (1s) | control-room |
 | `monitoring.heartbeat.node.{id}` | node-agent (1s pulse, resources every 5s) | control-room |
 | `infra.server.start` / `infra.server.stop` / `infra.server.restart` | orchestrator | node-agent |
-| `infra.server.started` / `infra.server.stopped` / `infra.server.crashed` | node-agent | orchestrator |
-| `infra.deployment.created` | orchestrator | (dashboard/audit; no binder yet) |
+| `infra.server.started` / `infra.server.stopped` / `infra.server.crashed` | node-agent | orchestrator **and** billing-bridge (runtime intervals, hosted) |
+| `infra.deployment.created` | orchestrator | billing-bridge (learns owner + limits for tracking, hosted) |
+| `bank.payment.request` | billing-bridge | FinVault (credit top-up charge) |
+| `bank.payment.confirmed` / `bank.payment.failed` | FinVault | billing-bridge (add/mark-failed credit) |
 | `monitoring.heartbeat.node.{id}` | node-agent | control-room **and** orchestrator (node registry) |
 
 Node Agents each bind their own queue `nexusinfra.node-agent.{nodeId}` to the three `infra.server.*`
 command keys and ignore commands whose payload `nodeId` is not theirs. The Orchestrator binds one
 queue `nexusinfra.orchestrator` to the node heartbeat topic (to maintain its node registry) and the
-three `infra.server.*` report keys (to update deployment state).
+three `infra.server.*` report keys (to update deployment state). In the hosted edition the Billing
+Bridge binds queue `nexusinfra.billing-bridge` to `infra.deployment.created`, the three
+`infra.server.*` report keys, and `bank.payment.confirmed`/`.failed`.
 
-Planned keys (defined in `shared/src/events.ts`, not yet flowing): `payment.*` (billing bridge ↔
-FinVault) plus the hosted-edition billing keys `billing.server.suspend` (billing-bridge →
-orchestrator) and `invoice.generate` (billing-bridge → FinVault) — the latter two are NexusInfra-only
-routing keys added in #145; the envelope/encryption contract is unchanged. See the
-[CONCEPTS routing-key table](../../CONCEPTS/integration/rabbitmq-architecture.md) and [billing.md](billing.md).
+Defined but not yet flowing (`shared/src/events.ts`): the hosted-edition billing keys
+`billing.server.suspend` (billing-bridge → orchestrator, wired in #147/#148) and `invoice.generate`
+(billing-bridge → FinVault, wired in #147) — NexusInfra-only routing keys added in #145; the
+envelope/encryption contract is unchanged. Persistence for the payment `type`s stays wire-compatible
+with FinVault. See the [CONCEPTS routing-key table](../../CONCEPTS/integration/rabbitmq-architecture.md)
+and [billing.md](billing.md).
 
 ## Heartbeat / status model
 
@@ -75,3 +80,7 @@ append-only deployment-event audit trail. Schema source of truth: the service's
 
 The Orchestrator's node registry mirrors the same last-seen status model above (healthy < 3s ≤
 degraded < 10s ≤ offline); only `healthy` nodes are eligible for placement.
+
+In the hosted edition the Billing Bridge keeps its own SQLite store: tunable pricing/quota plans,
+per-deployment runtime intervals, a per-user credit wallet, an append-only credit ledger (top-ups +
+charges), and monthly billing cycles. Same "schema lives in `prisma/migrations`, not in docs" rule.

@@ -29,3 +29,7 @@ Desktop.ini
 logs/
 *.log
 npm-debug.log*
+
+# Local SQLite dev databases (Prisma) — schema lives in prisma/migrations
+*.db
+*.db-journal

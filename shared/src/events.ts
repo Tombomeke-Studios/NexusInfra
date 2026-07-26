@@ -22,7 +22,7 @@ export type NexusInfraEvent =
   | { type: 'server.started'; payload: { deploymentId: string; containerId: string; nodeId: string } }
   | { type: 'server.stopped'; payload: { deploymentId: string; containerId: string } }
   | { type: 'server.crashed'; payload: { deploymentId: string; containerId: string; reason: string } }
-  | { type: 'deployment.created'; payload: { deploymentId: string; userId: string } }
+  | { type: 'deployment.created'; payload: { deploymentId: string; userId: string; resourceLimits?: ResourceLimits } }
   | { type: 'deployment.failed'; payload: { deploymentId: string; reason: string } }
   // ── Billing bridge → FinVault (payload shapes match FinVault's events.ts) ──
   | { type: 'payment.request'; payload: { reference: string; senderWalletId: string; receiverWalletId: string; amount: number; currency: string; description: string } }
