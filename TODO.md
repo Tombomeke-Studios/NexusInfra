@@ -4,7 +4,7 @@
 
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/next-Phase_4_·_Billing_(2_editions)-3b82f6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-240_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-245_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -102,7 +102,7 @@ gateway work" above.)_
 - [x] `shared`: add `billing.server.suspend` + `invoice.generate` events (envelope/encryption unchanged) (#145)
 - [x] `billing-bridge` service: pricing/quotas (pure, tested) + persistence + runtime tracking + credit wallet + top-up flow (#146)
 - [x] `billing-bridge`: monthly cycle runner — charge credit → suspend on short balance → `invoice.generate` (#147)
-- [ ] Orchestrator: enforce plan quotas (max servers/databases) + consume `billing.server.suspend` → stop servers (#148)
+- [x] Orchestrator: enforce plan quotas (max servers/databases) + consume `billing.server.suspend` → stop servers (#148)
 - [ ] Dashboard: **Billing** page (balance, top-up via FinVault, usage breakdown, history) — hosted only (#149)
 
 ### Phase 3+ — remaining console / gateway work

@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express';
-import { buildEnvelope, publishRabbitEvent, type EventEnvelope, type NexusInfraEvent } from 'shared';
+import { buildEnvelope, isHosted, publishRabbitEvent, type EventEnvelope, type NexusInfraEvent } from 'shared';
 import { nodeHealth } from './nodeRegistry.js';
 import { selectNode as defaultSelectNode } from './nodeSelection.js';
 import { generateDatabaseCredentials, isDatabaseEngine } from './dbProvision.js';
@@ -17,6 +17,9 @@ const randomToken = () => Math.random().toString(36).slice(2, 8);
 // Where the (single, local) Node Agent's internal HTTP lives. Multi-node will
 // resolve this per node from the registry.
 const NODE_AGENT_URL = process.env.NODE_AGENT_URL || 'http://node-agent:9100';
+
+// Where the Billing Bridge's internal HTTP lives (hosted edition only).
+const BILLING_BRIDGE_URL = process.env.BILLING_BRIDGE_URL || 'http://billing-bridge:9300';
 
 /** Decide whether a deployment's container can be streamed from, and which one. */
 export function resolveContainerTarget(detail: DeploymentDetail | null): { status: number; error?: string; containerId?: string } {
@@ -47,6 +50,10 @@ export type SnapshotBackupFn = (req: { containerId: string; path?: string }) => 
 export type RestoreBackupFn = (req: { containerId: string; ref: string; path: string }) => Promise<void>;
 export type RemoveBackupFn = (ref: string) => Promise<void>;
 
+/** Plan-quota check against the Billing Bridge (hosted). Fails open so billing outages never block infra. */
+export type QuotaResource = 'servers' | 'databases';
+export type CheckQuotaFn = (userId: string, resource: QuotaResource, current: number) => Promise<{ allowed: boolean; limit: number }>;
+
 export interface ApiDeps {
   repo: Repository;
   publish?: PublishFn;
@@ -57,7 +64,22 @@ export interface ApiDeps {
   restoreBackup?: RestoreBackupFn;
   removeBackup?: RemoveBackupFn;
   scheduleActions?: ScheduleActions;
+  checkQuota?: CheckQuotaFn;
 }
+
+// Default quota check: in the community edition everything is allowed (no
+// billing); in hosted it asks the Billing Bridge. If the bridge is unreachable
+// or errors we fail open — a billing outage must not stop people deploying.
+const defaultCheckQuota: CheckQuotaFn = async (userId, resource, current) => {
+  if (!isHosted()) return { allowed: true, limit: Infinity };
+  try {
+    const r = await fetch(`${BILLING_BRIDGE_URL}/billing/${userId}/quota?resource=${resource}&current=${current}`);
+    if (!r.ok) return { allowed: true, limit: Infinity };
+    return (await r.json()) as { allowed: boolean; limit: number };
+  } catch {
+    return { allowed: true, limit: Infinity };
+  }
+};
 
 const noopScheduleActions: ScheduleActions = { restart: async () => {}, backup: async () => {} };
 
@@ -107,6 +129,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   const restoreBackup = deps.restoreBackup ?? defaultRestoreBackup;
   const removeBackup = deps.removeBackup ?? defaultRemoveBackup;
   const scheduleActions = deps.scheduleActions ?? noopScheduleActions;
+  const checkQuota = deps.checkQuota ?? defaultCheckQuota;
   const router = Router();
 
   const emit = (routingKey: string, event: NexusInfraEvent) =>
@@ -120,13 +143,21 @@ export function createApiRouter(deps: ApiDeps): Router {
       return res.status(400).json({ error: 'name and dockerImage are required' });
     }
 
+    // Enforce the plan's server quota (hosted edition; no-op in community).
+    const userId = userIdOf(req);
+    const currentServers = (await repo.listDeployments()).filter((d) => d.userId === userId).length;
+    const serverQuota = await checkQuota(userId, 'servers', currentServers);
+    if (!serverQuota.allowed) {
+      return res.status(409).json({ error: `server quota reached for your plan (max ${serverQuota.limit})` });
+    }
+
     const node = selectNode(await repo.listNodes(), Date.now());
     if (!node) {
       return res.status(503).json({ error: 'No healthy node available to place the deployment' });
     }
 
     const config = await repo.createServerConfig({
-      userId: userIdOf(req),
+      userId,
       name,
       dockerImage,
       ports: ports ?? {},
@@ -369,6 +400,15 @@ export function createApiRouter(deps: ApiDeps): Router {
 
     const engine = (req.body ?? {}).engine;
     if (!isDatabaseEngine(engine)) return res.status(400).json({ error: 'engine must be mysql, mariadb or postgres' });
+
+    // Enforce the plan's database quota across all of the user's servers (hosted).
+    const userDeployments = (await repo.listDeployments()).filter((d) => d.userId === detail.userId);
+    let currentDatabases = 0;
+    for (const dep of userDeployments) currentDatabases += (await repo.listDatabases(dep.id)).length;
+    const dbQuota = await checkQuota(detail.userId, 'databases', currentDatabases);
+    if (!dbQuota.allowed) {
+      return res.status(409).json({ error: `database quota reached for your plan (max ${dbQuota.limit})` });
+    }
 
     const existing = await repo.listDatabases(detail.id);
     const creds = generateDatabaseCredentials(detail.name, existing.length + 1);

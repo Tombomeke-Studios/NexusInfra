@@ -419,3 +419,45 @@ describe('deployment API', () => {
     expect((await request(schedApp).get(`/deployments/${created.body.id}/schedules`)).body).toEqual([]);
   });
 });
+
+describe('plan quota enforcement (#148)', () => {
+  // A denying checkQuota stands in for the Billing Bridge in the hosted edition.
+  function buildApp(repo: InMemoryRepository, checkQuota: Parameters<typeof createApiRouter>[0]['checkQuota']) {
+    const app = express();
+    app.use(express.json());
+    app.use(createApiRouter({ repo, publish: async () => true, checkQuota, provisionDatabase: async () => ({ containerId: 'db-c', port: 5432 }) }));
+    return app;
+  }
+
+  async function seedNode(repo: InMemoryRepository) {
+    await repo.upsertNode({ id: 'node-local', name: 'node-local', lastHeartbeat: new Date().toISOString(), cpuPercent: 5, ramUsedMb: 500, ramTotalMb: 8000 });
+  }
+
+  it('allows a deployment within the server quota', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const app = buildApp(repo, async () => ({ allowed: true, limit: 5 }));
+    const res = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    expect(res.status).toBe(201);
+  });
+
+  it('rejects a deployment over the server quota with 409', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const app = buildApp(repo, async (_u, resource) => ({ allowed: resource !== 'servers', limit: 2 }));
+    const res = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/server quota/);
+  });
+
+  it('rejects a database over the database quota with 409', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const app = buildApp(repo, async (_u, resource) => ({ allowed: resource !== 'databases', limit: 1 }));
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'abc123' });
+    const res = await request(app).post(`/deployments/${created.body.id}/databases`).send({ engine: 'postgres' });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/database quota/);
+  });
+});
