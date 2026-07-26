@@ -237,6 +237,31 @@ export function createApiRouter(deps: ApiDeps): Router {
     return res.status(202).json({ status: 'restarting', deploymentId: detail.id });
   });
 
+  // Permanently delete a deployment: stop its container if running, deprovision
+  // any managed database containers, then drop the deployment and its records.
+  router.delete('/deployments/:id', async (req: Request, res: Response) => {
+    const detail = await repo.getDeployment(req.params.id);
+    if (!detail) return res.status(404).json({ error: 'deployment not found' });
+
+    if (detail.containerId && detail.nodeId) {
+      await emit(KEY_STOP, {
+        type: 'server.stop',
+        payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId },
+      });
+    }
+    for (const db of await repo.listDatabases(detail.id)) {
+      if (db.containerId) {
+        try {
+          await deprovisionDatabase(db.containerId);
+        } catch {
+          // Best-effort: still remove the record so nothing is orphaned in the UI.
+        }
+      }
+    }
+    await repo.deleteDeployment(detail.id);
+    return res.status(204).end();
+  });
+
   router.get('/nodes', async (_req: Request, res: Response) => {
     const now = Date.now();
     const nodes = await repo.listNodes();

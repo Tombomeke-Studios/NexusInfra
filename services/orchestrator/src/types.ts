@@ -220,6 +220,8 @@ export interface Repository {
   getDeployment(id: string): Promise<DeploymentDetail | null>;
   /** The server config behind a deployment (image/ports/env), for re-starting it. */
   getDeploymentConfig(deploymentId: string): Promise<ServerConfigRecord | null>;
+  /** Remove a deployment and all of its child records (events/databases/backups/schedules/subusers). */
+  deleteDeployment(id: string): Promise<void>;
 
   // Managed databases (#109).
   createDatabase(input: CreateServerDatabaseInput): Promise<ServerDatabaseRecord>;

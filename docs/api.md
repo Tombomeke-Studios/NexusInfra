@@ -206,6 +206,13 @@ Request a running deployment be restarted — emits `infra.server.restart` with 
 the agent restarts the container and reports `server.started`. `202` while restarting, `404` if
 unknown, `409` if the deployment is not running.
 
+### `DELETE /deployments/:id`
+
+Permanently delete a deployment. If it is running, the container is stopped first (emits
+`infra.server.stop`); any managed database containers are deprovisioned (best-effort); then the
+deployment and all its child records (events, databases, backups, schedules, subusers) are removed.
+`204` on success, `404` if unknown.
+
 ### `GET /nodes`
 
 Registered nodes with their latest resources and derived `health` (`healthy | degraded | offline`).

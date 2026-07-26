@@ -295,6 +295,22 @@ export class PrismaRepository implements Repository {
     return d ? toConfigRecord(d.serverConfig) : null;
   }
 
+  async deleteDeployment(id: string): Promise<void> {
+    const deployment = await this.client.deployment.findUnique({ where: { id } });
+    if (!deployment) return;
+    // Remove child rows first (FKs have no cascade), then the deployment and its
+    // now-orphan server config.
+    await this.client.deploymentEvent.deleteMany({ where: { deploymentId: id } });
+    await this.client.serverDatabase.deleteMany({ where: { deploymentId: id } });
+    await this.client.serverBackup.deleteMany({ where: { deploymentId: id } });
+    await this.client.serverSchedule.deleteMany({ where: { deploymentId: id } });
+    await this.client.serverSubuser.deleteMany({ where: { deploymentId: id } });
+    await this.client.deployment.delete({ where: { id } });
+    await this.client.serverConfig.delete({ where: { id: deployment.serverConfigId } }).catch(() => {
+      // Config may be shared/already gone; ignore.
+    });
+  }
+
   async createDatabase(input: CreateServerDatabaseInput): Promise<ServerDatabaseRecord> {
     const db = await this.client.serverDatabase.create({ data: { id: randomUUID(), ...input } });
     return toDatabaseRecord(db);

@@ -169,6 +169,19 @@ export class InMemoryRepository implements Repository {
     return { ...view, events };
   }
 
+  async deleteDeployment(id: string): Promise<void> {
+    const deployment = this.deployments.get(id);
+    if (!deployment) return;
+    // Drop child records first, then the deployment and its (now-orphan) config.
+    this.events = this.events.filter((e) => e.deploymentId !== id);
+    for (const [key, d] of this.databases) if (d.deploymentId === id) this.databases.delete(key);
+    for (const [key, b] of this.backups) if (b.deploymentId === id) this.backups.delete(key);
+    for (const [key, s] of this.schedules) if (s.deploymentId === id) this.schedules.delete(key);
+    for (const [key, su] of this.subusers) if (su.deploymentId === id) this.subusers.delete(key);
+    this.deployments.delete(id);
+    this.configs.delete(deployment.serverConfigId);
+  }
+
   async getDeploymentConfig(deploymentId: string): Promise<ServerConfigRecord | null> {
     const deployment = this.deployments.get(deploymentId);
     if (!deployment) return null;

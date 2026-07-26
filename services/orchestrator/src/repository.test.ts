@@ -130,6 +130,30 @@ describe('InMemoryRepository', () => {
     expect(await repo.getDeployment('nope')).toBeNull();
   });
 
+  it('deletes a deployment and all of its child records', async () => {
+    const config = await repo.createServerConfig({ userId: 'u', name: 'svc', dockerImage: 'nginx' });
+    const deployment = await repo.createDeployment(config.id, 'node-1');
+    await repo.appendDeploymentEvent(deployment.id, 'created', 'deployment created');
+    await repo.createDatabase({ deploymentId: deployment.id, engine: 'postgres', name: 'db', username: 'u', password: 'p', host: 'h', port: 5432, containerId: 'c' });
+    await repo.createBackup({ deploymentId: deployment.id, name: 'b', path: '/data', ref: 'r', sizeBytes: 1 });
+    await repo.createSchedule({ deploymentId: deployment.id, name: 's', cron: '0 0 * * *', action: 'backup', enabled: true });
+    await repo.createSubuser({ deploymentId: deployment.id, email: 'a@b.com', role: 'viewer' });
+
+    await repo.deleteDeployment(deployment.id);
+
+    expect(await repo.getDeployment(deployment.id)).toBeNull();
+    expect(await repo.getDeploymentConfig(deployment.id)).toBeNull();
+    expect(await repo.listDatabases(deployment.id)).toHaveLength(0);
+    expect(await repo.listBackups(deployment.id)).toHaveLength(0);
+    expect(await repo.listSchedules(deployment.id)).toHaveLength(0);
+    expect(await repo.listSubusers(deployment.id)).toHaveLength(0);
+    expect(await repo.listDeployments()).toHaveLength(0);
+  });
+
+  it('deleteDeployment on a missing id is a no-op', async () => {
+    await expect(repo.deleteDeployment('nope')).resolves.toBeUndefined();
+  });
+
   it('creates, lists and deletes managed databases per deployment', async () => {
     const db = await repo.createDatabase({
       deploymentId: 'dep-1',
