@@ -3,6 +3,7 @@ import cors from 'cors';
 import { buildEnvelope, consumeRabbitQueue, publishRabbitEvent, startHeartbeat, type EventEnvelope } from 'shared';
 import { PrismaRepository } from './db.js';
 import { createApiRouter } from './api.js';
+import { createConfigRouter } from './config.js';
 import { createAuthRouter, requireAuth } from './auth.js';
 import { createNodeRegistry } from './nodeRegistry.js';
 import { createLifecycle } from './lifecycle.js';
@@ -51,6 +52,8 @@ app.use(express.json());
 app.get('/health', (_req, res) => {
   res.json({ service: 'orchestrator', status: 'healthy', uptimeSec: Math.round(process.uptime()) });
 });
+// Public runtime config (edition flag) — read by the dashboard before login.
+app.use(createConfigRouter());
 // Public login, then everything below requires a valid Bearer token.
 app.use(createAuthRouter());
 app.use(requireAuth);

@@ -41,6 +41,17 @@ liveness shape. All responses are JSON.
 > without a valid token get `401`. This is a local stand-in — the real FinVault-issued JWT validated
 > at the API Gateway is a later phase (#20).
 
+### `GET /config`  *(public)*
+
+Runtime config the dashboard reads before login to decide whether billing UI renders (#144).
+Contains no sensitive data.
+
+```json
+{ "edition": "community" }
+```
+
+`edition` ∈ `community | hosted`, resolved from the service's `NEXUS_EDITION` (default `community`).
+
 ### `POST /auth/login`  *(public)*
 
 Exchange seeded dev credentials for a signed JWT (12h TTL). Defaults: `admin` / `admin`

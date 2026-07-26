@@ -159,6 +159,7 @@ is the migrations directory.
 | `shared/src/events.ts` | Event union, envelope, AES-256-GCM payload encryption — **wire-compatible with FinVault** (same algorithm, KDF salt, envelope shape) |
 | `shared/src/rabbitmq.ts` | Connect/publish/consume helpers targeting the shared `finvault.events` topic exchange + `finvault.events.dlx` |
 | `shared/src/heartbeat.ts` | `startHeartbeat(name)` (service pulse) + `startNodeHeartbeat(nodeId, collectResources)` (node pulse, resources every 5s); both take an injectable publisher |
+| `shared/src/edition.ts` | Open-core edition flag: `Edition` type + `resolveEdition`/`getEdition`/`isHosted` (reads `NEXUS_EDITION`, defaults `community`) |
 | `shared/src/events.test.ts` | Wire-compatibility guard tests (encryption round-trip, ciphertext layout, envelope shape) |
 
 ### services/control-room (heartbeat monitoring)
@@ -196,6 +197,7 @@ is the migrations directory.
 | `src/dbProvision.ts` | Pure managed-DB helpers: `isDatabaseEngine` guard + `generateDatabaseCredentials` (safe name/user/password) |
 | `src/cron.ts` | Pure 5-field cron matcher (`cronMatches`, `isValidCron`) for the schedule runner |
 | `src/scheduler.ts` | Schedule runner: pure `selectDue`/`tickSchedules` + `startScheduler` (1-min poll); actions injected |
+| `src/config.ts` | `createConfigRouter` — public `GET /config` → `{ edition }` (edition flag, mounted before auth) |
 | `src/api.ts` | Express deployment API: create/list/get deployments, stop, node health |
 | `src/lifecycle.ts` | Consumes `infra.server.started/stopped/crashed`, updates deployment status + audit |
 | `src/index.ts` | Entry: PrismaRepository + consumers on `nexusinfra.orchestrator`, mounts API, starts the schedule runner (restart/backup actions), HTTP `/health` (`:9200`) |
@@ -207,6 +209,7 @@ is the migrations directory.
 |---|---|
 | `src/api.ts` | Typed Orchestrator client (login, nodes, deployments, create, stop); attaches the JWT; `ApiError` on non-2xx |
 | `src/session.ts` | Token get/set/clear + `isAuthenticated` (single place that touches the token in localStorage) |
+| `src/edition.tsx` | `EditionProvider` + `useEdition()` — reads `GET /config`, exposes `edition`/`isHosted` so billing UI renders only in hosted |
 | `src/prefs.ts` | Persisted client preferences (localStorage): first-run intro flag + customisable New Deployment defaults (`getDeploymentDefaults`) |
 | `src/gameSpec.ts` | Pure `buildGameDeployment` — maps the game picker to a real image + startup env/port (Minecraft/Valheim/Rust/CS2) |
 | `src/pages/Preferences.tsx` | Preferences page — edit/save/reset the New Deployment defaults |
