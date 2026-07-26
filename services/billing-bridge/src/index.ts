@@ -4,6 +4,7 @@ import { consumeRabbitQueue, getEdition, isHosted, readPayload, startHeartbeat, 
 import { PrismaRepository } from './db.js';
 import { createBillingService } from './service.js';
 import { createBillingRouter } from './api.js';
+import { startCycleRunner } from './cycle.js';
 
 // ── Billing Bridge (hosted edition) ───────────────────────────────────────────
 // Turns bus events into runtime intervals and credit movements, drives the
@@ -66,6 +67,11 @@ async function start() {
       }
     );
     console.log('[BillingBridge] Consuming deployment/runtime + payment events');
+
+    // Bill the previous month once it closes: charge credit, suspend on short
+    // balance, emit invoices. Idempotent, so hourly polling is safe.
+    startCycleRunner({ repo });
+    console.log('[BillingBridge] Cycle runner started (hourly poll)');
 
     startHeartbeat('billing-bridge', 1000);
     console.log('[BillingBridge] Publishing heartbeat on monitoring.heartbeat.service.billing-bridge');

@@ -199,4 +199,15 @@ export class PrismaRepository implements Repository {
     const rows = await this.client.billingCycle.findMany({ where: { userId }, orderBy: { periodStart: 'desc' } });
     return rows.map(toCycle);
   }
+
+  async listBillableUserIds(): Promise<string[]> {
+    const [intervals, wallets] = await Promise.all([
+      this.client.serverBilling.findMany({ distinct: ['userId'], select: { userId: true } }),
+      this.client.creditWallet.findMany({ select: { userId: true } }),
+    ]);
+    const ids = new Set<string>();
+    for (const i of intervals) ids.add(i.userId);
+    for (const w of wallets) ids.add(w.userId);
+    return [...ids];
+  }
 }

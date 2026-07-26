@@ -50,6 +50,8 @@ via `readPayload()` only.
 | `infra.deployment.created` | orchestrator | billing-bridge (learns owner + limits for tracking, hosted) |
 | `bank.payment.request` | billing-bridge | FinVault (credit top-up charge) |
 | `bank.payment.confirmed` / `bank.payment.failed` | FinVault | billing-bridge (add/mark-failed credit) |
+| `billing.server.suspend` | billing-bridge (cycle runner) | orchestrator (stop servers — consumer wired in #148) |
+| `invoice.generate` | billing-bridge (cycle runner) | FinVault (monthly invoice record) |
 | `monitoring.heartbeat.node.{id}` | node-agent | control-room **and** orchestrator (node registry) |
 
 Node Agents each bind their own queue `nexusinfra.node-agent.{nodeId}` to the three `infra.server.*`
@@ -59,11 +61,10 @@ three `infra.server.*` report keys (to update deployment state). In the hosted e
 Bridge binds queue `nexusinfra.billing-bridge` to `infra.deployment.created`, the three
 `infra.server.*` report keys, and `bank.payment.confirmed`/`.failed`.
 
-Defined but not yet flowing (`shared/src/events.ts`): the hosted-edition billing keys
-`billing.server.suspend` (billing-bridge → orchestrator, wired in #147/#148) and `invoice.generate`
-(billing-bridge → FinVault, wired in #147) — NexusInfra-only routing keys added in #145; the
-envelope/encryption contract is unchanged. Persistence for the payment `type`s stays wire-compatible
-with FinVault. See the [CONCEPTS routing-key table](../../CONCEPTS/integration/rabbitmq-architecture.md)
+The monthly cycle runner (billing-bridge, hosted) publishes `billing.server.suspend` (→ orchestrator,
+consumer wired in #148) and `invoice.generate` (→ FinVault) — NexusInfra-only routing keys added in
+#145; the envelope/encryption contract is unchanged, and the payment `type`s stay wire-compatible with
+FinVault. See the [CONCEPTS routing-key table](../../CONCEPTS/integration/rabbitmq-architecture.md)
 and [billing.md](billing.md).
 
 ## Heartbeat / status model
