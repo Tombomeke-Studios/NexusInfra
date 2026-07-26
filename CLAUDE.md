@@ -162,6 +162,7 @@ is the migrations directory.
 | `shared/src/rabbitmq.ts` | Connect/publish/consume helpers targeting the shared `finvault.events` topic exchange + `finvault.events.dlx` |
 | `shared/src/heartbeat.ts` | `startHeartbeat(name)` (service pulse) + `startNodeHeartbeat(nodeId, collectResources)` (node pulse, resources every 5s); both take an injectable publisher |
 | `shared/src/edition.ts` | Open-core edition flag: `Edition` type + `resolveEdition`/`getEdition`/`isHosted` (reads `NEXUS_EDITION`, defaults `community`) |
+| `shared/src/outbox.ts` | `PublishOutbox` + `startOutboxFlusher` — holds a failed publish and replays it **in order** when the broker returns; bounded (drop-oldest + `droppedCount`). Wrap publishers whose events carry state (#167) |
 | `shared/src/events.test.ts` | Wire-compatibility guard tests (encryption round-trip, ciphertext layout, envelope shape) |
 
 ### services/control-room (heartbeat monitoring)
@@ -185,7 +186,7 @@ is the migrations directory.
 | `src/bkRoutes.ts` | `createBackupRouter` — internal backup HTTP: tar snapshot/restore/delete of a container path (stored on the node) |
 | `src/execRoutes.ts` | `createExecRouter` — internal console HTTP: one-shot `sh -c` command exec in a container (#68) |
 | `src/terminal.ts` | `attachTerminal` — pure bridge wiring a WebSocket to an interactive TTY session (`runtime.execInteractive`); JSON `input`/`resize` frames in, raw output out (#71) |
-| `src/agent.ts` | Command handling: consumes server.start/stop/restart for this node, publishes server.started/stopped/crashed; dependency-injected for testing |
+| `src/agent.ts` | Command handling: consumes server.start/stop/restart for this node, publishes server.started/stopped/crashed; dependency-injected for testing (index.ts injects the outbox-backed publisher) |
 | `src/agent.test.ts` | Unit tests with a fake runtime + captured publisher (no Docker/broker needed) |
 | `src/index.ts` | Entry: DockerodeRuntime + agent, binds `nexusinfra.node-agent.{nodeId}`, HTTP `/health` + internal SSE `/logs/:containerId` · `/stats/:containerId` + file CRUD + internal WS `/terminal/:containerId` (PTY shell, #71) |
 
@@ -290,6 +291,9 @@ is the migrations directory.
 - Event payloads may arrive encrypted — always read them via `readPayload()`, never `event.payload` directly.
 - Consumers `nack` without requeue on error → message dead-letters to `finvault.events.dlq` (3-retry
   semantics live at the broker level, not in code).
+- **`publishRabbitEvent` returns `false` and drops the event when the broker is unreachable.** For any
+  event that carries state, wrap the publisher in a `PublishOutbox` (#167) so it's replayed in order
+  instead of lost — durable queues don't help a publish that never landed. Don't buffer heartbeats.
 - Heartbeat cadence: 1s pulse; Control Room thresholds: degraded ≥3s, offline ≥10s.
 - All timestamps are UTC ISO-8601 strings in event payloads.
 - Dockerfiles build from the **repo root** context (they copy `shared/` + the service dir).
