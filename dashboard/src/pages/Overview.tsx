@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { listNodes, listDeployments, registerNode, deregisterNode, type NodeView, type DeploymentView } from '../api';
+import { listNodes, listDeployments, registerNode, deregisterNode, getMonitoring, type NodeView, type DeploymentView, type MonitoringSnapshot } from '../api';
 import { CountUp } from '../components/CountUp';
 import { useToast } from '../components/Toast';
 import { InfoHint } from '../components/InfoHint';
@@ -23,6 +23,7 @@ const healthStyle = (h: NodeView['health']) =>
 export function Overview() {
   const [nodes, setNodes] = useState<NodeView[] | null>(null);
   const [deployments, setDeployments] = useState<DeploymentView[] | null>(null);
+  const [monitoring, setMonitoring] = useState<MonitoringSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [addingNode, setAddingNode] = useState(false);
   const [maint, setMaint] = useState<string[]>([]);
@@ -40,15 +41,26 @@ export function Overview() {
     []
   );
 
+  // Control Room monitoring is best-effort: never let it error the Overview.
+  const refreshMonitoring = useCallback(
+    () => getMonitoring().then(setMonitoring).catch(() => setMonitoring({ monitored: [], reachable: false })),
+    []
+  );
+
   useEffect(() => {
     let alive = true;
     void refresh(true);
-    const t = setInterval(() => alive && void refresh(false), 5000); // live meters
+    void refreshMonitoring();
+    const t = setInterval(() => {
+      if (!alive) return;
+      void refresh(false);
+      void refreshMonitoring();
+    }, 5000); // live meters
     return () => {
       alive = false;
       clearInterval(t);
     };
-  }, [refresh]);
+  }, [refresh, refreshMonitoring]);
 
   const loading = !error && (!nodes || !deployments);
   const ns = nodes ?? [];
@@ -139,6 +151,9 @@ export function Overview() {
               </div>
             ))}
       </div>
+
+      {/* Platform services (Control Room monitoring, #157) */}
+      <ServicesStrip monitoring={monitoring} />
 
       {/* Fleet utilization */}
       <div className="card" style={{ padding: '20px 22px', marginBottom: 30 }}>
@@ -263,6 +278,54 @@ export function Overview() {
           ))
         )}
       </div>
+    </div>
+  );
+}
+
+// Platform-services health strip (#157). Renders the Control Room's live view of
+// every service heartbeat so the Control Room (and the rest of the stack) is
+// visibly up in the panel — previously it was monitored but never surfaced.
+function ServicesStrip({ monitoring }: { monitoring: MonitoringSnapshot | null }) {
+  const dot = (status: string) =>
+    status === 'healthy' ? 'var(--color-success)' : status === 'degraded' ? 'var(--color-warning)' : 'var(--color-danger)';
+
+  // Guard against a malformed/empty payload so the strip never crashes Overview.
+  const list = Array.isArray(monitoring?.monitored) ? monitoring!.monitored : [];
+  const reachable = monitoring?.reachable === true;
+
+  return (
+    <div className="card" style={{ padding: '16px 22px', marginBottom: 30 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
+        <strong style={{ fontSize: '.98rem' }}>
+          Platform services
+          <InfoHint text="The Control Room watches every service and node heartbeat on the bus. healthy < 3s since last beat, degraded < 10s, then offline." label="Services help" />
+        </strong>
+        <span style={{ fontSize: '.8rem', color: 'var(--color-text-subtle)' }}>Control Room monitoring</span>
+      </div>
+      {!monitoring ? (
+        <div className="skeleton" style={{ height: 26, width: 240 }} />
+      ) : !reachable && list.length === 0 ? (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '.86rem', color: 'var(--color-danger)' }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--color-danger)' }} />
+          Control Room unreachable
+        </span>
+      ) : list.length === 0 ? (
+        <span className="subtle" style={{ fontSize: '.86rem' }}>No service heartbeats seen yet.</span>
+      ) : (
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          {list.map((s) => (
+            <span
+              key={s.source}
+              title={`last seen ${Math.round(s.lastSeenMsAgo / 1000)}s ago`}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '5px 12px', borderRadius: 'var(--radius-full)', border: '1px solid var(--color-border)', fontSize: '.82rem' }}
+            >
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot(s.status) }} />
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{s.source}</span>
+              <span style={{ color: 'var(--color-text-subtle)', textTransform: 'capitalize' }}>{s.status}</span>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

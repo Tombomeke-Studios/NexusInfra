@@ -4,6 +4,7 @@ import { buildEnvelope, consumeRabbitQueue, publishRabbitEvent, readPayload, sta
 import { PrismaRepository } from './db.js';
 import { createApiRouter } from './api.js';
 import { createBillingProxyRouter } from './billingProxy.js';
+import { createMonitoringRouter } from './monitoring.js';
 import { createConfigRouter } from './config.js';
 import { createAuthRouter, requireAuth } from './auth.js';
 import { createNodeRegistry } from './nodeRegistry.js';
@@ -63,6 +64,8 @@ app.use(requireAuth);
 app.use(createApiRouter({ repo, scheduleActions }));
 // Authenticated billing proxy → Billing Bridge (hosted edition; injects the JWT user id).
 app.use(createBillingProxyRouter());
+// Surfaces the Control Room's live service/node monitoring to the dashboard (#157).
+app.use(createMonitoringRouter());
 app.listen(PORT, () => console.log(`[Orchestrator] HTTP listening on http://localhost:${PORT}`));
 
 // Evaluate schedules once a minute (restart/backup on a cron).

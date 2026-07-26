@@ -189,6 +189,23 @@ export function listNodes(): Promise<NodeView[]> {
   return request('/nodes');
 }
 
+// ── Service monitoring (Control Room, proxied via the orchestrator, #157) ──────
+export interface MonitoredService {
+  source: string;
+  status: NodeHealth;
+  lastSeenMsAgo: number;
+}
+
+export interface MonitoringSnapshot {
+  monitored: MonitoredService[];
+  reachable: boolean;
+}
+
+/** The Control Room's live view of every service/node heartbeat on the bus. */
+export function getMonitoring(): Promise<MonitoringSnapshot> {
+  return request('/monitoring');
+}
+
 /** Register (or relabel) a node's metadata (#113). It reads offline until its agent connects. */
 export function registerNode(input: { id?: string; name?: string; location?: string }): Promise<NodeView> {
   return request('/nodes', { method: 'POST', body: JSON.stringify(input) });

@@ -61,6 +61,8 @@ services:
       - DATABASE_URL=file:/data/orchestrator.db
       - JWT_SECRET=${JWT_SECRET:-dev-secret}
       - NODE_AGENT_URL=http://node-agent:9100
+      - CONTROL_ROOM_URL=http://control-room:9000
+      - BILLING_BRIDGE_URL=http://billing-bridge:9300
     volumes:
       - orchestrator_data:/data
     depends_on:
