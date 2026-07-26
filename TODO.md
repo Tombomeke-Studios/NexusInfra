@@ -4,7 +4,7 @@
 
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/next-Phase_5_·_Production-3b82f6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-252_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-275_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -109,7 +109,7 @@ gateway work" above.)_
 
 - [ ] WebSocket transport for a persistent exec/terminal session (gateway, JWT) (#69 — one-shot exec already works over HTTP)
 - [ ] Dashboard: full interactive terminal (xterm.js, persistent PTY) for a server (#71)
-- [ ] API Gateway: JWT validation, routing, WebSocket proxy (#20) — unblocks the terminal + real subuser enforcement
+- [~] API Gateway: JWT validation, routing, WebSocket proxy (#20) — **HTTP core done** (CORS, rate limit, JWT, reverse proxy, `:9400`); WS proxy pending with the terminal
 - [ ] Replace stub login with real FinVault JWT via the Gateway (#17, #20)
 
 ### 🐛 Bugs / fixes (open)

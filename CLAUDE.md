@@ -151,6 +151,7 @@ is the migrations directory.
 | Control Room health / status | http://localhost:9000/health · /status |
 | Orchestrator API | http://localhost:9200 (login `admin`/`admin`) |
 | Billing Bridge (hosted only) | http://localhost:9300/health · billing routes when `NEXUS_EDITION=hosted` |
+| API Gateway | http://localhost:9400 (fronts the orchestrator; JWT + rate limit) |
 
 ## 7. Codebase map — where is what
 
@@ -224,6 +225,16 @@ is the migrations directory.
 | `src/index.ts` | Entry: PrismaRepository + service; consumes deployment/runtime + `bank.payment.*`; HTTP `/health` (+ billing routes when hosted) on `:9300`; inert in community |
 | `prisma/schema.prisma` | Prisma + SQLite: `BillingPlan`, `UserPlan`, `ServerBilling`, `CreditWallet`, `CreditLedger`, `BillingCycle`. `prisma/migrations` is the source of truth |
 | `Dockerfile` | Multi-stage build; runtime applies `prisma migrate deploy` then starts |
+
+### services/gateway (API gateway — single entry point, #20)
+| Path | Contents |
+|---|---|
+| `src/routes.ts` | Pure routing table + `matchRoute` (longest-prefix, public/protected) |
+| `src/auth.ts` | `verifyToken`/`bearerToken` — validates the same JWTs the orchestrator issues (FinVault JWT later, #17) |
+| `src/rateLimit.ts` | Pure token-bucket `RateLimiter` (per-IP/user, injected clock) |
+| `src/gateway.ts` | `createGatewayApp` — CORS → rate limit → JWT (protected routes) → reverse proxy (fetch) to the matched backend; injectable seams for tests |
+| `src/index.ts` | Entry: builds the app for `ORCHESTRATOR_URL`, heartbeat, listens `:9400`. WS terminal proxy pending (#69/#71) |
+| `Dockerfile` | Multi-stage build |
 
 ### dashboard (React web panel)
 | Path | Contents |

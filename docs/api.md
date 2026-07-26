@@ -285,6 +285,22 @@ Start a credit top-up funded via FinVault — body `{ amount, currency? }`. Reco
 entry and emits `payment.request` to FinVault; credit is added only on `payment.confirmed`. `202` with
 `{ status: "pending", reference, entry }`; `400` on a non-positive amount.
 
+## API Gateway (`:9400`)
+
+The single external entry point (#20). It applies **CORS**, **per-client rate limiting** (token bucket,
+per authenticated user or IP), and **JWT validation** on protected routes, then reverse-proxies to the
+backend (the Orchestrator, which itself fronts Billing Bridge + Control Room). Public routes (`/auth/*`,
+`/config`) skip auth; everything else requires a valid `Authorization: Bearer <jwt>`. The gateway
+forwards the token and adds `x-user-id`/`x-forwarded-for` for the backend.
+
+- `GET /health` — the gateway's own liveness (not proxied).
+- Any other path → matched by longest prefix and proxied: `401` (missing/invalid token on a protected
+  route), `404` (no route), `429` (rate limit exceeded), `502` (backend unreachable), else the backend's
+  response verbatim.
+
+The WebSocket proxy for the interactive terminal (#69/#71) is not built yet. The dashboard currently
+calls the Orchestrator directly; routing it through the gateway is a follow-up.
+
 ## Event contract (bus API)
 
 The full event union is defined in `shared/src/events.ts` — that file is the contract's source of
