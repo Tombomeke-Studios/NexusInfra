@@ -2,7 +2,8 @@ import os from 'os';
 import { createServer } from 'http';
 import express from 'express';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { consumeRabbitQueue, publishRabbitEvent, PublishOutbox, startNodeHeartbeat, startOutboxFlusher } from 'shared';
+import { consumeRabbitQueue, isDefaultInternalToken, publishRabbitEvent, PublishOutbox, startNodeHeartbeat, startOutboxFlusher } from 'shared';
+import { requireInternalToken, upgradeAuthorized } from './internalAuth.js';
 import { DockerodeRuntime } from './runtime.js';
 import { createAgent } from './agent.js';
 import { createFileRouter } from './fileRoutes.js';
@@ -48,6 +49,16 @@ app.get('/health', (_req, res) => {
     droppedEvents: reportOutbox.droppedCount,
   });
 });
+
+// ── Everything below is internal: Orchestrator-only ───────────────────────────
+// These endpoints drive Docker directly (exec, file writes, an interactive
+// shell), so they require the shared internal token (#169). /health above stays
+// open for probes. Without this guard, anyone able to reach this port would have
+// unauthenticated command execution in every container.
+if (isDefaultInternalToken()) {
+  console.warn(`[Node Agent ${NODE_ID}] INTERNAL_API_TOKEN is unset — using the insecure dev default. Set it in any real deployment.`);
+}
+app.use(requireInternalToken());
 
 // ── HTTP: container log stream (SSE) ──────────────────────────────────────────
 // Internal endpoint (reached only via the Orchestrator's proxy on the private
@@ -113,6 +124,12 @@ server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url ?? '', 'http://node-agent');
   const match = /^\/terminal\/([^/]+)$/.exec(url.pathname);
   if (!match) {
+    socket.destroy();
+    return;
+  }
+  // A terminal is a root shell in the container — the upgrade must be authorized
+  // too, since Express middleware doesn't run on a WS handshake (#169).
+  if (!upgradeAuthorized(req)) {
     socket.destroy();
     return;
   }
