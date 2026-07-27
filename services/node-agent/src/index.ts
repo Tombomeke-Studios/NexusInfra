@@ -19,6 +19,12 @@ import { attachTerminal, type TerminalSocket } from './terminal.js';
 const NODE_ID = process.env.NODE_ID || `node-${os.hostname()}`;
 const PORT = Number(process.env.PORT) || 9100;
 
+// Where the Orchestrator can reach this agent's HTTP/WS API. Advertised on the
+// heartbeat so multi-node deployments route to the owning node (#171). The default
+// works on a compose/DNS network where the hostname resolves; set AGENT_URL
+// explicitly for anything else.
+const AGENT_URL = process.env.AGENT_URL || `http://${os.hostname()}:${PORT}`;
+
 const runtime = new DockerodeRuntime();
 
 // Lifecycle reports go through an outbox (#167): if the broker is briefly
@@ -154,8 +160,8 @@ async function start() {
     console.log(`[Node Agent ${NODE_ID}] Listening for server commands`);
 
     // 1s liveness pulse; CPU/RAM/disk snapshot every 5s. Control Room monitors it.
-    startNodeHeartbeat(NODE_ID, () => runtime.collectResources());
-    console.log(`[Node Agent ${NODE_ID}] Publishing heartbeat on monitoring.heartbeat.node.${NODE_ID}`);
+    startNodeHeartbeat(NODE_ID, () => runtime.collectResources(), { agentUrl: AGENT_URL });
+    console.log(`[Node Agent ${NODE_ID}] Publishing heartbeat on monitoring.heartbeat.node.${NODE_ID} (agent at ${AGENT_URL})`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[Node Agent ${NODE_ID}] Failed to connect to event bus:`, message);
