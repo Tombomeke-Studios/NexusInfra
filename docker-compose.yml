@@ -34,6 +34,9 @@ services:
       context: .
       dockerfile: services/node-agent/Dockerfile
     container_name: nexusinfra-node-agent
+    # Publishing 9100 is a dev convenience for poking the internal API directly.
+    # It is NOT needed in production — the Orchestrator reaches the agent over the
+    # compose network. Drop this mapping there to keep the surface off the host.
     ports:
       - "9100:9100"
     environment:
@@ -41,6 +44,8 @@ services:
       - NODE_ID=node-local
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
+      # Must match the Orchestrator's value (#169).
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-dev-internal-token}
     # The agent drives the host Docker daemon, so it needs the socket mounted.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -63,6 +68,8 @@ services:
       - NODE_AGENT_URL=http://node-agent:9100
       - CONTROL_ROOM_URL=http://control-room:9000
       - BILLING_BRIDGE_URL=http://billing-bridge:9300
+      # Must match the Node Agent's value (#169).
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-dev-internal-token}
     volumes:
       - orchestrator_data:/data
     depends_on:

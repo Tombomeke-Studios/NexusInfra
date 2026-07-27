@@ -2,9 +2,9 @@ import { createServer } from 'http';
 import express from 'express';
 import cors from 'cors';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
-import { buildEnvelope, consumeRabbitQueue, publishRabbitEvent, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
+import { buildEnvelope, consumeRabbitQueue, getInternalToken, INTERNAL_TOKEN_HEADER, publishRabbitEvent, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
 import { PrismaRepository } from './db.js';
-import { createApiRouter, resolveContainerTarget } from './api.js';
+import { agentFetch, createApiRouter, resolveContainerTarget } from './api.js';
 import { verifyToken } from './auth.js';
 import { pipeSockets, toWsUrl, type DuplexSocket } from './wsProxy.js';
 import { createBillingProxyRouter } from './billingProxy.js';
@@ -45,7 +45,7 @@ const scheduleActions: ScheduleActions = {
   async backup(deploymentId) {
     const detail = await repo.getDeployment(deploymentId);
     if (!detail?.containerId) return;
-    const r = await fetch(`${NODE_AGENT_URL}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ containerId: detail.containerId }) });
+    const r = await agentFetch(`${NODE_AGENT_URL}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ containerId: detail.containerId }) });
     if (!r.ok) throw new Error('scheduled backup failed');
     const snap = (await r.json()) as { ref: string; sizeBytes: number; path: string };
     await repo.createBackup({ deploymentId: detail.id, name: `backup-${new Date().toISOString().replace(/[:.]/g, '-')}`, path: snap.path, ref: snap.ref, sizeBytes: snap.sizeBytes });
@@ -110,7 +110,12 @@ server.on('upgrade', async (req, socket, head) => {
   const cols = url.searchParams.get('cols') ?? '80';
   const rows = url.searchParams.get('rows') ?? '24';
   wss.handleUpgrade(req, socket, head, (clientWs) => {
-    const upstream = new WebSocket(`${toWsUrl(NODE_AGENT_URL)}/terminal/${target.containerId}?cols=${cols}&rows=${rows}`);
+    // The agent authorizes this upgrade with the shared internal token (#169) —
+    // this hop is server-to-server, so a header is available (unlike the browser's
+    // handshake, which carries its JWT as a query param).
+    const upstream = new WebSocket(`${toWsUrl(NODE_AGENT_URL)}/terminal/${target.containerId}?cols=${cols}&rows=${rows}`, {
+      headers: { [INTERNAL_TOKEN_HEADER]: getInternalToken() },
+    });
     upstream.on('open', () => pipeSockets(toDuplex(clientWs), toDuplex(upstream)));
     upstream.on('error', () => clientWs.close());
   });

@@ -29,6 +29,31 @@ Cross-project security design: [`../../CONCEPTS/integration/security.md`](../../
   one identity across the ecosystem.
 - WebSocket connections authenticate via JWT in the query string, mirroring FinVault's gateway.
 
+## Service-to-service auth (#169)
+
+The Node Agent's HTTP/WS surface drives Docker directly — `POST /exec/:id`, file writes, and a
+`WS /terminal/:id` root shell — with the Docker socket mounted. It was previously **unauthenticated**,
+described only as "internal, proxy-only". Nothing enforced that, and compose published its port to the
+host, so anyone able to reach it had unauthenticated command execution in every container, bypassing the
+Orchestrator's JWT entirely.
+
+Now:
+
+- Every internal route **and** the WebSocket upgrade require a shared secret (`x-internal-token`).
+  `GET /health` stays open so probes work.
+- Tokens are compared **constant-time** (SHA-256 then `timingSafeEqual`), so neither the token's
+  contents nor its length leak through timing, and a length mismatch can't throw.
+- The secret is `INTERNAL_API_TOKEN`, shared by the Orchestrator and Agent. It falls back to a
+  well-known dev default (matching the existing `JWT_SECRET` convention) so local dev works with no
+  setup; the Agent **logs a warning on startup when the default is in use**. Override it with a strong
+  random value in any real deployment.
+- "Internal" is now an enforced boundary rather than a convention, but it is still **defence in depth,
+  not isolation**: don't publish the agent's port in production (the compose mapping is a dev
+  convenience) and keep the agent on a private network.
+
+**Remaining gap:** the token is a static shared secret with no rotation, and AMQP/HTTP hops are still
+plaintext on the private network. mTLS and rotation belong with the production hardening (#21).
+
 ## Container file management (#108)
 
 - The Node Agent's file API operates **inside** the target container. Every path is normalised to a
@@ -36,14 +61,14 @@ Cross-project security design: [`../../CONCEPTS/integration/security.md`](../../
   container root (they also never reach the host — operations run in the container's namespace).
 - File operations are issued as **argv arrays**, never a shell string, so a crafted path can't inject
   a command; writes go through Docker's archive API rather than a shell redirect.
-- The endpoints are **agent-internal** — reached only via the Orchestrator's proxy on the private
-  network, which gates them on a running deployment. User-facing authorisation rides on the same JWT
-  as the rest of the API; per-server subuser scoping is a later slice (#112).
+- The endpoints are **agent-internal** — token-guarded (#169) and reached via the Orchestrator's proxy,
+  which gates them on a running deployment. User-facing authorisation rides on the same JWT as the rest
+  of the API; per-server subuser scoping is a later slice (#112).
 
 ## Managed databases (#109)
 
 - A database is provisioned as its **own engine container** with credentials the Orchestrator
-  generates; the agent's database endpoint is internal (proxy-only) and engine-whitelisted.
+  generates; the agent’s database endpoint is internal (token-guarded, #169) and engine-whitelisted.
 - **Known gap:** the generated database password is currently stored in plaintext in the Orchestrator's
   database. It should be encrypted at rest (the `FINVAULT_MESSAGE_KEY` primitives already exist) or
   vaulted before production — tracked with the auth/secrets hardening (#21).
@@ -51,7 +76,8 @@ Cross-project security design: [`../../CONCEPTS/integration/security.md`](../../
 ## Backups (#110)
 
 - A backup is a tar the agent writes under an **opaque, filesystem-safe ref** (validated so a crafted
-  ref can't traverse out of the backup directory); the agent's backup endpoint is internal (proxy-only).
+  ref can't traverse out of the backup directory); the agent's backup endpoint is internal
+  (token-guarded, #169).
 - Tars live on the **node that made them** (single-node MVP); the Orchestrator stores only metadata, not
   the blob. Multi-node placement + off-node backup storage is a later (production) concern.
 
