@@ -22,6 +22,7 @@ model Node {
   name          String
   location      String?
   ipAddress     String?
+  agentUrl      String?
   lastHeartbeat DateTime
   cpuPercent    Float?
   ramUsedMb     Float?

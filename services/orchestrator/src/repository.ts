@@ -46,6 +46,7 @@ export class InMemoryRepository implements Repository {
       name: input.name ?? existing?.name ?? input.id,
       location: input.location !== undefined ? input.location : (existing?.location ?? null),
       ipAddress: input.ipAddress ?? existing?.ipAddress ?? null,
+      agentUrl: input.agentUrl ?? existing?.agentUrl ?? null,
       lastHeartbeat: input.lastHeartbeat,
       cpuPercent: input.cpuPercent ?? existing?.cpuPercent ?? null,
       ramUsedMb: input.ramUsedMb ?? existing?.ramUsedMb ?? null,
@@ -68,12 +69,14 @@ export class InMemoryRepository implements Repository {
           ...existing,
           name: input.name ?? existing.name,
           location: input.location !== undefined ? input.location : existing.location,
+          agentUrl: input.agentUrl !== undefined ? input.agentUrl : existing.agentUrl,
         }
       : {
           id: input.id,
           name: input.name ?? input.id,
           location: input.location ?? null,
           ipAddress: null,
+          agentUrl: input.agentUrl ?? null,
           // Registered-but-unseen → epoch so it reads offline until its agent beats.
           lastHeartbeat: new Date(0).toISOString(),
           cpuPercent: null,

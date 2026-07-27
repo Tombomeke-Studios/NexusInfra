@@ -261,7 +261,7 @@ describe('deployment API', () => {
           provisioned.push({ engine: req.engine, name: req.name });
           return { containerId: 'db-c1', port: 33060 };
         },
-        deprovisionDatabase: async (id) => void deprovisioned.push(id),
+        deprovisionDatabase: async (_agentUrl, id) => void deprovisioned.push(id),
       })
     );
 
@@ -309,7 +309,7 @@ describe('deployment API', () => {
         publish: async (key, envelope) => (published.push({ key, envelope }), true),
         snapshotBackup: async (req) => (snapshots.push(req.containerId), { ref: 'bk_x', sizeBytes: 4096, path: '/data' }),
         restoreBackup: async (req) => void restores.push(req.ref),
-        removeBackup: async (ref) => void removes.push(ref),
+        removeBackup: async (_agentUrl, ref) => void removes.push(ref),
       })
     );
 
@@ -459,5 +459,67 @@ describe('plan quota enforcement (#148)', () => {
     const res = await request(app).post(`/deployments/${created.body.id}/databases`).send({ engine: 'postgres' });
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/database quota/);
+  });
+});
+
+describe('multi-node agent routing (#171)', () => {
+  // Placement already spans nodes; these prove the follow-up agent calls reach the
+  // node that actually hosts the deployment rather than one hardcoded agent.
+  async function seedNode(repo: InMemoryRepository, id: string, agentUrl: string | null, cpu: number) {
+    await repo.upsertNode({ id, name: id, agentUrl, lastHeartbeat: new Date().toISOString(), cpuPercent: cpu, ramUsedMb: 1000, ramTotalMb: 8000 });
+  }
+
+  function buildApp(repo: InMemoryRepository, calls: string[]) {
+    const app = express();
+    app.use(express.json());
+    app.use(
+      createApiRouter({
+        repo,
+        publish: async () => true,
+        provisionDatabase: async (req) => (calls.push(req.agentUrl), { containerId: 'db-1', port: 5432 }),
+        snapshotBackup: async (req) => (calls.push(req.agentUrl), { ref: 'bk', sizeBytes: 1, path: '/data' }),
+      })
+    );
+    return app;
+  }
+
+  it("uses the owning node's agent URL, not another node's", async () => {
+    const repo = new InMemoryRepository();
+    const calls: string[] = [];
+    // node-a is least loaded, so a fresh deployment would land there — but we pin
+    // this one to node-b to prove routing follows the deployment, not placement.
+    await seedNode(repo, 'node-a', 'http://agent-a:9100', 1);
+    await seedNode(repo, 'node-b', 'http://agent-b:9100', 90);
+    const app = buildApp(repo, calls);
+
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'c1', nodeId: 'node-b' });
+
+    await request(app).post(`/deployments/${created.body.id}/databases`).send({ engine: 'postgres' });
+    await request(app).post(`/deployments/${created.body.id}/backups`).send({});
+
+    expect(calls).toEqual(['http://agent-b:9100', 'http://agent-b:9100']);
+  });
+
+  it('falls back to the configured default when the node advertises no URL', async () => {
+    const repo = new InMemoryRepository();
+    const calls: string[] = [];
+    await seedNode(repo, 'node-local', null, 5);
+    const app = buildApp(repo, calls);
+
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'c1', nodeId: 'node-local' });
+    await request(app).post(`/deployments/${created.body.id}/backups`).send({});
+
+    // The single-node default — unchanged behaviour for existing setups.
+    expect(calls).toEqual(['http://node-agent:9100']);
+  });
+
+  it('registers a node with an explicit agent URL', async () => {
+    const repo = new InMemoryRepository();
+    const app = buildApp(repo, []);
+    const res = await request(app).post('/nodes').send({ id: 'node-c', agentUrl: 'http://agent-c:9100' });
+    expect(res.status).toBe(201);
+    expect((await repo.listNodes()).find((n) => n.id === 'node-c')?.agentUrl).toBe('http://agent-c:9100');
   });
 });

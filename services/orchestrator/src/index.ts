@@ -5,6 +5,7 @@ import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import { buildEnvelope, consumeRabbitQueue, getInternalToken, INTERNAL_TOKEN_HEADER, publishRabbitEvent, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
 import { PrismaRepository } from './db.js';
 import { agentFetch, createApiRouter, resolveContainerTarget } from './api.js';
+import { resolveAgentUrl } from './agentUrl.js';
 import { verifyToken } from './auth.js';
 import { pipeSockets, toWsUrl, type DuplexSocket } from './wsProxy.js';
 import { createBillingProxyRouter } from './billingProxy.js';
@@ -26,6 +27,14 @@ const PORT = Number(process.env.PORT) || 9200;
 const NODE_AGENT_URL = process.env.NODE_AGENT_URL || 'http://node-agent:9100';
 
 const repo = new PrismaRepository();
+
+/** Base URL of the agent owning `nodeId`, falling back to the single-node default (#171). */
+async function agentUrlFor(nodeId: string | null): Promise<string> {
+  if (!nodeId) return resolveAgentUrl(null, NODE_AGENT_URL);
+  const node = (await repo.listNodes()).find((n) => n.id === nodeId);
+  return resolveAgentUrl(node, NODE_AGENT_URL);
+}
+
 const registry = createNodeRegistry(repo);
 const lifecycle = createLifecycle(repo);
 const suspend = createSuspendHandler({ repo });
@@ -45,7 +54,7 @@ const scheduleActions: ScheduleActions = {
   async backup(deploymentId) {
     const detail = await repo.getDeployment(deploymentId);
     if (!detail?.containerId) return;
-    const r = await agentFetch(`${NODE_AGENT_URL}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ containerId: detail.containerId }) });
+    const r = await agentFetch(`${await agentUrlFor(detail.nodeId)}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ containerId: detail.containerId }) });
     if (!r.ok) throw new Error('scheduled backup failed');
     const snap = (await r.json()) as { ref: string; sizeBytes: number; path: string };
     await repo.createBackup({ deploymentId: detail.id, name: `backup-${new Date().toISOString().replace(/[:.]/g, '-')}`, path: snap.path, ref: snap.ref, sizeBytes: snap.sizeBytes });
@@ -104,16 +113,19 @@ server.on('upgrade', async (req, socket, head) => {
     return socket.destroy();
   }
 
-  const target = resolveContainerTarget(await repo.getDeployment(match[1]));
+  const detail = await repo.getDeployment(match[1]);
+  const target = resolveContainerTarget(detail);
   if (target.status !== 200) return socket.destroy();
 
+  // Dial the agent that actually owns this deployment (#171).
+  const agentUrl = await agentUrlFor(detail!.nodeId);
   const cols = url.searchParams.get('cols') ?? '80';
   const rows = url.searchParams.get('rows') ?? '24';
   wss.handleUpgrade(req, socket, head, (clientWs) => {
     // The agent authorizes this upgrade with the shared internal token (#169) —
     // this hop is server-to-server, so a header is available (unlike the browser's
     // handshake, which carries its JWT as a query param).
-    const upstream = new WebSocket(`${toWsUrl(NODE_AGENT_URL)}/terminal/${target.containerId}?cols=${cols}&rows=${rows}`, {
+    const upstream = new WebSocket(`${toWsUrl(agentUrl)}/terminal/${target.containerId}?cols=${cols}&rows=${rows}`, {
       headers: { [INTERNAL_TOKEN_HEADER]: getInternalToken() },
     });
     upstream.on('open', () => pipeSockets(toDuplex(clientWs), toDuplex(upstream)));

@@ -17,6 +17,8 @@ export interface NodeRecord {
   name: string;
   location: string | null;
   ipAddress: string | null;
+  /** Base URL of this node's agent HTTP API; null until the node reports one (#171). */
+  agentUrl: string | null;
   lastHeartbeat: string; // ISO-8601 UTC
   cpuPercent: number | null;
   ramUsedMb: number | null;
@@ -165,6 +167,7 @@ export interface UpsertNodeInput {
   name?: string;
   location?: string | null;
   ipAddress?: string | null;
+  agentUrl?: string | null;
   lastHeartbeat: string;
   cpuPercent?: number | null;
   ramUsedMb?: number | null;
@@ -201,6 +204,8 @@ export interface RegisterNodeInput {
   id: string;
   name?: string;
   location?: string | null;
+  /** Explicitly set the node's agent base URL (#171); otherwise learned from heartbeats. */
+  agentUrl?: string | null;
 }
 
 export interface Repository {
