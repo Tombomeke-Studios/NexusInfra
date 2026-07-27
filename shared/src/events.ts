@@ -13,7 +13,9 @@ import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypt
 export type NexusInfraEvent =
   // ── Monitoring / heartbeats ──────────────────────────────────────────
   | { type: 'heartbeat.service'; payload: { name: string; status: 'healthy'; timestamp: string } }
-  | { type: 'heartbeat.node'; payload: { nodeId: string; status: 'healthy'; timestamp: string; resources?: NodeResources } }
+  // `agentUrl` lets a node advertise where its agent HTTP API is reachable, so the
+  // Orchestrator can route per-deployment calls to the owning node (#171).
+  | { type: 'heartbeat.node'; payload: { nodeId: string; status: 'healthy'; timestamp: string; agentUrl?: string; resources?: NodeResources } }
   // ── Server lifecycle — commands (Orchestrator → Node Agent) ──────────
   | { type: 'server.start'; payload: { deploymentId: string; nodeId: string; dockerImage: string; containerName?: string; env?: Record<string, string>; ports?: Record<string, string>; resourceLimits?: ResourceLimits } }
   | { type: 'server.stop'; payload: { deploymentId: string; nodeId: string; containerId: string } }
