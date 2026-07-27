@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express';
-import { buildEnvelope, isHosted, publishRabbitEvent, type EventEnvelope, type NexusInfraEvent } from 'shared';
+import { buildEnvelope, getInternalToken, INTERNAL_TOKEN_HEADER, isHosted, publishRabbitEvent, type EventEnvelope, type NexusInfraEvent } from 'shared';
 import { nodeHealth } from './nodeRegistry.js';
 import { selectNode as defaultSelectNode } from './nodeSelection.js';
 import { generateDatabaseCredentials, isDatabaseEngine } from './dbProvision.js';
@@ -17,6 +17,18 @@ const randomToken = () => Math.random().toString(36).slice(2, 8);
 // Where the (single, local) Node Agent's internal HTTP lives. Multi-node will
 // resolve this per node from the registry.
 const NODE_AGENT_URL = process.env.NODE_AGENT_URL || 'http://node-agent:9100';
+
+/**
+ * Call the Node Agent's internal API, attaching the shared internal token (#169).
+ * Every orchestrator → agent request must go through this; a bare `fetch` would be
+ * rejected with 401.
+ */
+export function agentFetch(url: string, init: RequestInit = {}): Promise<globalThis.Response> {
+  return fetch(url, {
+    ...init,
+    headers: { ...(init.headers ?? {}), [INTERNAL_TOKEN_HEADER]: getInternalToken() },
+  });
+}
 
 // Where the Billing Bridge's internal HTTP lives (hosted edition only).
 const BILLING_BRIDGE_URL = process.env.BILLING_BRIDGE_URL || 'http://billing-bridge:9300';
@@ -85,7 +97,7 @@ const noopScheduleActions: ScheduleActions = { restart: async () => {}, backup: 
 
 // Default provisioning talks to the Node Agent's internal database HTTP.
 const defaultProvisionDatabase: ProvisionDatabaseFn = async (req) => {
-  const r = await fetch(`${NODE_AGENT_URL}/databases`, {
+  const r = await agentFetch(`${NODE_AGENT_URL}/databases`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(req),
@@ -95,24 +107,24 @@ const defaultProvisionDatabase: ProvisionDatabaseFn = async (req) => {
 };
 
 const defaultDeprovisionDatabase: DeprovisionDatabaseFn = async (containerId) => {
-  await fetch(`${NODE_AGENT_URL}/databases/${containerId}`, { method: 'DELETE' });
+  await agentFetch(`${NODE_AGENT_URL}/databases/${containerId}`, { method: 'DELETE' });
 };
 
 const DB_PUBLIC_HOST = process.env.DATABASE_PUBLIC_HOST || 'localhost';
 
 const defaultSnapshotBackup: SnapshotBackupFn = async (req) => {
-  const r = await fetch(`${NODE_AGENT_URL}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) });
+  const r = await agentFetch(`${NODE_AGENT_URL}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) });
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? 'backup failed');
   return (await r.json()) as { ref: string; sizeBytes: number; path: string };
 };
 
 const defaultRestoreBackup: RestoreBackupFn = async (req) => {
-  const r = await fetch(`${NODE_AGENT_URL}/backups/restore`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) });
+  const r = await agentFetch(`${NODE_AGENT_URL}/backups/restore`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) });
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? 'restore failed');
 };
 
 const defaultRemoveBackup: RemoveBackupFn = async (ref) => {
-  await fetch(`${NODE_AGENT_URL}/backups/${ref}`, { method: 'DELETE' });
+  await agentFetch(`${NODE_AGENT_URL}/backups/${ref}`, { method: 'DELETE' });
 };
 
 function userIdOf(req: Request): string {
@@ -336,7 +348,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     const controller = new AbortController();
     req.on('close', () => controller.abort());
     try {
-      const upstream = await fetch(`${NODE_AGENT_URL}/${kind}/${target.containerId}`, { signal: controller.signal });
+      const upstream = await agentFetch(`${NODE_AGENT_URL}/${kind}/${target.containerId}`, { signal: controller.signal });
       if (!upstream.body) return res.end();
       const reader = upstream.body.getReader();
       for (;;) {
@@ -374,15 +386,15 @@ export function createApiRouter(deps: ApiDeps): Router {
   const q = (v: unknown) => encodeURIComponent(String(v ?? ''));
   const asJson = (method: string, body: unknown) => ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) });
 
-  router.get('/deployments/:id/files', (req, res) => withContainer(req, res, (c) => fetch(`${fileBase(c)}?path=${q(req.query.path ?? '/')}`)));
-  router.get('/deployments/:id/files/content', (req, res) => withContainer(req, res, (c) => fetch(`${fileBase(c)}/content?path=${q(req.query.path)}`)));
-  router.put('/deployments/:id/files/content', (req, res) => withContainer(req, res, (c) => fetch(`${fileBase(c)}/content`, asJson('PUT', req.body))));
-  router.post('/deployments/:id/files/dir', (req, res) => withContainer(req, res, (c) => fetch(`${fileBase(c)}/dir`, asJson('POST', req.body))));
-  router.post('/deployments/:id/files/rename', (req, res) => withContainer(req, res, (c) => fetch(`${fileBase(c)}/rename`, asJson('POST', req.body))));
-  router.delete('/deployments/:id/files', (req, res) => withContainer(req, res, (c) => fetch(`${fileBase(c)}?path=${q(req.query.path)}`, { method: 'DELETE' })));
+  router.get('/deployments/:id/files', (req, res) => withContainer(req, res, (c) => agentFetch(`${fileBase(c)}?path=${q(req.query.path ?? '/')}`)));
+  router.get('/deployments/:id/files/content', (req, res) => withContainer(req, res, (c) => agentFetch(`${fileBase(c)}/content?path=${q(req.query.path)}`)));
+  router.put('/deployments/:id/files/content', (req, res) => withContainer(req, res, (c) => agentFetch(`${fileBase(c)}/content`, asJson('PUT', req.body))));
+  router.post('/deployments/:id/files/dir', (req, res) => withContainer(req, res, (c) => agentFetch(`${fileBase(c)}/dir`, asJson('POST', req.body))));
+  router.post('/deployments/:id/files/rename', (req, res) => withContainer(req, res, (c) => agentFetch(`${fileBase(c)}/rename`, asJson('POST', req.body))));
+  router.delete('/deployments/:id/files', (req, res) => withContainer(req, res, (c) => agentFetch(`${fileBase(c)}?path=${q(req.query.path)}`, { method: 'DELETE' })));
 
   // ── Console (#68) — run a one-shot command in the running container ─────────
-  router.post('/deployments/:id/exec', (req, res) => withContainer(req, res, (c) => fetch(`${NODE_AGENT_URL}/exec/${c}`, asJson('POST', req.body))));
+  router.post('/deployments/:id/exec', (req, res) => withContainer(req, res, (c) => agentFetch(`${NODE_AGENT_URL}/exec/${c}`, asJson('POST', req.body))));
 
   // ── Managed databases (#109) ────────────────────────────────────────────────
   // A database is its own engine container the owning node starts, with generated
