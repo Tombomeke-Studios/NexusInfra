@@ -4,7 +4,7 @@
 
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/next-Phase_5_·_Production-3b82f6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-328_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-337_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -134,7 +134,7 @@ gateway work" above.)_
 
 ### Phase 5 — Production hardening (`feature/production`)
 
-- [ ] Multi-node: run several node agents; verify resource-aware placement across them (#21)
+- [~] Multi-node: agent calls now route to the deployment's owning node (#171 — **done**); still to do: run several agents and verify placement across them live (#21)
 - [~] Node Agent: offline event queue / replay on reconnect (#167 — **done**, in-memory outbox for lifecycle reports) + auto-restart on crash (still to do)
 - [~] Control Room: uptime % / history (#165 — **done**, in-memory) + alerting via the Notification/Mail service + DLQ monitoring (still to do)
 - [ ] Metrics: InfluxDB + Grafana dashboards

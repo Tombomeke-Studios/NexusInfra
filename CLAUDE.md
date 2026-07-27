@@ -160,7 +160,7 @@ is the migrations directory.
 |---|---|
 | `shared/src/events.ts` | Event union, envelope, AES-256-GCM payload encryption — **wire-compatible with FinVault** (same algorithm, KDF salt, envelope shape) |
 | `shared/src/rabbitmq.ts` | Connect/publish/consume helpers targeting the shared `finvault.events` topic exchange + `finvault.events.dlx` |
-| `shared/src/heartbeat.ts` | `startHeartbeat(name)` (service pulse) + `startNodeHeartbeat(nodeId, collectResources)` (node pulse, resources every 5s); both take an injectable publisher |
+| `shared/src/heartbeat.ts` | `startHeartbeat(name)` (service pulse) + `startNodeHeartbeat(nodeId, collectResources, {agentUrl})` (node pulse, resources every 5s, advertises the agent URL for #171); both take an injectable publisher |
 | `shared/src/edition.ts` | Open-core edition flag: `Edition` type + `resolveEdition`/`getEdition`/`isHosted` (reads `NEXUS_EDITION`, defaults `community`) |
 | `shared/src/outbox.ts` | `PublishOutbox` + `startOutboxFlusher` — holds a failed publish and replays it **in order** when the broker returns; bounded (drop-oldest + `droppedCount`). Wrap publishers whose events carry state (#167) |
 | `shared/src/internalToken.ts` | Service-to-service shared secret: `INTERNAL_TOKEN_HEADER`, `getInternalToken`, `tokensMatch` (constant-time). Guards the Node Agent's internal API (#169) |
@@ -201,6 +201,7 @@ is the migrations directory.
 | `src/db.ts` | `getPrisma()` + `PrismaRepository` (SQLite-backed `Repository`) |
 | `src/nodeRegistry.ts` | Consumes `monitoring.heartbeat.node.#`, upserts nodes (liveness/resources only — never clobbers a registered name/location), derives health (3s/10s) |
 | `src/nodeSelection.ts` | Pure least-loaded `selectNode` (healthy nodes, ranked by CPU+RAM load) |
+| `src/agentUrl.ts` | Pure `resolveAgentUrl`/`normalizeAgentUrl` — which node's agent to call, falling back to `NODE_AGENT_URL` for single-node (#171) |
 | `src/dbProvision.ts` | Pure managed-DB helpers: `isDatabaseEngine` guard + `generateDatabaseCredentials` (safe name/user/password) |
 | `src/cron.ts` | Pure 5-field cron matcher (`cronMatches`, `isValidCron`) for the schedule runner |
 | `src/scheduler.ts` | Schedule runner: pure `selectDue`/`tickSchedules` + `startScheduler` (1-min poll); actions injected |
@@ -296,6 +297,9 @@ is the migrations directory.
 - **`publishRabbitEvent` returns `false` and drops the event when the broker is unreachable.** For any
   event that carries state, wrap the publisher in a `PublishOutbox` (#167) so it's replayed in order
   instead of lost — durable queues don't help a publish that never landed. Don't buffer heartbeats.
+- **Agent calls must target the *owning* node** — resolve it with `agentUrlFor(deployment.nodeId)`,
+  never the bare `NODE_AGENT_URL` constant (that is only the single-node fallback). Getting this wrong
+  operates on the wrong host and fails silently with 2+ nodes (#171).
 - **Every Orchestrator → Node Agent call must go through `agentFetch`** (or carry
   `INTERNAL_TOKEN_HEADER` explicitly, as the terminal WS dial does). The agent rejects untokened
   requests with 401 (#169) — a bare `fetch` to `NODE_AGENT_URL` will silently start failing.

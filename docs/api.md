@@ -256,7 +256,8 @@ Registered nodes with their latest resources and derived `health` (`healthy | de
 
 ### `POST /nodes`
 
-Register (or relabel) a node's metadata (#113) — body `{ id?, name?, location? }`. `id` is generated when
+Register (or relabel) a node's metadata (#113) — body `{ id?, name?, location?, agentUrl? }`. `agentUrl`
+pins where that node's agent is reachable (#171); normally the node advertises it on its own heartbeat. `id` is generated when
 omitted. The node reads **offline** until an agent started with `NODE_ID=<id>` heartbeats in; its
 CPU/RAM/disk are then reported automatically and never overwrite the name/location. `201` with the node.
 
