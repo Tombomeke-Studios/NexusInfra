@@ -46,6 +46,9 @@ services:
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
       # Must match the Orchestrator's value (#169).
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-dev-internal-token}
+      # Advertised on the heartbeat so the Orchestrator routes this node's
+      # deployments to this agent (#171). Uses the compose service DNS name.
+      - AGENT_URL=http://node-agent:9100
     # The agent drives the host Docker daemon, so it needs the socket mounted.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

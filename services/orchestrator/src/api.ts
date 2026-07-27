@@ -5,6 +5,7 @@ import { selectNode as defaultSelectNode } from './nodeSelection.js';
 import { generateDatabaseCredentials, isDatabaseEngine } from './dbProvision.js';
 import { isValidCron } from './cron.js';
 import { runScheduleAction, type ScheduleActions } from './scheduler.js';
+import { resolveAgentUrl } from './agentUrl.js';
 import type { DeploymentDetail, NodeRecord, Repository } from './types.js';
 
 const SCHEDULE_ACTIONS = ['restart', 'backup'];
@@ -53,14 +54,16 @@ const KEY_RESTART = 'infra.server.restart';
 export type PublishFn = (routingKey: string, envelope: EventEnvelope) => Promise<boolean>;
 export type SelectNodeFn = (nodes: NodeRecord[], now: number) => NodeRecord | null;
 
+// Each of these talks to a specific node's agent, so they take that node's
+// `agentUrl` — resolved from the owning deployment (#171).
 /** Provisions a database container on the owning Node Agent; returns its id + host port. */
-export type ProvisionDatabaseFn = (req: { engine: string; name: string; username: string; password: string }) => Promise<{ containerId: string; port: number }>;
-export type DeprovisionDatabaseFn = (containerId: string) => Promise<void>;
+export type ProvisionDatabaseFn = (req: { agentUrl: string; engine: string; name: string; username: string; password: string }) => Promise<{ containerId: string; port: number }>;
+export type DeprovisionDatabaseFn = (agentUrl: string, containerId: string) => Promise<void>;
 
 /** Snapshot / restore / delete a container backup on the owning Node Agent. */
-export type SnapshotBackupFn = (req: { containerId: string; path?: string }) => Promise<{ ref: string; sizeBytes: number; path: string }>;
-export type RestoreBackupFn = (req: { containerId: string; ref: string; path: string }) => Promise<void>;
-export type RemoveBackupFn = (ref: string) => Promise<void>;
+export type SnapshotBackupFn = (req: { agentUrl: string; containerId: string; path?: string }) => Promise<{ ref: string; sizeBytes: number; path: string }>;
+export type RestoreBackupFn = (req: { agentUrl: string; containerId: string; ref: string; path: string }) => Promise<void>;
+export type RemoveBackupFn = (agentUrl: string, ref: string) => Promise<void>;
 
 /** Plan-quota check against the Billing Bridge (hosted). Fails open so billing outages never block infra. */
 export type QuotaResource = 'servers' | 'databases';
@@ -96,35 +99,35 @@ const defaultCheckQuota: CheckQuotaFn = async (userId, resource, current) => {
 const noopScheduleActions: ScheduleActions = { restart: async () => {}, backup: async () => {} };
 
 // Default provisioning talks to the Node Agent's internal database HTTP.
-const defaultProvisionDatabase: ProvisionDatabaseFn = async (req) => {
-  const r = await agentFetch(`${NODE_AGENT_URL}/databases`, {
+const defaultProvisionDatabase: ProvisionDatabaseFn = async ({ agentUrl, ...spec }) => {
+  const r = await agentFetch(`${agentUrl}/databases`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(req),
+    body: JSON.stringify(spec),
   });
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? 'database provisioning failed');
   return (await r.json()) as { containerId: string; port: number };
 };
 
-const defaultDeprovisionDatabase: DeprovisionDatabaseFn = async (containerId) => {
-  await agentFetch(`${NODE_AGENT_URL}/databases/${containerId}`, { method: 'DELETE' });
+const defaultDeprovisionDatabase: DeprovisionDatabaseFn = async (agentUrl, containerId) => {
+  await agentFetch(`${agentUrl}/databases/${containerId}`, { method: 'DELETE' });
 };
 
 const DB_PUBLIC_HOST = process.env.DATABASE_PUBLIC_HOST || 'localhost';
 
-const defaultSnapshotBackup: SnapshotBackupFn = async (req) => {
-  const r = await agentFetch(`${NODE_AGENT_URL}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) });
+const defaultSnapshotBackup: SnapshotBackupFn = async ({ agentUrl, ...spec }) => {
+  const r = await agentFetch(`${agentUrl}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(spec) });
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? 'backup failed');
   return (await r.json()) as { ref: string; sizeBytes: number; path: string };
 };
 
-const defaultRestoreBackup: RestoreBackupFn = async (req) => {
-  const r = await agentFetch(`${NODE_AGENT_URL}/backups/restore`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) });
+const defaultRestoreBackup: RestoreBackupFn = async ({ agentUrl, ...spec }) => {
+  const r = await agentFetch(`${agentUrl}/backups/restore`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(spec) });
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? 'restore failed');
 };
 
-const defaultRemoveBackup: RemoveBackupFn = async (ref) => {
-  await agentFetch(`${NODE_AGENT_URL}/backups/${ref}`, { method: 'DELETE' });
+const defaultRemoveBackup: RemoveBackupFn = async (agentUrl, ref) => {
+  await agentFetch(`${agentUrl}/backups/${ref}`, { method: 'DELETE' });
 };
 
 function userIdOf(req: Request): string {
@@ -146,6 +149,14 @@ export function createApiRouter(deps: ApiDeps): Router {
 
   const emit = (routingKey: string, event: NexusInfraEvent) =>
     publish(routingKey, buildEnvelope('orchestrator', event));
+
+  // Which agent owns this deployment (#171). Falls back to NODE_AGENT_URL when the
+  // node advertises no URL, so single-node setups are unaffected.
+  const agentUrlFor = async (nodeId: string | null): Promise<string> => {
+    if (!nodeId) return resolveAgentUrl(null, NODE_AGENT_URL);
+    const node = (await repo.listNodes()).find((n) => n.id === nodeId);
+    return resolveAgentUrl(node, NODE_AGENT_URL);
+  };
 
   // Create a deployment: persist config, place it on the least-loaded node, and
   // command the agent to start it.
@@ -292,10 +303,11 @@ export function createApiRouter(deps: ApiDeps): Router {
         payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId },
       });
     }
+    const ownerAgentUrl = await agentUrlFor(detail.nodeId);
     for (const db of await repo.listDatabases(detail.id)) {
       if (db.containerId) {
         try {
-          await deprovisionDatabase(db.containerId);
+          await deprovisionDatabase(ownerAgentUrl, db.containerId);
         } catch {
           // Best-effort: still remove the record so nothing is orphaned in the UI.
         }
@@ -314,12 +326,13 @@ export function createApiRouter(deps: ApiDeps): Router {
   // Register (or relabel) a node's metadata (#113). It reads offline until an agent
   // started with NODE_ID=<id> heartbeats in. Body: { id?, name?, location? }.
   router.post('/nodes', async (req: Request, res: Response) => {
-    const { id, name, location } = req.body ?? {};
+    const { id, name, location, agentUrl } = req.body ?? {};
     const nodeId = typeof id === 'string' && id.trim() ? id.trim() : `node-${randomToken()}`;
     const node = await repo.registerNode({
       id: nodeId,
       name: typeof name === 'string' && name.trim() ? name.trim() : undefined,
       location: typeof location === 'string' ? location.trim() || null : undefined,
+      agentUrl: typeof agentUrl === 'string' ? agentUrl.trim() || null : undefined,
     });
     return res.status(201).json({ ...node, health: nodeHealth(node, Date.now()) });
   });
@@ -335,8 +348,10 @@ export function createApiRouter(deps: ApiDeps): Router {
   // Pipe an SSE stream from the owning Node Agent's internal `/{kind}/:containerId`
   // endpoint straight to the client, resolving the running container first.
   const proxyContainerStream = (kind: 'logs' | 'stats') => async (req: Request, res: Response) => {
-    const target = resolveContainerTarget(await repo.getDeployment(req.params.id));
+    const detail = await repo.getDeployment(req.params.id);
+    const target = resolveContainerTarget(detail);
     if (target.status !== 200) return res.status(target.status).json({ error: target.error });
+    const agentUrl = await agentUrlFor(detail!.nodeId);
 
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -348,7 +363,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     const controller = new AbortController();
     req.on('close', () => controller.abort());
     try {
-      const upstream = await agentFetch(`${NODE_AGENT_URL}/${kind}/${target.containerId}`, { signal: controller.signal });
+      const upstream = await agentFetch(`${agentUrl}/${kind}/${target.containerId}`, { signal: controller.signal });
       if (!upstream.body) return res.end();
       const reader = upstream.body.getReader();
       for (;;) {
@@ -370,12 +385,13 @@ export function createApiRouter(deps: ApiDeps): Router {
   // ── File management (#108) — proxy CRUD to the owning Node Agent ─────────────
   // Resolve the running container, forward the file op, and mirror the agent's
   // status + JSON body back to the caller.
-  const fileBase = (containerId: string) => `${NODE_AGENT_URL}/files/${containerId}`;
-  const withContainer = async (req: Request, res: Response, upstream: (containerId: string) => Promise<globalThis.Response>) => {
-    const target = resolveContainerTarget(await repo.getDeployment(req.params.id));
+  const fileBase = (agentUrl: string, containerId: string) => `${agentUrl}/files/${containerId}`;
+  const withContainer = async (req: Request, res: Response, upstream: (containerId: string, agentUrl: string) => Promise<globalThis.Response>) => {
+    const detail = await repo.getDeployment(req.params.id);
+    const target = resolveContainerTarget(detail);
     if (target.status !== 200) return res.status(target.status).json({ error: target.error });
     try {
-      const r = await upstream(target.containerId!);
+      const r = await upstream(target.containerId!, await agentUrlFor(detail!.nodeId));
       const body = await r.text();
       res.status(r.status);
       return body ? res.type('application/json').send(body) : res.end();
@@ -386,15 +402,15 @@ export function createApiRouter(deps: ApiDeps): Router {
   const q = (v: unknown) => encodeURIComponent(String(v ?? ''));
   const asJson = (method: string, body: unknown) => ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) });
 
-  router.get('/deployments/:id/files', (req, res) => withContainer(req, res, (c) => agentFetch(`${fileBase(c)}?path=${q(req.query.path ?? '/')}`)));
-  router.get('/deployments/:id/files/content', (req, res) => withContainer(req, res, (c) => agentFetch(`${fileBase(c)}/content?path=${q(req.query.path)}`)));
-  router.put('/deployments/:id/files/content', (req, res) => withContainer(req, res, (c) => agentFetch(`${fileBase(c)}/content`, asJson('PUT', req.body))));
-  router.post('/deployments/:id/files/dir', (req, res) => withContainer(req, res, (c) => agentFetch(`${fileBase(c)}/dir`, asJson('POST', req.body))));
-  router.post('/deployments/:id/files/rename', (req, res) => withContainer(req, res, (c) => agentFetch(`${fileBase(c)}/rename`, asJson('POST', req.body))));
-  router.delete('/deployments/:id/files', (req, res) => withContainer(req, res, (c) => agentFetch(`${fileBase(c)}?path=${q(req.query.path)}`, { method: 'DELETE' })));
+  router.get('/deployments/:id/files', (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}?path=${q(req.query.path ?? '/')}`)));
+  router.get('/deployments/:id/files/content', (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}/content?path=${q(req.query.path)}`)));
+  router.put('/deployments/:id/files/content', (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}/content`, asJson('PUT', req.body))));
+  router.post('/deployments/:id/files/dir', (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}/dir`, asJson('POST', req.body))));
+  router.post('/deployments/:id/files/rename', (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}/rename`, asJson('POST', req.body))));
+  router.delete('/deployments/:id/files', (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}?path=${q(req.query.path)}`, { method: 'DELETE' })));
 
   // ── Console (#68) — run a one-shot command in the running container ─────────
-  router.post('/deployments/:id/exec', (req, res) => withContainer(req, res, (c) => agentFetch(`${NODE_AGENT_URL}/exec/${c}`, asJson('POST', req.body))));
+  router.post('/deployments/:id/exec', (req, res) => withContainer(req, res, (c, a) => agentFetch(`${a}/exec/${c}`, asJson('POST', req.body))));
 
   // ── Managed databases (#109) ────────────────────────────────────────────────
   // A database is its own engine container the owning node starts, with generated
@@ -425,7 +441,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     const existing = await repo.listDatabases(detail.id);
     const creds = generateDatabaseCredentials(detail.name, existing.length + 1);
     try {
-      const { containerId, port } = await provisionDatabase({ engine, ...creds });
+      const { containerId, port } = await provisionDatabase({ agentUrl: await agentUrlFor(detail.nodeId), engine, ...creds });
       const db = await repo.createDatabase({
         deploymentId: detail.id,
         engine,
@@ -445,7 +461,8 @@ export function createApiRouter(deps: ApiDeps): Router {
     if (!db || db.deploymentId !== req.params.id) return res.status(404).json({ error: 'database not found' });
     if (db.containerId) {
       try {
-        await deprovisionDatabase(db.containerId);
+        const owner = await repo.getDeployment(db.deploymentId);
+        await deprovisionDatabase(await agentUrlFor(owner?.nodeId ?? null), db.containerId);
       } catch {
         // Best-effort: still drop the record so the UI isn't stuck on a ghost.
       }
@@ -468,7 +485,7 @@ export function createApiRouter(deps: ApiDeps): Router {
 
     const path = typeof (req.body ?? {}).path === 'string' ? req.body.path : undefined;
     try {
-      const snap = await snapshotBackup({ containerId: detail.containerId, path });
+      const snap = await snapshotBackup({ agentUrl: await agentUrlFor(detail.nodeId), containerId: detail.containerId, path });
       const backup = await repo.createBackup({
         deploymentId: detail.id,
         name: `backup-${new Date().toISOString().replace(/[:.]/g, '-')}`,
@@ -488,7 +505,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     const detail = await repo.getDeployment(req.params.id);
     if (!detail?.containerId) return res.status(409).json({ error: 'deployment is not running' });
     try {
-      await restoreBackup({ containerId: detail.containerId, ref: backup.ref, path: backup.path });
+      await restoreBackup({ agentUrl: await agentUrlFor(detail.nodeId), containerId: detail.containerId, ref: backup.ref, path: backup.path });
       return res.status(200).json({ status: 'restored', backupId: backup.id });
     } catch (err) {
       return res.status(502).json({ error: err instanceof Error ? err.message : 'restore failed' });
@@ -499,7 +516,8 @@ export function createApiRouter(deps: ApiDeps): Router {
     const backup = await repo.getBackup(req.params.backupId);
     if (!backup || backup.deploymentId !== req.params.id) return res.status(404).json({ error: 'backup not found' });
     try {
-      await removeBackup(backup.ref);
+      const owner = await repo.getDeployment(backup.deploymentId);
+      await removeBackup(await agentUrlFor(owner?.nodeId ?? null), backup.ref);
     } catch {
       // Best-effort: drop the record even if the node file is already gone.
     }

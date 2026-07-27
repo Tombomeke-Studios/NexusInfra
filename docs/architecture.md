@@ -99,6 +99,14 @@ append-only deployment-event audit trail. Schema source of truth: the service's
 The Orchestrator's node registry mirrors the same last-seen status model above (healthy < 3s ≤
 degraded < 10s ≤ offline); only `healthy` nodes are eligible for placement.
 
+**Multi-node routing (#171).** Placement spans every healthy node, and start/stop/restart are addressed
+by `nodeId` over the bus. Direct agent calls (files, exec, terminal, logs/stats, backups, databases)
+must reach the node that actually hosts the deployment — previously they all went to a single
+`NODE_AGENT_URL`, which silently operated on the wrong host once a second node existed. Each node now
+advertises its agent's base URL on its heartbeat (`AGENT_URL`; `POST /nodes` can also set it), and the
+Orchestrator resolves the owning node per request, falling back to `NODE_AGENT_URL` when a node reports
+none — so single-node setups behave exactly as before.
+
 In the hosted edition the Billing Bridge keeps its own SQLite store: tunable pricing/quota plans,
 per-deployment runtime intervals, a per-user credit wallet, an append-only credit ledger (top-ups +
 charges), and monthly billing cycles. Same "schema lives in `prisma/migrations`, not in docs" rule.

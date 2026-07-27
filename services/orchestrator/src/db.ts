@@ -71,6 +71,7 @@ function toNodeRecord(n: PrismaNode): NodeRecord {
     name: n.name,
     location: n.location,
     ipAddress: n.ipAddress,
+    agentUrl: n.agentUrl,
     lastHeartbeat: n.lastHeartbeat.toISOString(),
     cpuPercent: n.cpuPercent,
     ramUsedMb: n.ramUsedMb,
@@ -173,6 +174,7 @@ export class PrismaRepository implements Repository {
       ...(provided(input.name) ? { name: input.name } : {}),
       ...(provided(input.location) ? { location: input.location } : {}),
       ...(provided(input.ipAddress) ? { ipAddress: input.ipAddress } : {}),
+      ...(provided(input.agentUrl) ? { agentUrl: input.agentUrl } : {}),
       ...(provided(input.cpuPercent) ? { cpuPercent: input.cpuPercent } : {}),
       ...(provided(input.ramUsedMb) ? { ramUsedMb: input.ramUsedMb } : {}),
       ...(provided(input.ramTotalMb) ? { ramTotalMb: input.ramTotalMb } : {}),
@@ -186,6 +188,7 @@ export class PrismaRepository implements Repository {
         name: input.name ?? input.id,
         location: input.location ?? null,
         ipAddress: input.ipAddress ?? null,
+        agentUrl: input.agentUrl ?? null,
         lastHeartbeat: new Date(input.lastHeartbeat),
         cpuPercent: input.cpuPercent ?? null,
         ramUsedMb: input.ramUsedMb ?? null,
@@ -210,12 +213,14 @@ export class PrismaRepository implements Repository {
         id: input.id,
         name: input.name ?? input.id,
         location: input.location ?? null,
+        agentUrl: input.agentUrl ?? null,
         // Registered-but-unseen → epoch so it reads offline until its agent beats.
         lastHeartbeat: new Date(0),
       },
       update: {
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.location !== undefined ? { location: input.location } : {}),
+        ...(input.agentUrl !== undefined ? { agentUrl: input.agentUrl } : {}),
       },
     });
     return toNodeRecord(node);

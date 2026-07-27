@@ -21,6 +21,8 @@ export function nodeHealth(node: NodeRecord, now: number): NodeHealth {
 interface NodeHeartbeatPayload {
   nodeId?: string;
   timestamp?: string;
+  /** Where this node's agent API is reachable, so calls route to the owning node (#171). */
+  agentUrl?: string;
   resources?: {
     cpuPercent?: number;
     ramUsedMb?: number;
@@ -54,6 +56,9 @@ export function createNodeRegistry(repo: Repository): NodeRegistry {
     await repo.upsertNode({
       id: nodeId,
       lastHeartbeat: payload.timestamp ?? new Date().toISOString(),
+      // Only forwarded when advertised, so a node registered with an explicit URL
+      // isn't cleared by an older agent that doesn't report one.
+      agentUrl: payload.agentUrl,
       cpuPercent: r?.cpuPercent,
       ramUsedMb: r?.ramUsedMb,
       ramTotalMb: r?.ramTotalMb,

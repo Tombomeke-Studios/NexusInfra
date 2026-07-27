@@ -35,6 +35,12 @@ export interface NodeHeartbeatOptions {
   resourceMs?: number;
   /** Injectable publisher for testing; defaults to the real RabbitMQ publisher. */
   publish?: PublishFn;
+  /**
+   * Where this node's agent HTTP API is reachable, advertised so the Orchestrator
+   * can route per-deployment calls to the owning node (#171). Omit for single-node
+   * setups, where the Orchestrator falls back to its configured NODE_AGENT_URL.
+   */
+  agentUrl?: string;
 }
 
 /**
@@ -54,6 +60,7 @@ export function startNodeHeartbeat(
   const beatMs = options.beatMs ?? 1000;
   const resourceMs = options.resourceMs ?? 5000;
   const publish = options.publish ?? publishRabbitEvent;
+  const agentUrl = options.agentUrl;
   const routingKey = `monitoring.heartbeat.node.${nodeId}`;
 
   let elapsed = 0;
@@ -62,7 +69,7 @@ export function startNodeHeartbeat(
     const resources = withResources ? await collectResources() : undefined;
     const envelope = buildEnvelope(`node-agent:${nodeId}`, {
       type: 'heartbeat.node',
-      payload: { nodeId, status: 'healthy', timestamp: new Date().toISOString(), resources },
+      payload: { nodeId, status: 'healthy', timestamp: new Date().toISOString(), agentUrl, resources },
     });
     await publish(routingKey, envelope);
   };
