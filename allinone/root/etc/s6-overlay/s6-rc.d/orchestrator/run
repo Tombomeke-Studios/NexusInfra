@@ -1,0 +1,6 @@
+#!/command/with-contenv sh
+set -a
+. /run/nexusinfra.env
+set +a
+exec 2>&1
+exec sh -c 'cd /app/services/orchestrator && npx prisma migrate deploy && node dist/index.js'

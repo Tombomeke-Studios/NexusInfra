@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# First-start setup for the all-in-one image (#203).
+#
+# The promise is that `docker run` with no configuration produces a working
+# install that is not on default credentials. So anything not supplied is
+# generated once and kept in the data volume; a restart reuses it, and nothing
+# is silently regenerated behind your back.
+set -euo pipefail
+
+DATA_DIR="${DATA_DIR:-/data}"
+SECRETS="$DATA_DIR/secrets.env"
+
+mkdir -p "$DATA_DIR" "$DATA_DIR/backups" "$DATA_DIR/rabbitmq" "$DATA_DIR/rabbitmq/log"
+# The broker drops privileges to the rabbitmq user, so it cannot write into a
+# volume owned by root — which is what a fresh `docker run -v` gives you.
+chown -R rabbitmq:rabbitmq "$DATA_DIR/rabbitmq" 2>/dev/null || true
+
+secret() { openssl rand -hex 32; }
+
+if [ ! -f "$SECRETS" ]; then
+  # Generated rather than defaulted: JWT_SECRET mints tokens for any account and
+  # INTERNAL_API_TOKEN reaches an API that can start containers, so a shipped
+  # default would be a shipped backdoor.
+  GEN_ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(secret | cut -c1-20)}"
+  {
+    echo "JWT_SECRET=${JWT_SECRET:-$(secret)}"
+    echo "INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-$(secret)}"
+    echo "ADMIN_EMAIL=${ADMIN_EMAIL:-admin@local}"
+    echo "ADMIN_PASSWORD=$GEN_ADMIN_PASSWORD"
+  } > "$SECRETS"
+  chmod 600 "$SECRETS"
+
+  # Printed once, on the run that created them. After this the file is the only
+  # copy, which is why it lives in the volume rather than in the container.
+  if [ -z "${ADMIN_PASSWORD:-}" ]; then
+    cat <<BANNER
+
+  ============================================================
+   NexusInfra is starting for the first time.
+
+     Sign in at  http://localhost:8095
+     Email:      ${ADMIN_EMAIL:-admin@local}
+     Password:   $GEN_ADMIN_PASSWORD
+
+   This password was generated and is shown only now.
+   It is stored in the data volume at /data/secrets.env.
+  ============================================================
+
+BANNER
+  fi
+fi
+
+# Values already in the environment win, so `-e ADMIN_PASSWORD=...` keeps
+# behaving the way anyone would expect on a later run.
+set -a
+# shellcheck disable=SC1090
+while IFS='=' read -r key value; do
+  [ -z "$key" ] && continue
+  if [ -z "${!key:-}" ]; then export "$key=$value"; fi
+done < "$SECRETS"
+set +a
+
+# An external broker means the built-in one is not started (see the rabbitmq
+# service definition). The hosted edition needs this to share FinVault's broker.
+if [ -n "${RABBITMQ_URL:-}" ]; then
+  echo "[nexusinfra] Using the external broker at ${RABBITMQ_URL%%@*}@…"
+  touch "$DATA_DIR/.external-broker"
+else
+  export RABBITMQ_URL="amqp://guest:guest@127.0.0.1:5672"
+  rm -f "$DATA_DIR/.external-broker"
+fi
+
+# Hand the resolved environment to every supervised service.
+{
+  echo "RABBITMQ_URL=$RABBITMQ_URL"
+  echo "JWT_SECRET=$JWT_SECRET"
+  echo "INTERNAL_API_TOKEN=$INTERNAL_API_TOKEN"
+  echo "ADMIN_EMAIL=$ADMIN_EMAIL"
+  echo "ADMIN_PASSWORD=$ADMIN_PASSWORD"
+  echo "DATABASE_URL=file:$DATA_DIR/orchestrator.db"
+  echo "BACKUP_DIR=$DATA_DIR/backups"
+  echo "NODE_ID=${NODE_ID:-node-local}"
+  echo "AGENT_URL=http://127.0.0.1:9100"
+  echo "NODE_AGENT_URL=http://127.0.0.1:9100"
+  echo "CONTROL_ROOM_URL=http://127.0.0.1:9000"
+  echo "BILLING_BRIDGE_URL=http://127.0.0.1:9300"
+  echo "ORCHESTRATOR_URL=http://127.0.0.1:9200"
+  echo "FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:-}"
+  echo "DATABASE_PUBLIC_HOST=${DATABASE_PUBLIC_HOST:-localhost}"
+} > /run/nexusinfra.env
+chmod 600 /run/nexusinfra.env
