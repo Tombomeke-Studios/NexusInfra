@@ -33,7 +33,7 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 
 > **The panel is feature-complete and every tab is real — verified live.**
 > `docker-compose up` brings up RabbitMQ + Control Room + Node Agent + Orchestrator + dashboard; the
-> dashboard is at **http://localhost:8095** (`admin` / `admin`). The node-agent mounts the Docker
+> dashboard is at **http://localhost:8095** (sign in as `admin@local` / `ADMIN_PASSWORD`). The node-agent mounts the Docker
 > socket, so all container operations run against real containers.
 >
 > **Verified live end to end (via the API against a real `nginx:alpine` container):** deploy → running →
@@ -133,7 +133,7 @@ gateway work" above.)_
 > Build **in order** — each is a feature branch + PR.
 
 - [x] Edition flag never reached the orchestrator — `/config` always said `community` (#173) 🐛
-- [ ] Real user accounts — `User` model, password login, edition-dependent signup (#174)
+- [x] Real user accounts — password login, edition-dependent signup, no anonymous fallback (#174)
 - [ ] Access control — enforce per-server roles on every deployment route + the terminal WS (#175)
 - [ ] Subuser invites linked to real identities + `operator` role (#176)
 - [ ] Teams — account-level sharing of servers (#177)

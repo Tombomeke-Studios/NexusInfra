@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { getCurrentUser, type CurrentUser } from '../api';
 import { logout } from '../session';
 import { useEdition } from '../edition';
 import { hasSeenIntro, markIntroSeen } from '../prefs';
@@ -15,6 +16,19 @@ export function Layout() {
   const location = useLocation();
   const { isHosted } = useEdition();
   const [introOpen, setIntroOpen] = useState(() => !hasSeenIntro());
+  const [user, setUser] = useState<CurrentUser | null>(null);
+
+  // Who am I? Shown in the bar so it's never ambiguous which account is acting —
+  // that matters once servers are shared between people (#174).
+  useEffect(() => {
+    let active = true;
+    getCurrentUser()
+      .then((u) => active && setUser(u))
+      .catch(() => undefined); // the sign-out path already handles a dead session
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const closeIntro = () => {
     markIntroSeen();
@@ -56,6 +70,11 @@ export function Layout() {
         <button className="btn btn--ghost btn--sm" onClick={() => setIntroOpen(true)} data-ripple aria-label="Open the intro tour" title="Intro & help">
           Help
         </button>
+        {user && (
+          <span className="subtle" style={{ fontSize: '0.82rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`${user.email} · ${user.platformRole}`}>
+            {user.displayName}
+          </span>
+        )}
         <button className="btn btn--ghost btn--sm" onClick={signOut} data-ripple>
           <IconLogout size={16} />
           Sign out

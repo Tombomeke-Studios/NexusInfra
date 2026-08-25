@@ -11,6 +11,7 @@ import type {
   CreateServerDatabaseInput,
   CreateServerScheduleInput,
   CreateServerSubuserInput,
+  CreateUserInput,
   NodeRecord,
   RegisterNodeInput,
   Repository,
@@ -22,6 +23,7 @@ import type {
   ServerSubuserRecord,
   UpdateServerScheduleInput,
   UpsertNodeInput,
+  UserRecord,
 } from './types.js';
 
 // Prisma-backed Repository (SQLite). The mapping helpers below convert between
@@ -36,6 +38,7 @@ export function getPrisma(): PrismaClient {
   return prisma;
 }
 
+type PrismaUser = Awaited<ReturnType<PrismaClient['user']['findFirstOrThrow']>>;
 type PrismaNode = Awaited<ReturnType<PrismaClient['node']['findFirstOrThrow']>>;
 type PrismaConfig = Awaited<ReturnType<PrismaClient['serverConfig']['findFirstOrThrow']>>;
 type PrismaDeployment = Awaited<ReturnType<PrismaClient['deployment']['findFirstOrThrow']>>;
@@ -63,6 +66,17 @@ function parseLimits(value: string): ResourceLimits {
   } catch {
     return {};
   }
+}
+
+function toUserRecord(u: PrismaUser): UserRecord {
+  return {
+    id: u.id,
+    email: u.email,
+    displayName: u.displayName,
+    passwordHash: u.passwordHash,
+    platformRole: u.platformRole,
+    createdAt: u.createdAt.toISOString(),
+  };
 }
 
 function toNodeRecord(n: PrismaNode): NodeRecord {
@@ -163,6 +177,37 @@ function toDeploymentRecord(d: PrismaDeployment): DeploymentRecord {
 
 export class PrismaRepository implements Repository {
   constructor(private readonly client: PrismaClient = getPrisma()) {}
+
+  // ── Accounts (#174) ─────────────────────────────────────────────────────────
+  async createUser(input: CreateUserInput): Promise<UserRecord> {
+    return toUserRecord(await this.client.user.create({ data: input }));
+  }
+
+  async getUser(id: string): Promise<UserRecord | null> {
+    const user = await this.client.user.findUnique({ where: { id } });
+    return user ? toUserRecord(user) : null;
+  }
+
+  async getUserByEmail(email: string): Promise<UserRecord | null> {
+    const user = await this.client.user.findUnique({ where: { email } });
+    return user ? toUserRecord(user) : null;
+  }
+
+  async listUsers(): Promise<UserRecord[]> {
+    return (await this.client.user.findMany({ orderBy: { createdAt: 'asc' } })).map(toUserRecord);
+  }
+
+  async countUsers(): Promise<number> {
+    return this.client.user.count();
+  }
+
+  async setUserPassword(id: string, passwordHash: string): Promise<UserRecord | null> {
+    try {
+      return toUserRecord(await this.client.user.update({ where: { id }, data: { passwordHash } }));
+    } catch {
+      return null; // no such user
+    }
+  }
 
   async upsertNode(input: UpsertNodeInput): Promise<NodeRecord> {
     // Undefined fields mean "preserve": liveness-only heartbeats (every 1s) omit

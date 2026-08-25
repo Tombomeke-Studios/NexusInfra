@@ -10,6 +10,24 @@ export type { ResourceLimits };
 
 export type DeploymentStatus = 'pending' | 'running' | 'stopped' | 'crashed' | 'failed';
 
+/** A panel account (#174). `passwordHash` never leaves the service — see `toPublicUser`. */
+export interface UserRecord {
+  id: string;
+  email: string;
+  displayName: string;
+  passwordHash: string;
+  platformRole: string;
+  createdAt: string;
+}
+
+export interface CreateUserInput {
+  id: string;
+  email: string;
+  displayName: string;
+  passwordHash: string;
+  platformRole: string;
+}
+
 export type NodeHealth = 'healthy' | 'degraded' | 'offline';
 
 export interface NodeRecord {
@@ -209,6 +227,14 @@ export interface RegisterNodeInput {
 }
 
 export interface Repository {
+  // Accounts (#174).
+  createUser(input: CreateUserInput): Promise<UserRecord>;
+  getUser(id: string): Promise<UserRecord | null>;
+  getUserByEmail(email: string): Promise<UserRecord | null>;
+  listUsers(): Promise<UserRecord[]>;
+  countUsers(): Promise<number>;
+  setUserPassword(id: string, passwordHash: string): Promise<UserRecord | null>;
+
   upsertNode(input: UpsertNodeInput): Promise<NodeRecord>;
   listNodes(): Promise<NodeRecord[]>;
   /** Create or relabel a node (name/location); leaves lastHeartbeat/resources intact. */

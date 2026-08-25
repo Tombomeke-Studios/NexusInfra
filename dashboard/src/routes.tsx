@@ -18,6 +18,9 @@ export function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* Self-registration is a hosted-edition affordance (#174): on a
+          self-hosted panel an administrator creates the accounts. */}
+      {isHosted && <Route path="/register" element={<Login mode="register" />} />}
       <Route element={<RequireAuth />}>
         <Route element={<Layout />}>
           <Route path="/" element={<Overview />} />

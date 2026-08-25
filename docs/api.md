@@ -68,9 +68,9 @@ The deployment control plane. Creating a deployment selects the least-loaded hea
 the deployment, and commands the Node Agent to start the container. `GET /health` returns the usual
 liveness shape. All responses are JSON.
 
-> Auth (stub, MVP only): all routes below require a Bearer token from `POST /auth/login`; requests
-> without a valid token get `401`. This is a local stand-in — the real FinVault-issued JWT validated
-> at the API Gateway is a later phase (#20).
+> Auth: every route below requires a Bearer token from `POST /auth/login`; requests without a valid
+> token get `401`. Identity is local to the panel (#174) — see [security.md](security.md). The
+> FinVault-issued JWT validated at the API Gateway remains the long-term direction (#20/#17).
 
 ### `GET /config`  *(public)*
 
@@ -85,17 +85,47 @@ Contains no sensitive data.
 
 ### `POST /auth/login`  *(public)*
 
-Exchange seeded dev credentials for a signed JWT (12h TTL). Defaults: `admin` / `admin`
-(override via `DEV_USERNAME` / `DEV_PASSWORD`; the signing key is `JWT_SECRET`).
+Exchange account credentials for a signed JWT (12h TTL, signed with `JWT_SECRET`).
 
 ```json
 // request
-{ "username": "admin", "password": "admin" }
+{ "email": "you@example.com", "password": "…" }
 // 200 response
 { "token": "<jwt>" }
 ```
 
-`401` on bad credentials. Send the token as `Authorization: Bearer <jwt>` on every other call.
+`401` on bad credentials — deliberately the same response for an unknown account as for a wrong
+password. `400` when either field is missing. Send the token as `Authorization: Bearer <jwt>` on
+every other call. An install that predates accounts may also sign in with its legacy username.
+
+The first administrator is seeded from `ADMIN_EMAIL` / `ADMIN_PASSWORD` on first start.
+
+### `POST /auth/register`  *(public — hosted edition only)*
+
+Create an account and receive a token for it, as a hosting customer would.
+
+```json
+// request
+{ "email": "you@example.com", "password": "…", "displayName": "Ada" }
+// 201 response
+{ "token": "<jwt>", "user": { "id": "…", "email": "you@example.com", "platformRole": "user" } }
+```
+
+`403` in the community edition, where accounts are created by an administrator instead. `409` when
+the email is taken, `400` on an invalid email or a password under 8 characters. A `platformRole` in
+the request is ignored — registration never grants privilege.
+
+### `GET /me` · `POST /me/password`
+
+The signed-in account (never including any credential material), and a password change that requires
+the current password: `{ "currentPassword": "…", "newPassword": "…" }` → `204`, `401` if the current
+password is wrong.
+
+### `GET /users` · `POST /users`  *(platform administrators)*
+
+List accounts, and create one — the way people get access in the community edition. `POST` takes
+`{ email, password, displayName?, platformRole? }` and returns `201`. Both return `403` for
+non-administrators.
 
 ### `POST /deployments`
 

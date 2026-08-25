@@ -23,11 +23,39 @@ Cross-project security design: [`../../CONCEPTS/integration/security.md`](../../
   rotating it requires rotating both platforms together.
 - RabbitMQ dev credentials (`guest/guest`) must be replaced in any non-local deployment.
 
-## Authentication (planned)
+## Authentication (#174)
 
-- Dashboard/API auth uses **FinVault-issued JWTs** validated at the NexusInfra gateway (#20) —
-  one identity across the ecosystem.
-- WebSocket connections authenticate via JWT in the query string, mirroring FinVault's gateway.
+The panel owns its own identity. Each person has an account; signing in returns a short-lived
+JWT that carries the account and its panel-wide role, and every request below the public routes
+requires one.
+
+- **Credentials** are stored only as bcrypt digests, never reversibly. An account may hold a
+  deliberately unusable digest — used for accounts that exist to own resources but cannot sign in,
+  such as the owner reconstructed for servers created before accounts existed. No password can ever
+  verify against it.
+- **No anonymous fallback.** Earlier builds let an unauthenticated request act as a shared default
+  user; that now means acting as the owner of somebody's servers, so a missing or invalid token is
+  rejected outright.
+- **Login does not reveal which accounts exist** — an unknown address and a wrong password return
+  the same response, so the form cannot be used to enumerate users.
+- **Self-registration follows the edition.** The hosted edition is a hosting provider, so customers
+  sign themselves up. The community edition is somebody's own machine, where an open sign-up form on
+  a panel that controls Docker would be a liability: there an administrator creates accounts, and
+  the registration route is refused outright rather than merely hidden in the UI.
+- **Registration cannot grant privilege.** A role supplied by the registrant is ignored; elevated
+  roles are only ever assigned by an existing administrator.
+- **Bootstrap.** A fresh install seeds one administrator from the environment. Leaving the built-in
+  default password in place logs a warning on every start — set `ADMIN_PASSWORD` before exposing a
+  panel to a network.
+- WebSocket connections authenticate via a JWT in the query string (browsers cannot set headers on
+  the handshake), mirroring FinVault's gateway.
+
+A valid token establishes only *who* the caller is. What they may do is a separate concern — see
+per-server authorization (#175).
+
+**Planned:** the same JWT issued by FinVault and validated at the gateway (#20/#17), giving one
+identity across the ecosystem. The provider seam in the Orchestrator's auth module exists so this
+becomes a swap rather than a rewrite.
 
 ## Service-to-service auth (#169)
 

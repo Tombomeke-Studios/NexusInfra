@@ -5,6 +5,7 @@ import type {
   CreateServerDatabaseInput,
   CreateServerScheduleInput,
   CreateServerSubuserInput,
+  CreateUserInput,
   DeploymentDetail,
   DeploymentEventRecord,
   DeploymentRecord,
@@ -20,6 +21,7 @@ import type {
   ServerSubuserRecord,
   UpdateServerScheduleInput,
   UpsertNodeInput,
+  UserRecord,
 } from './types.js';
 
 /**
@@ -30,6 +32,7 @@ import type {
  * contract test exercises this implementation.
  */
 export class InMemoryRepository implements Repository {
+  private users = new Map<string, UserRecord>();
   private nodes = new Map<string, NodeRecord>();
   private configs = new Map<string, ServerConfigRecord>();
   private deployments = new Map<string, DeploymentRecord>();
@@ -38,6 +41,37 @@ export class InMemoryRepository implements Repository {
   private backups = new Map<string, ServerBackupRecord>();
   private schedules = new Map<string, ServerScheduleRecord>();
   private subusers = new Map<string, ServerSubuserRecord>();
+
+  // ── Accounts (#174) ─────────────────────────────────────────────────────────
+  async createUser(input: CreateUserInput): Promise<UserRecord> {
+    const user: UserRecord = { ...input, createdAt: new Date().toISOString() };
+    this.users.set(user.id, user);
+    return user;
+  }
+
+  async getUser(id: string): Promise<UserRecord | null> {
+    return this.users.get(id) ?? null;
+  }
+
+  async getUserByEmail(email: string): Promise<UserRecord | null> {
+    return [...this.users.values()].find((u) => u.email === email) ?? null;
+  }
+
+  async listUsers(): Promise<UserRecord[]> {
+    return [...this.users.values()];
+  }
+
+  async countUsers(): Promise<number> {
+    return this.users.size;
+  }
+
+  async setUserPassword(id: string, passwordHash: string): Promise<UserRecord | null> {
+    const user = this.users.get(id);
+    if (!user) return null;
+    const updated = { ...user, passwordHash };
+    this.users.set(id, updated);
+    return updated;
+  }
 
   async upsertNode(input: UpsertNodeInput): Promise<NodeRecord> {
     const existing = this.nodes.get(input.id);
