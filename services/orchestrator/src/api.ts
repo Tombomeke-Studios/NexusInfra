@@ -617,7 +617,22 @@ export function createApiRouter(deps: ApiDeps): Router {
     const { email, role } = req.body ?? {};
     if (typeof email !== 'string' || !isEmail(email)) return res.status(400).json({ error: 'a valid email is required' });
     if (!isGrantableRole(role)) return res.status(400).json({ error: 'role must be admin, operator or viewer' });
-    const su = await repo.createSubuser({ deploymentId: detail.id, email: email.trim().toLowerCase(), role });
+
+    const address = email.trim().toLowerCase();
+    if (address === (await repo.getUser(userIdOf(req)))?.email) {
+      return res.status(400).json({ error: 'you already have access to this server' });
+    }
+
+    // Bind straight away when that person already has an account; otherwise the
+    // invitation waits for them, granting nothing until then (#176).
+    const invitee = await repo.getUserByEmail(address);
+    const su = await repo.createSubuser({
+      deploymentId: detail.id,
+      email: address,
+      role,
+      userId: invitee?.id ?? null,
+      status: invitee ? 'active' : 'pending',
+    });
     return res.status(201).json(su);
   });
 

@@ -4,6 +4,7 @@ import request from 'supertest';
 import { readPayload, type EventEnvelope } from 'shared';
 import { InMemoryRepository } from './repository.js';
 import { createApiRouter } from './api.js';
+import { createUserService } from './users.js';
 
 // API tests use a real Express app with the in-memory repo and a captured
 // publisher, so no broker or database is needed. The key assertion is that
@@ -599,7 +600,9 @@ describe('per-server authorization', () => {
   async function shareAs(role: string | null) {
     const existing = await repo.getSubuserFor(deploymentId, GUEST.email);
     if (existing) await repo.deleteSubuser(existing.id);
-    if (role) await repo.createSubuser({ deploymentId, email: GUEST.email, role });
+    // Bound and active, as inviting an address that already has an account
+    // produces (#176). The pending case has its own tests below.
+    if (role) await repo.createSubuser({ deploymentId, email: GUEST.email, role, userId: GUEST.id, status: 'active' });
   }
 
   beforeEach(async () => {
@@ -727,5 +730,91 @@ describe('per-server authorization', () => {
       expect(list.body[0]).toMatchObject({ role: 'owner' });
       expect((await request(adminApp).get(`/deployments/${deploymentId}`)).status).toBe(200);
     });
+  });
+});
+
+// ── Invitations bound to accounts (#176) ─────────────────────────────────────
+// You should be able to share a server with someone who has not signed up yet —
+// without that invitation granting anything to whoever holds the address in the
+// meantime.
+describe('server invitations', () => {
+  const NEWCOMER = { id: 'user-newcomer', email: 'newcomer@example.com', platformRole: 'user' as const };
+
+  let repo: InMemoryRepository;
+  let users: ReturnType<typeof createUserService>;
+  let ownerApp: express.Express;
+  let deploymentId: string;
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    users = createUserService({ repo });
+    ownerApp = buildApp(repo, []);
+    await seedUser(repo);
+    await seedHealthyNode(repo);
+    const created = await request(ownerApp).post('/deployments').send({ name: 'shared-svc', dockerImage: 'nginx' });
+    deploymentId = created.body.id;
+  });
+
+  const invite = (email: string, role = 'operator') =>
+    request(ownerApp).post(`/deployments/${deploymentId}/subusers`).send({ email, role });
+
+  it('binds and activates immediately when the address already has an account', async () => {
+    await seedUser(repo, NEWCOMER);
+    const res = await invite(NEWCOMER.email);
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ status: 'active', userId: NEWCOMER.id });
+  });
+
+  it('waits as a pending invitation when nobody holds the address yet', async () => {
+    const res = await invite('stranger@example.com');
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ status: 'pending', userId: null });
+  });
+
+  it('grants nothing while pending', async () => {
+    await invite(NEWCOMER.email);
+    // The account is created *after* the invitation and has not signed in, so the
+    // grant is still unbound; it must not open the server.
+    await repo.createUser({ id: NEWCOMER.id, email: NEWCOMER.email, displayName: 'n', passwordHash: '!', platformRole: 'user' });
+
+    const guestApp = buildApp(repo, [], NEWCOMER);
+    expect((await request(guestApp).get(`/deployments/${deploymentId}`)).status).toBe(404);
+    expect((await request(guestApp).get('/deployments')).body).toEqual([]);
+  });
+
+  it('is claimed when the invited person registers', async () => {
+    await invite(NEWCOMER.email);
+    const registered = await users.register({ email: NEWCOMER.email, password: 'newcomer1' });
+    if (!registered.ok) throw new Error('expected registration to succeed');
+
+    const guestApp = buildApp(repo, [], { id: registered.user.id, platformRole: 'user' });
+    const list = await request(guestApp).get('/deployments');
+    expect(list.body).toHaveLength(1);
+    expect(list.body[0]).toMatchObject({ id: deploymentId, role: 'operator' });
+  });
+
+  it('is claimed when an existing account signs in for the first time after being invited', async () => {
+    const created = await users.register({ email: NEWCOMER.email, password: 'newcomer1' });
+    if (!created.ok) throw new Error('expected registration to succeed');
+    // Force the pending state an out-of-band invitation would leave behind.
+    const share = await repo.getSubuserFor(deploymentId, NEWCOMER.email);
+    if (share) await repo.deleteSubuser(share.id);
+    await repo.createSubuser({ deploymentId, email: NEWCOMER.email, role: 'viewer' });
+
+    await users.authenticate(NEWCOMER.email, 'newcomer1');
+
+    expect(await repo.getSubuserFor(deploymentId, NEWCOMER.email)).toMatchObject({ status: 'active', userId: created.user.id });
+  });
+
+  it('refuses to let the owner invite themselves', async () => {
+    const res = await invite(OWNER.email);
+    expect(res.status).toBe(400);
+  });
+
+  it('changes the role on re-invite without unbinding an accepted share', async () => {
+    await seedUser(repo, NEWCOMER);
+    await invite(NEWCOMER.email, 'viewer');
+    const again = await invite(NEWCOMER.email, 'admin');
+    expect(again.body).toMatchObject({ role: 'admin', status: 'active', userId: NEWCOMER.id });
   });
 });
