@@ -43,17 +43,43 @@ other people. An optional hosted edition adds usage-based billing through
 
 ## What it does
 
-- **Deploy containers from a web panel.** Describe a server — image, ports, environment, CPU and
-  memory limits — and NexusInfra runs it on a real Docker host.
-- **Place work automatically.** The Orchestrator selects the least-loaded healthy node; commands are
-  addressed per node, so agents only act on their own workloads.
-- **Manage a server after it starts.** Live logs, an interactive terminal, a file browser, managed
-  databases, tar backups, and cron schedules — all against the real container.
-- **Share servers with other people.** Invite by email or through a team, with roles ranging from
-  read-only to full control. Access is resolved on every request.
-- **Watch the fleet.** Heartbeats drive `healthy → degraded → offline`, with uptime tracking.
-- **Bill for usage, optionally.** The hosted edition meters runtime against a credit wallet funded
-  through FinVault, over an encrypted shared event bus.
+You have a machine. A spare desktop under the stairs, a home server, a VPS you pay eight euros a
+month for. You want to run things on it — a Minecraft server for friends, a database for a side
+project, an app you are testing before it goes anywhere near production.
+
+Docker can already do all of that. What it cannot do is make it pleasant. Every change means an SSH
+session and a command you half remember. There is no way to see at a glance what is running or how
+hard the machine is working. And the moment a friend asks whether they can restart the game server
+themselves, your only real options are to hand over a shell account or to keep doing it yourself at
+eleven at night.
+
+**NexusInfra is the panel that sits in front of that.** You describe a server in a browser — an image,
+some ports, how much CPU and memory it may use — and it runs on your hardware, on real Docker, with
+the limits you set. Once it is up you get the tools you would expect from a proper control panel: live
+logs, an interactive terminal, a file browser, managed databases, backups and cron schedules, all
+working against the actual container rather than a pretty approximation of it.
+
+Then you can share it. Invite someone by email, or put a group of people in a team, and choose what
+they may do: watch it, restart it, or manage it fully. Someone with the operator role can keep the
+game server running without being able to read its files or hand out access to anyone else. Every
+request is checked, so taking access away takes effect immediately rather than whenever a session
+happens to expire.
+
+Add a second machine and the same panel covers both. Each host runs a small agent, the scheduler puts
+new servers wherever there is room, and you keep one place to look.
+
+It is yours, on your hardware, with no account on somebody else's service and nothing phoning home.
+If you would rather run it as a business — charging other people for the servers they use — there is a
+hosted edition that meters runtime and bills through [FinVault](https://github.com/Tombomeke-Studios/FinVault).
+Most people want the first one.
+
+### In short
+
+- Deploy any Docker image, or a game preset, from a browser — with CPU, memory and restart policy
+- Live console, interactive terminal, file browser, managed databases, backups and cron schedules
+- Share servers by email or by team, with roles from read-only to full control
+- Automatic placement across several machines, with live health and uptime per host
+- Self-hosted and self-contained; an optional hosted edition adds usage billing
 
 ---
 
