@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { ServerDetail } from './ServerDetail';
@@ -133,6 +133,47 @@ describe('ServerDetail Network tab', () => {
 
     expect(screen.queryByText(/sftp\.nexusinfra\.local/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/SFTP \/ FTP access/i)).not.toBeInTheDocument();
+  });
+});
+
+// The panel used to answer a failed stream by inventing a replacement: drifting
+// CPU/RAM/network meters (#250) and randomised log lines (#251), both indistinguishable
+// from the real thing. The test fetch mock returns a body-less response, so every
+// stream fails — which is exactly the condition that used to produce fiction.
+
+describe('ServerDetail telemetry when the stream fails', () => {
+  beforeEach(() => vi.resetAllMocks());
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('reports the stats as unavailable instead of inventing numbers', async () => {
+    renderDetail('owner');
+    expect(await screen.findByText(/stats unavailable/i)).toBeInTheDocument();
+
+    // CPU and Memory read as unknown — not as a plausible percentage.
+    expect(screen.queryByText(/^\d+%$/)).not.toBeInTheDocument();
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+  });
+
+  it('offers no Disk, Players or TPS tile — nothing can measure them', async () => {
+    renderDetail('owner', { type: 'game' });
+    await screen.findByText(/stats unavailable/i);
+
+    expect(screen.queryByText('Disk')).not.toBeInTheDocument();
+    expect(screen.queryByText(/players/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/TPS/)).not.toBeInTheDocument();
+  });
+
+  it('says the log stream is unavailable rather than printing invented output', async () => {
+    renderDetail('owner');
+    // The message lands once the stream promise settles, which queues behind the
+    // detail fetch and the stats stream.
+    await waitFor(() => expect(screen.getByText(/the log stream is unavailable/i)).toBeInTheDocument(), { timeout: 4000 });
+
+    // None of the generated lines the console used to emit.
+    expect(screen.queryByText(/heartbeat ok/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/joined the game/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/streaming stdout/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/cache hit ratio/)).not.toBeInTheDocument();
   });
 });
 

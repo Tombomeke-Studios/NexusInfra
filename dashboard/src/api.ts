@@ -81,6 +81,8 @@ export interface CreateDeploymentInput {
   resourceLimits?: ResourceLimits;
   autoRestart?: boolean;
   type?: string;
+  /** Pin the server to a node; omit to let the orchestrator pick the emptiest (#254). */
+  nodeId?: string;
 }
 
 /** Thrown when the API responds with a non-2xx status; carries the HTTP status. */
@@ -278,6 +280,11 @@ export function createDeployment(input: CreateDeploymentInput): Promise<Deployme
 
 export function stopDeployment(id: string): Promise<{ status: string; deploymentId: string }> {
   return request(`/deployments/${id}/stop`, { method: 'POST' });
+}
+
+/** Force-terminate (SIGKILL) a container that will not stop gracefully (#253). */
+export function killDeployment(id: string): Promise<{ status: string; deploymentId: string }> {
+  return request(`/deployments/${id}/kill`, { method: 'POST' });
 }
 
 export function restartDeployment(id: string): Promise<{ status: string; deploymentId: string }> {

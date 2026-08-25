@@ -54,7 +54,7 @@ exposes `pendingEvents` / `droppedEvents`.
 |---|---|---|
 | `monitoring.heartbeat.service.{name}` | every service (1s) | control-room |
 | `monitoring.heartbeat.node.{id}` | node-agent (1s pulse, resources every 5s) | control-room |
-| `infra.server.start` / `infra.server.stop` / `infra.server.restart` | orchestrator | node-agent |
+| `infra.server.start` / `infra.server.stop` / `infra.server.kill` / `infra.server.restart` | orchestrator | node-agent |
 | `infra.server.started` / `infra.server.stopped` / `infra.server.crashed` | node-agent | orchestrator **and** billing-bridge (runtime intervals, hosted) |
 | `infra.deployment.created` | orchestrator | billing-bridge (learns owner + limits for tracking, hosted) |
 | `bank.payment.request` | billing-bridge | FinVault (credit top-up charge) |

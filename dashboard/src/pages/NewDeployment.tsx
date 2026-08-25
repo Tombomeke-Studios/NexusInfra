@@ -8,9 +8,10 @@ import { getDeploymentDefaults } from '../prefs';
 import { buildGameDeployment } from '../gameSpec';
 
 // New Deployment — ported from the redesign. The deploy sends name, image, ports,
-// env, the resource limits + restart policy and the kind, all persisted with the
-// server config (#106); enforcing the limits at container start is #107. The game
-// picker, placement and feature limits remain UI for now.
+// env, the resource limits + restart policy, the kind and the chosen placement,
+// all persisted with the server config (#106); the limits are enforced at
+// container start (#107) and a pinned node is honoured or refused, never silently
+// overruled (#254).
 interface Row {
   key: string;
   value: string;
@@ -44,9 +45,6 @@ export function NewDeployment() {
   const [io, setIo] = useState<string>(defaults.io);
   const [restart, setRestart] = useState<string>(defaults.restart);
   const [oom, setOom] = useState(defaults.oom);
-  const [startup, setStartup] = useState('');
-  const [dbs, setDbs] = useState(1);
-  const [backups, setBackups] = useState(2);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
@@ -71,6 +69,8 @@ export function NewDeployment() {
         ports: g ? g.ports : rowsToRecord(ports),
         env: g ? g.env : rowsToRecord(env),
         type: kind,
+        // 'auto' means "you pick"; anything else is a deliberate pin the API honours (#254).
+        nodeId: placement === 'auto' ? undefined : placement,
         autoRestart: restart !== 'no',
         resourceLimits: {
           cpuPercent: cpu,
@@ -256,20 +256,20 @@ export function NewDeployment() {
               </span>
               <Toggle on={oom} onToggle={() => setOom((v) => !v)} />
             </label>
-            <div style={{ marginTop: 16 }}>
-              <span className="field__label" style={{ fontSize: '.86rem' }}>Startup command <span className="subtle" style={{ fontWeight: 400 }}>(optional)</span><InfoHint text="Override the command run inside the container. Leave blank to use the image's default entrypoint." label="Startup command help" /></span>
-              <input className="input mono" value={startup} onChange={(e) => setStartup(e.target.value)} placeholder="./server --port 8080" style={{ fontSize: '.86rem' }} />
-            </div>
+            {/*
+              A "Startup command" input sat here. Its value was written to state
+              and read by nothing: no request field, no event, and the node agent
+              has no way to override a container's command (#255). It returns when
+              the override exists end to end.
+            */}
           </div>
 
-          {/* Feature limits */}
-          <div style={{ marginBottom: 22 }}>
-            <span style={{ display: 'block', marginBottom: 14, fontWeight: 600, fontSize: '.95rem' }}>Feature limits<InfoHint text="Caps on the extras this server may create: how many managed databases and stored backups it's allowed." label="Feature limits help" /></span>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-              <Counter label="Databases" value={dbs} onChange={setDbs} />
-              <Counter label="Backups" value={backups} onChange={setBackups} />
-            </div>
-          </div>
+          {/*
+            A "Feature limits" section capped how many databases and backups this
+            server could create. Neither value was submitted and nothing enforced
+            them (#256). The quota that does exist is per-plan in the hosted
+            edition (#148), not per-server.
+          */}
 
           {error && <p role="alert" className="alert alert--error" style={{ marginBottom: 16 }}>{error}</p>}
 
@@ -328,19 +328,6 @@ function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
     >
       <span style={{ display: 'block', width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'transform 200ms var(--ease-out)', transform: on ? 'translateX(18px)' : 'translateX(0)' }} />
     </button>
-  );
-}
-
-function Counter({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
-  return (
-    <div style={{ flex: 1, minWidth: 150, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 14px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)' }}>
-      <span style={{ fontSize: '.86rem', fontWeight: 550 }}>{label}</span>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
-        <button type="button" className="icon-btn" style={{ width: 28, height: 28 }} onClick={() => onChange(Math.max(0, value - 1))} aria-label={`Fewer ${label.toLowerCase()}`}>−</button>
-        <span className="mono" style={{ minWidth: 16, textAlign: 'center', fontWeight: 600 }}>{value}</span>
-        <button type="button" className="icon-btn" style={{ width: 28, height: 28 }} onClick={() => onChange(value + 1)} aria-label={`More ${label.toLowerCase()}`}>+</button>
-      </span>
-    </div>
   );
 }
 

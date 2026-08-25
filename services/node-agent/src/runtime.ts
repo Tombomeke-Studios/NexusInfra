@@ -30,6 +30,8 @@ export interface StartSpec {
 export interface ContainerRuntime {
   start(spec: StartSpec): Promise<string>; // resolves to the container id
   stop(containerId: string): Promise<void>;
+  /** Force-terminate (SIGKILL) a container that will not stop gracefully (#253). */
+  kill(containerId: string): Promise<void>;
   restart(containerId: string): Promise<void>;
   collectResources(): Promise<NodeResources>;
   /** Follow a container's logs, invoking `onLine` per line. Returns an unsubscribe. */
@@ -123,6 +125,18 @@ export class DockerodeRuntime implements ContainerRuntime {
       await container.stop();
     } catch {
       // Already stopped — fall through to removal.
+    }
+    await container.remove({ force: true });
+  }
+
+  async kill(containerId: string): Promise<void> {
+    // SIGKILL, then remove — same cleanup as stop() so the name and host ports
+    // are freed and the deployment can be started again.
+    const container = this.docker.getContainer(containerId);
+    try {
+      await container.kill();
+    } catch {
+      // Already dead — fall through to removal.
     }
     await container.remove({ force: true });
   }

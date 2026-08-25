@@ -86,6 +86,50 @@ describe('NewDeployment', () => {
     expect(body.env).toMatchObject({ EULA: 'TRUE', TYPE: 'PAPER' });
   });
 
+  // The Placement control let you pin a server to a node and then never sent the
+  // choice — the orchestrator always picked the emptiest one, so a deliberate pin
+  // was silently overruled (#254).
+  it('sends the pinned node when placement is not Auto', async () => {
+    fetchMock.mockImplementation((url: string) =>
+      typeof url === 'string' && url.includes('/nodes')
+        ? Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => [{ id: 'node-rack', name: 'rack-1', health: 'healthy', cpuPercent: 10, ramUsedMb: 1000, ramTotalMb: 8000, diskUsedGb: null, diskTotalGb: null, lastHeartbeat: new Date().toISOString() }],
+          } as Response)
+        : Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response)
+    );
+    renderForm();
+
+    await userEvent.type(screen.getByLabelText('Name'), 'pinned');
+    await userEvent.type(screen.getByLabelText('Docker image'), 'nginx');
+    await userEvent.click(await screen.findByRole('button', { name: /rack-1/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+
+    expect(await screen.findByText('Servers page')).toBeInTheDocument();
+    const call = fetchMock.mock.calls.find(([u, o]) => typeof u === 'string' && u.includes('/deployments') && o?.method === 'POST');
+    expect(JSON.parse(call![1].body as string).nodeId).toBe('node-rack');
+  });
+
+  it('sends no node when placement is left on Auto', async () => {
+    renderForm();
+
+    await userEvent.type(screen.getByLabelText('Name'), 'auto');
+    await userEvent.type(screen.getByLabelText('Docker image'), 'nginx');
+    await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+
+    expect(await screen.findByText('Servers page')).toBeInTheDocument();
+    const call = fetchMock.mock.calls.find(([u, o]) => typeof u === 'string' && u.includes('/deployments') && o?.method === 'POST');
+    expect(JSON.parse(call![1].body as string)).not.toHaveProperty('nodeId');
+  });
+
+  it('no longer offers controls that go nowhere', async () => {
+    renderForm();
+    // Both were written to state and read by nothing (#255, #256).
+    expect(screen.queryByText(/startup command/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/feature limits/i)).not.toBeInTheDocument();
+  });
+
   it('surfaces an API error and stays on the form', async () => {
     fetchMock.mockResolvedValue({
       ok: false,

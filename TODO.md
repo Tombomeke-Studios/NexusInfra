@@ -5,7 +5,7 @@
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/next-Phase_5_·_Production-3b82f6?style=flat-square)
 ![Editions](https://img.shields.io/badge/editions-community_·_hosted-8b5cf6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-469_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-483_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -196,6 +196,18 @@ gateway work" above.)_
 - [x] Network tab is hardcoded — render real port allocations, drop the fake SFTP host (#217) 🐛
 - [x] Startup tab invents environment variables — show the server's own (#218) 🐛
 - [x] "Reinstall server" is a no-op — removed; Start already recreates from config (#219) 🐛
+
+**Second sweep — the panel fabricates telemetry.** Worse than the tabs: when a real stream fails,
+the panel does not say so, it *invents plausible data*. A broken node shows drifting meters and
+scrolling log lines describing events that never happened.
+
+- [x] Live CPU/RAM/network are invented when the stats stream fails (#250) 🐛
+- [x] The console invents log lines when the log stream fails (#251) 🐛
+- [x] Player count and TPS are fabricated for every game server (#252) 🐛 — tiles removed
+- [x] Kill button is a no-op — unlike Reinstall, this one is worth building (#253) 🐛
+- [x] Placement picker is ignored — a pinned node is silently overruled (#254) 🐛
+- [x] The startup command field is never sent anywhere (#255) 🐛 — field removed
+- [x] Feature limit sliders (databases/backups) are never sent or enforced (#256) 🐛 — section removed
 - [ ] A server's config cannot be edited after creation — `PATCH /deployments/:id` (#220)
 - [ ] Account settings page — change your own password (`/me` exists, nothing calls it) (#221)
 - [ ] Admin user management page — list/create accounts without curl (#222)
