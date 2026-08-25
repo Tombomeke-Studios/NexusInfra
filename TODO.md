@@ -4,7 +4,8 @@
 
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/next-Phase_5_·_Production-3b82f6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-337_passing-6e9f18?style=flat-square)
+![Editions](https://img.shields.io/badge/editions-community_·_hosted-8b5cf6?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-451_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -26,6 +27,7 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 | **3+ · Panel functional + UX** | Every mock tab made real (files/db/backups/schedules/subusers/console/nodes/games) + tooltips, intro, prefs, node detail | ✅ Done |
 | **4 · Billing (2 editions)** | Open-core split (community vs hosted) + Billing Bridge ↔ FinVault, usage-based charging | ✅ Done (#144–#150) |
 | **5 · Production** | Multi-node, metrics, security hardening, Postgres, API Gateway | 📋 Backlog |
+| **6 · Sharing + releases** | Accounts · per-server authorization · invitations · teams · role-aware panel · per-edition release pipeline | ✅ Done (#173–#179) |
 
 ---
 
@@ -56,7 +58,25 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > to end (#156), Control Room health surfaced in the panel (#157) plus **uptime % / transitions** (#165).
 >
 > **⚠️ Not yet verified live:** the terminal's PTY/WebSocket path and the gateway are unit-tested but
-> have not been exercised against a running stack — do a `docker compose up -d --build` pass.
+> have not been exercised against a running stack. Neither has the Phase 6 sharing flow: accounts,
+> roles, invitations and teams are covered by 451 unit tests, but the two-account walkthrough
+> (invite → operator starts the server → viewer is refused) has not been run against a live stack.
+> Do a `docker compose up -d --build` pass for both.
+>
+> **Phase 6 is complete (#173–#179) — the panel is multi-user and both editions are shippable.**
+> Real accounts replace the single hardcoded login, and **every** server route is now authorized:
+> before this, any signed-in user could stop, delete or open a root shell in anyone's container.
+> Access comes from ownership, a per-server invitation, or team membership, with roles
+> **viewer → operator → admin → owner**; no access answers 404 rather than 403 so server ids cannot
+> be probed. Invitations can be sent to people who have no account yet and stay inert until claimed.
+> The panel splits **My servers** / **Shared with me** and offers only actions the caller's role
+> allows. Model: **[docs/security.md](docs/security.md)**.
+>
+> **Releases.** Tagging `vX.Y.Z` publishes `nexusinfra-<service>:X.Y.Z-{community,hosted}` to GHCR
+> and attaches a self-contained compose bundle for each edition — `deploy/community/` for
+> self-hosters, `deploy/hosted/` for the multi-tenant instance. Neither needs a checkout of this
+> repo. **Verified** by a `workflow_dispatch` dry run: all 11 build-and-push jobs green.
+> See **[docs/deployment.md](docs/deployment.md)**.
 >
 > **Next up — Phase 5 production hardening.** Remaining work is mostly environment-dependent
 > (multi-node, Postgres, metrics, HTTPS) or blocked on FinVault (#17 real JWT).
