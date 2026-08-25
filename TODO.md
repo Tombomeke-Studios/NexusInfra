@@ -174,7 +174,7 @@ gateway work" above.)_
 - [ ] Slim the service images — Prisma CLI + engine targets (orchestrator is 501 MB) (#192) 📋
 - [x] Gateway test failed intermittently — the token was signed twice (#208) 🐛
 - [x] Slim the all-in-one — build tooling no longer ships to users, 1.07 GB → 915 MB (#204)
-- [x] Document the release installer, and link it from the README (#211)
+- [x] Document the release installer, and link it from the README (#210)
 
 ### 🐛 Bugs / fixes (open)
 
