@@ -79,7 +79,7 @@ Each mock behavior in the ported design becomes real, one issue + branch at a ti
 - [x] Server databases — provision real DBs (#109)
 - [x] Server backups — snapshot & restore volumes (#110)
 - [x] Server schedules — cron tasks (#111)
-- [x] Subusers — per-server access management (invite/role/revoke); enforcement needs #20 (#112)
+- [x] Subusers — per-server access management (invite/role/revoke); **enforced since #175** (#112)
 - [x] Node provisioning — register/deregister real nodes (#113)
 - [x] Game servers — real game images + startup (#114)
 
@@ -134,7 +134,7 @@ gateway work" above.)_
 
 - [x] Edition flag never reached the orchestrator — `/config` always said `community` (#173) 🐛
 - [x] Real user accounts — password login, edition-dependent signup, no anonymous fallback (#174)
-- [ ] Access control — enforce per-server roles on every deployment route + the terminal WS (#175)
+- [x] Access control — per-server roles enforced on every deployment route + the terminal WS (#175)
 - [ ] Subuser invites linked to real identities + `operator` role (#176)
 - [ ] Teams — account-level sharing of servers (#177)
 - [ ] Role-aware dashboard — "Shared with me" + gate actions by permission (#178)
@@ -190,7 +190,7 @@ gateway work" above.)_
 
 ### `feature/subusers` — merged in #140 (make the mock UI real)
 
-- [x] Subusers — per-server access management (invite/role/revoke); enforcement pending #20 (#112)
+- [x] Subusers — per-server access management (invite/role/revoke); enforced since #175 (#112)
 
 ### `feature/console-exec` — merged in #139 (make the mock UI real)
 

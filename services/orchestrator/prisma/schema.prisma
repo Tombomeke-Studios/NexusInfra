@@ -86,9 +86,9 @@ model Deployment {
   subusers       ServerSubuser[]
 }
 
-// A person (by email) granted access to a server, with a role (#112). Enforcement
-// arrives with real multi-user auth (the FinVault-JWT gateway, #20); this models
-// who may access what in the meantime.
+// A person (by email) granted access to a server, with a role (#112). These are
+// the grants access.ts resolves on every request (#175); binding them to account
+// records rather than bare addresses is #176.
 model ServerSubuser {
   id           String     @id
   deployment   Deployment @relation(fields: [deploymentId], references: [id])

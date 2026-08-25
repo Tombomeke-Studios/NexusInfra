@@ -71,6 +71,13 @@ liveness shape. All responses are JSON.
 > Auth: every route below requires a Bearer token from `POST /auth/login`; requests without a valid
 > token get `401`. Identity is local to the panel (#174) — see [security.md](security.md). The
 > FinVault-issued JWT validated at the API Gateway remains the long-term direction (#20/#17).
+>
+> **Authorization (#175):** every `/deployments/:id/*` route also requires a sufficient role on that
+> specific server. A caller with **no** access gets `404` (not `403`) so server ids cannot be probed
+> for existence; a caller who may see the server but not perform the action gets `403`. Roles, from
+> least to most: `viewer` · `operator` · `admin` · `owner` — the table in
+> [security.md](security.md#authorization--who-may-do-what-to-a-server-175) is authoritative.
+> `GET /deployments` is scoped to what the caller may see and each row carries their `role`.
 
 ### `GET /config`  *(public)*
 

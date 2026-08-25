@@ -601,8 +601,10 @@ export function createApiRouter(deps: ApiDeps): Router {
   });
 
   // ── Subusers (#112) — per-server access control ─────────────────────────────
-  // Manages who may access a server and their role. Enforcement arrives with the
-  // FinVault-JWT gateway (#20); this is the invite/role/revoke management layer.
+  // Who may access this server, and as what. These grants are what accessGuard
+  // resolves on every request, so a change here takes effect immediately (#175).
+  // Managing them is itself a permission, so an operator cannot widen their own
+  // access or see who else has any.
   router.get('/deployments/:id/subusers', requirePermission('subuser.manage'), async (req: Request, res: Response) => {
     const detail = await repo.getDeployment(req.params.id);
     if (!detail) return res.status(404).json({ error: 'deployment not found' });
