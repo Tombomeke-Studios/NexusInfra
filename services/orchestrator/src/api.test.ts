@@ -164,6 +164,34 @@ describe('deployment API', () => {
     expect(res.status).toBe(409);
   });
 
+  // Kill exists for the container that ignores a graceful stop (#253). It is a
+  // distinct command and a distinct audit entry, not a louder stop.
+  it('kills a running deployment by emitting server.kill', async () => {
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'abc123' });
+
+    const res = await request(app).post(`/deployments/${created.body.id}/kill`);
+    expect(res.status).toBe(202);
+
+    const kill = published.find((p) => p.key === 'infra.server.kill');
+    expect(kill).toBeDefined();
+    const payload = readPayload(kill!.envelope.event) as Record<string, unknown>;
+    expect(payload.containerId).toBe('abc123');
+
+    // The trail must distinguish a kill from a stop, or "who killed it" is unanswerable.
+    const detail = await repo.getDeployment(created.body.id);
+    expect(detail?.events.map((e) => e.event)).toContain('kill-requested');
+    expect(detail?.events.map((e) => e.event)).not.toContain('stop-requested');
+  });
+
+  it('refuses to kill a deployment that is not running', async () => {
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    const res = await request(app).post(`/deployments/${created.body.id}/kill`);
+    expect(res.status).toBe(409);
+  });
+
   it('restarts a running deployment by emitting server.restart', async () => {
     await seedHealthyNode(repo);
     const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });

@@ -280,6 +280,13 @@ Request a running deployment be stopped — emits `infra.server.stop`; the agent
 the container (freeing its name and host ports). `202` while stopping, `404` if unknown, `409` if the
 deployment is not running.
 
+### `POST /deployments/:id/kill`
+
+Force-terminate a running deployment (#253) — emits `infra.server.kill`; the agent sends SIGKILL and
+removes the container. For a container that ignores a graceful stop; unsaved state is lost. Requires
+the same `control.stop` permission as a stop, but is audited separately as `kill-requested`. `202`
+while killing, `404` if unknown, `409` if the deployment is not running.
+
 ### `POST /deployments/:id/restart`
 
 Request a running deployment be restarted — emits `infra.server.restart` with the stored container id;

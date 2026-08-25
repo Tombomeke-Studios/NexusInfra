@@ -6,6 +6,7 @@ import {
   stopDeployment,
   restartDeployment,
   deleteDeployment,
+  killDeployment,
   streamLogs,
   streamStats,
   execCommand,
@@ -50,9 +51,11 @@ import { InfoHint } from '../components/InfoHint';
 import { permissionsFor, ROLE_LABELS, type ServerPermission, type ServerRole } from '../permissions';
 import { Terminal } from '../components/Terminal';
 
-// Server detail — ported from the redesign. The header/status/actions are real;
-// the resource stats and every tab's content are UI/mock for now and get wired
-// up later (console → #66–#72, files/databases/backups/etc. → their own work).
+// Server detail — ported from the redesign, and now backed end to end: header
+// actions, live stats, logs, terminal, files, databases, backups, schedules,
+// subusers, network and startup all read or drive the real server. Nothing on
+// this page invents a value; where data is unavailable it says so (#217, #218,
+// #250, #251).
 const TABS = ['console', 'terminal', 'files', 'databases', 'backups', 'network', 'schedules', 'subusers', 'startup', 'settings'] as const;
 type Tab = (typeof TABS)[number];
 
@@ -105,6 +108,13 @@ export function ServerDetail() {
     }
   };
 
+  // Kill is a force-terminate (SIGKILL), for a container that ignores Stop (#253).
+  // It skips the graceful shutdown a server may need, so it asks first.
+  const onKill = async () => {
+    if (!window.confirm(`Force kill ${d?.name}? The process is terminated immediately and unsaved state is lost. Try Stop first.`)) return;
+    await act(killDeployment, 'kill');
+  };
+
   const onDelete = async () => {
     if (!window.confirm(`Delete ${d?.name}? This permanently removes the server and its files. This cannot be undone.`)) return;
     try {
@@ -153,7 +163,7 @@ export function ServerDetail() {
               {allows('control.stop') && (
                 <>
                   <button className="btn btn--danger" data-ripple data-burst="danger" onClick={() => act(stopDeployment, 'stop')}>Stop</button>
-                  <button className="btn btn--secondary" data-ripple onClick={() => toast('Kill is not wired yet', 'info')}>Kill</button>
+                  <button className="btn btn--secondary" data-ripple onClick={onKill}>Kill</button>
                 </>
               )}
             </>
@@ -170,8 +180,8 @@ export function ServerDetail() {
         </div>
       </div>
 
-      {/* Resource stats — real docker stats while running, mock fallback */}
-      <LiveStats id={d.id} running={running} isGame={isGame} containerId={d.containerId} startedAt={d.startedAt} />
+      {/* Resource stats — real docker stats, or an explicit "unavailable" */}
+      <LiveStats id={d.id} running={running} containerId={d.containerId} startedAt={d.startedAt} />
 
       {/* Tab bar */}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', borderBottom: '1px solid var(--color-border)', marginBottom: 22 }}>
@@ -183,7 +193,7 @@ export function ServerDetail() {
       </div>
 
       {/* Tab content */}
-      {activeTab === 'console' && <ConsoleTab id={d.id} running={running} isGame={isGame} containerId={d.containerId} />}
+      {activeTab === 'console' && <ConsoleTab id={d.id} running={running} containerId={d.containerId} />}
       {activeTab === 'terminal' && <TerminalTab id={d.id} running={running} />}
       {activeTab === 'files' && <FilesTab id={d.id} running={running} />}
       {activeTab === 'databases' && <DatabasesTab id={d.id} running={running} />}
@@ -197,32 +207,27 @@ export function ServerDetail() {
   );
 }
 
-// Header resource stats. While the server runs they stream from the owning Node
-// Agent's real `docker stats` (#67/#72); if the stream can't open (no backend,
-// container not up) they fall back to the mock drift so the demo still looks
-// alive. Players/TPS remain mock — Docker doesn't expose game telemetry.
-function LiveStats({ id, running, isGame, containerId, startedAt }: { id: string; running: boolean; isGame: boolean; containerId: string | null; startedAt: string | null }) {
-  const [s, setS] = useState({ cpu: 34, ram: 58, disk: 22, netKb: 1180, players: 7, tps: 19.9 });
-  const [live, setLive] = useState(false);
+/**
+ * Header resource stats, streamed from the owning Node Agent's real `docker stats`
+ * (#67/#72).
+ *
+ * These numbers used to be faked in two ways (#250): the meters started at
+ * hardcoded values, and a failed stream started a random walk that drifted
+ * plausibly forever. An unreachable node therefore looked like a busy, healthy
+ * server. Nothing here invents a number now — before the first sample, and after
+ * a stream failure, the tiles read `—` and the indicator says why.
+ *
+ * There is no Disk tile because `docker stats` does not report disk, and no
+ * Players/TPS tile because nothing in the stack can measure game telemetry (#252).
+ */
+function LiveStats({ id, running, containerId, startedAt }: { id: string; running: boolean; containerId: string | null; startedAt: string | null }) {
+  const [s, setS] = useState<{ cpu: number; ram: number; netKb: number } | null>(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
+    setS(null);
+    setFailed(false);
     if (!running) return;
-    const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-
-    // Mock drift — the fallback when the real stats stream isn't available.
-    let mockTimer: ReturnType<typeof setInterval> | undefined;
-    const startMock = () => {
-      mockTimer = setInterval(() => {
-        setS((p) => ({
-          ...p,
-          cpu: Math.round(clamp(p.cpu + (Math.random() * 12 - 6), 3, 96)),
-          ram: Math.round(clamp(p.ram + (Math.random() * 8 - 4), 5, 97)),
-          netKb: Math.round(clamp(p.netKb + (Math.random() * 500 - 250), 60, 8000)),
-          players: isGame ? clamp(p.players + (Math.random() < 0.3 ? (Math.random() < 0.5 ? 1 : -1) : 0), 0, 20) : p.players,
-          tps: isGame ? +clamp(p.tps + (Math.random() * 0.6 - 0.3), 12, 20).toFixed(1) : p.tps,
-        }));
-      }, 1500);
-    };
 
     const ctrl = new AbortController();
     let cancelled = false;
@@ -231,46 +236,46 @@ function LiveStats({ id, running, isGame, containerId, startedAt }: { id: string
 
     streamStats(id, (st) => {
       if (cancelled) return;
-      setLive(true);
       const now = Date.now();
       const totalKb = st.rxKb + st.txKb;
       let netKb = 0;
       if (prev && now > prev.t) netKb = Math.max(0, Math.round(((totalKb - prev.totalKb) / (now - prev.t)) * 1000));
       prev = { totalKb, t: now };
-      setS((p) => ({ ...p, cpu: Math.round(st.cpuPercent), ram: Math.round(st.memPercent), netKb }));
-    }, ctrl.signal).catch(() => {
-      if (!cancelled) startMock();
+      setS({ cpu: Math.round(st.cpuPercent), ram: Math.round(st.memPercent), netKb });
+    }, ctrl.signal).catch(() => undefined).finally(() => {
+      // Settled either way means no further samples are coming. Keeping the last
+      // one on screen would present a frozen number as a live one, which is the
+      // same lie in a slower form — so drop it and say the stats are gone.
+      if (cancelled) return;
+      setS(null);
+      setFailed(true);
     });
 
     return () => {
       cancelled = true;
       ctrl.abort();
-      setLive(false);
-      if (mockTimer) clearInterval(mockTimer);
     };
-  }, [id, running, isGame, containerId]);
+  }, [id, running, containerId]);
 
   const mins = running && startedAt ? Math.floor((Date.now() - new Date(startedAt).getTime()) / 60000) : 0;
   const uptime = running && startedAt ? `${Math.floor(mins / 60)}h ${mins % 60}m` : '—';
-  const net = running ? (s.netKb >= 1024 ? `${(s.netKb / 1024).toFixed(1)} MB/s` : `${s.netKb} KB/s`) : '—';
+  const net = s ? (s.netKb >= 1024 ? `${(s.netKb / 1024).toFixed(1)} MB/s` : `${s.netKb} KB/s`) : '—';
 
   return (
     <div style={{ marginBottom: 24 }}>
       {running && (
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8, fontSize: '.72rem', color: 'var(--color-text-subtle)' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: live ? 'var(--color-success)' : 'var(--color-neutral)', animation: live ? 'pulse 1.8s ease-out infinite' : 'none' }} />
-            {live ? 'live · docker stats' : 'estimated'}
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: s ? 'var(--color-success)' : 'var(--color-neutral)', animation: s ? 'pulse 1.8s ease-out infinite' : 'none' }} />
+            {s ? 'live · docker stats' : failed ? 'stats unavailable — the node agent is not reachable' : 'waiting for the first sample…'}
           </span>
         </div>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12 }}>
-        <StatBox label="CPU" value={running ? `${s.cpu}%` : '0%'} />
-        <StatBox label="Memory" value={running ? `${s.ram}%` : '0%'} />
-        <StatBox label="Disk" value={`${s.disk}%`} />
+        <StatBox label="CPU" value={s ? `${s.cpu}%` : '—'} />
+        <StatBox label="Memory" value={s ? `${s.ram}%` : '—'} />
         <StatBox label="Network" value={net} />
         <StatBox label="Uptime" value={uptime} />
-        {isGame && <StatBox label="Players · TPS" value={running ? `${s.players}/20 · ${s.tps}` : '—'} />}
       </div>
     </div>
   );
@@ -285,7 +290,7 @@ function StatBox({ label, value }: { label: string; value: string }) {
   );
 }
 
-// ── Console — live mock stream (app/game); real logs/exec wired via #66–#72 ─
+// ── Console — the container's real log stream (#66/#70) + one-shot exec (#68) ─
 interface LogLine {
   id: number;
   time: string;
@@ -297,27 +302,11 @@ const clock = () => {
   const z = (n: number) => String(n).padStart(2, '0');
   return `${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}`;
 };
-const hex = () => Math.random().toString(16).slice(2, 8);
-const NAMES = ['Steve', 'Alex', 'Notch_', 'xX_miner', 'CreeperKing', 'Enderman42', 'pvp_god', 'BuilderBob'];
-const pick = <T,>(a: T[]) => a[(Math.random() * a.length) | 0];
-const appLog = (): [string, string] =>
-  pick<[string, string]>([
-    ['#8b949e', `GET /healthz 200 ${1 + ((Math.random() * 6) | 0)}ms`],
-    ['#7ee787', `request ${hex()} 200 ${8 + ((Math.random() * 120) | 0)}ms`],
-    ['#8b949e', `cache hit ratio ${(0.8 + Math.random() * 0.19).toFixed(2)}`],
-    ['#7ee787', `worker tick — queue ${(Math.random() * 40) | 0}`],
-    ['#e3b341', `slow query ${210 + ((Math.random() * 300) | 0)}ms`],
-    ['#8b949e', 'heartbeat ok'],
-  ]);
-const gameLog = (): [string, string] =>
-  pick<[string, string]>([
-    ['#7ee787', `${pick(NAMES)} joined the game`],
-    ['#e3b341', `${pick(NAMES)} left the game`],
-    ['#8b949e', 'Saving chunks for level "world"'],
-    ['#7ee787', `<${pick(NAMES)}> gg`],
-    ['#8b949e', `Time elapsed: ${20 + ((Math.random() * 60) | 0)} ms`],
-    ['#e3b341', "Can't keep up! Is the server overloaded?"],
-  ]);
+// There were `appLog()` and `gameLog()` generators here that invented plausible
+// output — HTTP requests, cache ratios, players joining — whenever the real log
+// stream could not be opened, in the same colours as genuine output (#251).
+// Someone debugging a broken server was shown a fluent account of events that
+// never happened. A stream that fails now says so and stops.
 
 const lineColor = (t: string) =>
   /error|fatal|exit code|oomkilled|panic/i.test(t) ? '#f85149' : /warn|slow|overload|can't keep up/i.test(t) ? '#e3b341' : '#c9d1d9';
@@ -341,7 +330,7 @@ function TerminalTab({ id, running }: { id: string; running: boolean }) {
   );
 }
 
-function ConsoleTab({ id, running, isGame, containerId }: { id: string; running: boolean; isGame: boolean; containerId: string | null }) {
+function ConsoleTab({ id, running, containerId }: { id: string; running: boolean; containerId: string | null }) {
   const [cmd, setCmd] = useState('');
   const [cwd, setCwd] = useState('/'); // tracked client-side so cd persists + shows
   const [log, setLog] = useState<LogLine[]>([]);
@@ -353,40 +342,31 @@ function ConsoleTab({ id, running, isGame, containerId }: { id: string; running:
       return next;
     });
 
-  // Try the real log stream first; fall back to a mock stream if it can't open
-  // (e.g. the container isn't running, or the dashboard is run without a backend).
+  // The container's real stdout/stderr. Every line below comes from the server;
+  // the panel's own messages are marked so the two can never be confused (#251).
   useEffect(() => {
     setLog([]);
     seqRef.current = 0;
     if (!running) {
-      append('process is not running — showing last output', '#e3b341');
+      append('— the server is not running, so there is no output to stream —', '#e3b341');
       return;
     }
     let cancelled = false;
-    let mockTimer: ReturnType<typeof setInterval> | undefined;
     const ctrl = new AbortController();
 
-    const startMock = () => {
-      append(`container ${(containerId || '').slice(0, 12)} attached`, '#7ee787');
-      append('streaming stdout/stderr… (demo)', '#8b949e');
-      mockTimer = setInterval(() => {
-        if (Math.random() < 0.72) {
-          const [color, text] = isGame ? gameLog() : appLog();
-          append(text, color);
-        }
-      }, 1050);
-    };
-
-    streamLogs(id, (line) => !cancelled && append(line, lineColor(line)), ctrl.signal).catch(() => {
-      if (!cancelled) startMock();
-    });
+    streamLogs(id, (line) => !cancelled && append(line, lineColor(line)), ctrl.signal)
+      .then(() => {
+        if (!cancelled) append('— the log stream ended —', '#e3b341');
+      })
+      .catch(() => {
+        if (!cancelled) append('— the log stream is unavailable; the node agent could not be reached —', '#f85149');
+      });
 
     return () => {
       cancelled = true;
       ctrl.abort();
-      if (mockTimer) clearInterval(mockTimer);
     };
-  }, [id, running, isGame, containerId]);
+  }, [id, running, containerId]);
 
   useEffect(() => {
     if (boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;

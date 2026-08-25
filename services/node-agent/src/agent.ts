@@ -93,6 +93,26 @@ export function createAgent(deps: AgentDeps): NodeAgent {
         return;
       }
 
+      // Force-terminate a container that will not stop gracefully (#253). The
+      // report is the same server.stopped — from the orchestrator's point of view
+      // the outcome is identical; how it got there is in the audit trail.
+      case 'server.kill': {
+        const containerId = String(payload.containerId ?? '');
+        try {
+          await runtime.kill(containerId);
+          await emit(KEY_STOPPED, {
+            type: 'server.stopped',
+            payload: { deploymentId, containerId },
+          });
+        } catch (err) {
+          await emit(KEY_CRASHED, {
+            type: 'server.crashed',
+            payload: { deploymentId, containerId, reason: errMessage(err) },
+          });
+        }
+        return;
+      }
+
       case 'server.restart': {
         const containerId = String(payload.containerId ?? '');
         try {

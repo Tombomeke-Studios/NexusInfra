@@ -20,6 +20,10 @@ class FakeRuntime implements ContainerRuntime {
     this.calls.push(`stop:${containerId}`);
     if (this.failOn === 'stop') throw new Error('no such container');
   }
+  async kill(containerId: string): Promise<void> {
+    this.calls.push(`kill:${containerId}`);
+    if (this.failOn === 'kill') throw new Error('no such container');
+  }
   async restart(containerId: string): Promise<void> {
     this.calls.push(`restart:${containerId}`);
     if (this.failOn === 'restart') throw new Error('restart failed');
@@ -133,6 +137,31 @@ describe('Node Agent command handling', () => {
     expect(runtime.calls).toEqual(['stop:c-9']);
     expect(published[0].key).toBe('infra.server.stopped');
     expect((published[0].envelope.event.payload as any).containerId).toBe('c-9');
+  });
+
+  // Kill is a force-terminate for a container that ignores a graceful stop (#253).
+  // It reports the same server.stopped, because the outcome is the same: not running.
+  it('kills a container and reports server.stopped', async () => {
+    const { runtime, published, agent } = makeAgent();
+    await agent.handleCommand(
+      cmd({ type: 'server.kill', payload: { deploymentId: 'd-1', nodeId: NODE_ID, containerId: 'c-9' } })
+    );
+
+    expect(runtime.calls).toEqual(['kill:c-9']);
+    expect(published[0].key).toBe('infra.server.stopped');
+    expect((published[0].envelope.event.payload as any).containerId).toBe('c-9');
+  });
+
+  it('reports server.crashed when a kill fails', async () => {
+    const { runtime, published, agent } = makeAgent();
+    runtime.failOn = 'kill';
+    await agent.handleCommand(
+      cmd({ type: 'server.kill', payload: { deploymentId: 'd-1', nodeId: NODE_ID, containerId: 'gone' } })
+    );
+
+    expect(published[0].key).toBe('infra.server.crashed');
+    expect((published[0].envelope.event.payload as any).reason).toBe('no such container');
+    expect(runtime.calls).toEqual(['kill:gone']);
   });
 
   it('restarts a container and reports server.started', async () => {

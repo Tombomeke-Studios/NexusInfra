@@ -55,6 +55,7 @@ export function resolveContainerTarget(detail: DeploymentDetail | null): { statu
 
 const KEY_START = 'infra.server.start';
 const KEY_STOP = 'infra.server.stop';
+const KEY_KILL = 'infra.server.kill';
 const KEY_RESTART = 'infra.server.restart';
 
 export type PublishFn = (routingKey: string, envelope: EventEnvelope) => Promise<boolean>;
@@ -272,6 +273,24 @@ export function createApiRouter(deps: ApiDeps): Router {
       payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId },
     });
     return res.status(202).json({ status: 'stopping', deploymentId: detail.id });
+  });
+
+  // Force-terminate a container that ignores a graceful stop (#253). Same
+  // permission as stop — it is the same intent, applied harder — but its own
+  // command and its own audit entry, so the trail can say which one happened.
+  router.post('/deployments/:id/kill', requirePermission('control.stop'), async (req: Request, res: Response) => {
+    const detail = await repo.getDeployment(req.params.id);
+    if (!detail) return res.status(404).json({ error: 'deployment not found' });
+    if (!detail.containerId || !detail.nodeId) {
+      return res.status(409).json({ error: 'deployment is not running' });
+    }
+
+    await repo.appendDeploymentEvent(detail.id, 'kill-requested', 'force kill requested by user');
+    await emit(KEY_KILL, {
+      type: 'server.kill',
+      payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId },
+    });
+    return res.status(202).json({ status: 'killing', deploymentId: detail.id });
   });
 
   // Start (or re-run) a deployment that isn't currently running: re-place it on a

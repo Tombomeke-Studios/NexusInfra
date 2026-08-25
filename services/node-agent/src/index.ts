@@ -163,7 +163,7 @@ async function start() {
   try {
     await consumeRabbitQueue(
       `nexusinfra.node-agent.${NODE_ID}`,
-      ['infra.server.start', 'infra.server.stop', 'infra.server.restart'],
+      ['infra.server.start', 'infra.server.stop', 'infra.server.kill', 'infra.server.restart'],
       (envelope) => agent.handleCommand(envelope)
     );
     console.log(`[Node Agent ${NODE_ID}] Listening for server commands`);

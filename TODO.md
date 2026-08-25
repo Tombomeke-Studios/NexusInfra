@@ -5,7 +5,7 @@
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/next-Phase_5_·_Production-3b82f6?style=flat-square)
 ![Editions](https://img.shields.io/badge/editions-community_·_hosted-8b5cf6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-469_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-476_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -201,10 +201,10 @@ gateway work" above.)_
 the panel does not say so, it *invents plausible data*. A broken node shows drifting meters and
 scrolling log lines describing events that never happened.
 
-- [ ] Live CPU/RAM/network are invented when the stats stream fails (#250) 🐛
-- [ ] The console invents log lines when the log stream fails (#251) 🐛
-- [ ] Player count and TPS are fabricated for every game server (#252) 🐛
-- [ ] Kill button is a no-op — unlike Reinstall, this one is worth building (#253) 🐛
+- [x] Live CPU/RAM/network are invented when the stats stream fails (#250) 🐛
+- [x] The console invents log lines when the log stream fails (#251) 🐛
+- [x] Player count and TPS are fabricated for every game server (#252) 🐛 — tiles removed
+- [x] Kill button is a no-op — unlike Reinstall, this one is worth building (#253) 🐛
 - [ ] Placement picker is ignored — a pinned node is silently overruled (#254) 🐛
 - [ ] The startup command field is never sent anywhere (#255) 🐛
 - [ ] Feature limit sliders (databases/backups) are never sent or enforced (#256) 🐛

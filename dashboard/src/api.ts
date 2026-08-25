@@ -280,6 +280,11 @@ export function stopDeployment(id: string): Promise<{ status: string; deployment
   return request(`/deployments/${id}/stop`, { method: 'POST' });
 }
 
+/** Force-terminate (SIGKILL) a container that will not stop gracefully (#253). */
+export function killDeployment(id: string): Promise<{ status: string; deploymentId: string }> {
+  return request(`/deployments/${id}/kill`, { method: 'POST' });
+}
+
 export function restartDeployment(id: string): Promise<{ status: string; deploymentId: string }> {
   return request(`/deployments/${id}/restart`, { method: 'POST' });
 }

@@ -19,6 +19,9 @@ export type NexusInfraEvent =
   // ── Server lifecycle — commands (Orchestrator → Node Agent) ──────────
   | { type: 'server.start'; payload: { deploymentId: string; nodeId: string; dockerImage: string; containerName?: string; env?: Record<string, string>; ports?: Record<string, string>; resourceLimits?: ResourceLimits } }
   | { type: 'server.stop'; payload: { deploymentId: string; nodeId: string; containerId: string } }
+  // Force-terminate rather than ask: SIGKILL, for a container that will not stop
+  // gracefully. Distinct from server.stop so the audit trail records which it was (#253).
+  | { type: 'server.kill'; payload: { deploymentId: string; nodeId: string; containerId: string } }
   | { type: 'server.restart'; payload: { deploymentId: string; nodeId: string; containerId: string } }
   // ── Server lifecycle — reports (Node Agent → Orchestrator) ───────────
   | { type: 'server.started'; payload: { deploymentId: string; containerId: string; nodeId: string } }
