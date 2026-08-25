@@ -28,7 +28,7 @@ the panel, then share servers with them.
 ## Adding more machines
 
 A node is just a Node Agent process pointed at this broker. To add a second machine, run the
-`nexusinfra-node-agent` image there with a distinct `NODE_ID`, the same `INTERNAL_API_TOKEN`, and
+`nexusinfra/node-agent` image there with a distinct `NODE_ID`, the same `INTERNAL_API_TOKEN`, and
 `RABBITMQ_URL` pointing at this host's broker — over an authenticated, TLS-protected connection, not
 the defaults in `.env.example`. It registers itself, and the scheduler starts placing servers on it.
 

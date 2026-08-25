@@ -89,8 +89,8 @@ jobs:
             APP_VERSION=${{ steps.meta.outputs.version }}
             NEXUS_EDITION=${{ matrix.edition }}
           tags: |
-            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/nexusinfra-${{ matrix.service }}:${{ steps.meta.outputs.version }}-${{ matrix.edition }}
-            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/nexusinfra-${{ matrix.service }}:${{ matrix.edition }}
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/nexusinfra/${{ matrix.service }}:${{ steps.meta.outputs.version }}-${{ matrix.edition }}
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/nexusinfra/${{ matrix.service }}:${{ matrix.edition }}
           # The two editions differ only in a build arg, so the second leg is
           # almost entirely cache hits.
           cache-from: type=gha,scope=${{ matrix.service }}
