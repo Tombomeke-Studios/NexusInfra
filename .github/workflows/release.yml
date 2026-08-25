@@ -106,7 +106,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # One archive containing both editions and the installer (#192), rather
+      # One archive containing both editions and the installer (#191), rather
       # than a tarball per edition. Choosing an edition is a question the
       # installer asks, not a download you have to get right beforehand.
       - name: Package the release archive

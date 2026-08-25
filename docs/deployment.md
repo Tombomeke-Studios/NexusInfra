@@ -107,7 +107,7 @@ a community build of it would be a build of nothing.
 
 *A note on size:* excluding that code saves roughly 5 KB of a 288 KB bundle. It is worth doing for
 open-core integrity — self-hosters receive only code they can run — not for image size. Measured, the
-application is about 0.1% of what ships; the weight is the base images and Prisma (#191).
+application is about 0.1% of what ships; the weight is the base images and Prisma (#192).
 
 Services also report their `version` and *resolved* `edition` from `GET /health`, which is the fastest
 way to confirm a running container is what you think it is.
