@@ -28,12 +28,21 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 | **4 · Billing (2 editions)** | Open-core split (community vs hosted) + Billing Bridge ↔ FinVault, usage-based charging | ✅ Done (#144–#150) |
 | **5 · Production** | Multi-node, metrics, security hardening, Postgres, API Gateway | 📋 Backlog |
 | **6 · Sharing + releases** | Accounts · per-server authorization · invitations · teams · role-aware panel · per-edition release pipeline | ✅ Done (#173–#179) |
+| **7 · Say only what we do** | Close the gap between what the panel claims and what it does — mock tabs, dead buttons, unreachable APIs | 🔨 Active (#217–#224) |
+| **8 · Accounts & security** | Login rate limit · password reset · session revocation · API tokens · 2FA · ownership transfer | 📋 Backlog (#225–#230) |
+| **9 · Depth** | Templates · backup retention · port pools · node migration · SFTP · notifications · list scale · CLI | 📋 Backlog (#231–#240) |
 
 ---
 
 ## Current state
 
-> **The panel is feature-complete and every tab is real — verified live.**
+> **⚠️ "Every tab is real" was too generous.** A repo sweep (2026-08-26) found the **Network** and
+> **Startup** tabs still rendering hardcoded mock data, a Reinstall button that only toasts
+> "not wired yet", an audit trail nobody can read, and the account/user-admin APIs with no page
+> calling them. Phase 7 (#217–#224) closes exactly that gap. Everything below this line is accurate
+> for the tabs it names.
+>
+> **The panel is otherwise feature-complete and those tabs are real — verified live.**
 > `docker-compose up` brings up RabbitMQ + Control Room + Node Agent + Orchestrator + dashboard; the
 > dashboard is at **http://localhost:8095** (sign in as `admin@local` / `ADMIN_PASSWORD`). The node-agent mounts the Docker
 > socket, so all container operations run against real containers.
@@ -176,6 +185,49 @@ gateway work" above.)_
 - [x] Slim the all-in-one — build tooling no longer ships to users, 1.07 GB → 915 MB (#204)
 - [x] Document the release installer, and link it from the README (#210)
 
+### Phase 7 — Say only what we do (`feature/panel-truthfulness`)
+
+> **The panel promises more than it delivers.** A repo sweep found two server tabs still rendering
+> hardcoded mock data, a button that only fires a "not wired yet" toast, an audit trail that is
+> written and never read, and two working API surfaces (account + user admin) that no page calls.
+> None of this is new work in the product sense — it is closing the gap between what the UI claims
+> and what the code does. Build **in order**; each is a feature branch + PR.
+
+- [ ] Network tab is hardcoded — render real port allocations, drop the fake SFTP host (#217) 🐛
+- [ ] Startup tab invents environment variables — show the server's own (#218) 🐛
+- [ ] "Reinstall server" is a no-op — implement it or remove the card (#219) 🐛
+- [ ] A server's config cannot be edited after creation — `PATCH /deployments/:id` (#220)
+- [ ] Account settings page — change your own password (`/me` exists, nothing calls it) (#221)
+- [ ] Admin user management page — list/create accounts without curl (#222)
+- [ ] Expose the deployment audit trail + an Activity tab (#223)
+- [ ] Team routes check membership by hand — move them behind the guard layer (#224)
+
+### Phase 8 — Accounts & security hardening
+
+> Everything here is about what happens **after** the password: recovery, revocation, second
+> factors, and the machine-to-machine path. The panel hands out root shells; today a single
+> password with no rate limit is the whole defence.
+
+- [ ] Login is not rate limited on the orchestrator — nginx proxies past the gateway (#225) 🐛
+- [ ] Password reset flow — admin-driven in community, email-driven in hosted (#226)
+- [ ] Sessions cannot be revoked — a deleted user's token stays valid (#227)
+- [ ] API tokens for scripted/CI access, scoped and revocable (#228)
+- [ ] Two-factor authentication (TOTP) + recovery codes (#229)
+- [ ] Transfer server ownership — an owner who leaves orphans their servers (#230)
+
+### Phase 9 — Features that follow from what exists
+
+- [ ] Server templates — reusable deploy recipes; generalises `gameSpec.ts` (#231)
+- [ ] Backup retention, download, and off-site (S3) targets (#232)
+- [ ] Port allocation management per node — pool, conflicts, primary port (#233)
+- [ ] Migrate a server to another node (#234)
+- [ ] Real SFTP access per server, honouring the file permissions (#235)
+- [ ] Notification service — mail/webhook on crash, suspend, node offline (#236)
+- [ ] Search, filter and pagination on the Servers list (#237)
+- [ ] Bulk actions on multiple servers (#238)
+- [ ] Update a deployment's container image (pull + recreate) (#239)
+- [ ] `nexusctl` — a CLI client for the panel (#240)
+
 ### 🐛 Bugs / fixes (open)
 
 - [x] Delete server button is a no-op — wire `DELETE /deployments/:id` end to end (#156)
@@ -192,9 +244,18 @@ gateway work" above.)_
 - [~] Node Agent: offline event queue / replay on reconnect (#167 — **done**, in-memory outbox for lifecycle reports) + auto-restart on crash (still to do)
 - [~] Control Room: uptime % / history (#165 — **done**, in-memory) + alerting via the Notification/Mail service + DLQ monitoring (still to do)
 - [ ] Metrics: InfluxDB + Grafana dashboards
+- [ ] Prometheus `/metrics` on every service — the cheap half of the above (#246)
 - [~] Security: service-to-service auth (#169 — **done**, token-guarded agent API) + rate limiting (done in the gateway, #20); secrets-at-rest, token rotation, mTLS/HTTPS still to do
-- [ ] Production docker-compose + deployment docs; migrate SQLite → PostgreSQL via Prisma
-- [ ] Integration tests: RabbitMQ / DB-backed end to end (Docker Compose test target)
+- [ ] Production docker-compose + deployment docs; migrate SQLite → PostgreSQL via Prisma (#241)
+- [ ] Integration tests: RabbitMQ / DB-backed end to end (Docker Compose test target) (#242)
+- [ ] Nothing watches the dead-letter queue — surface DLQ depth + oldest message (#243)
+- [ ] Node Agent does not reconcile containers after its own crash (#244)
+- [ ] Document TLS termination / reverse proxy — the installer ships plain HTTP (#245) 📋
+- [ ] Accessibility + small-screen audit of the panel (keyboard, focus, reduced motion) (#247)
+
+### Small cleanups / follow-ups (open)
+
+- [ ] `docs/billing.md` is missing from the documentation ownership table in CLAUDE.md (#248)
 
 ---
 
