@@ -163,6 +163,7 @@ is the migrations directory.
 | API endpoints, request/response formats, routing keys | [docs/api.md](docs/api.md) |
 | New/moved/renamed files, new commands, new gotchas | **This file** (map in section 7) |
 | Setup / how-to-run instructions | README.md |
+| The installer's behaviour or prompts | [docs/installer.md](docs/installer.md) |
 | Tasks, progress, follow-ups | [TODO.md](TODO.md) — and *only* there |
 | Product concept / cross-project design decisions | `../CONCEPTS/` (separate repo — commit there separately) |
 
@@ -323,6 +324,7 @@ is the migrations directory.
 |---|---|
 | `docs/architecture.md` | Services as built, event bus topology, routing keys in use, status model |
 | `docs/security.md` | Payload encryption, secrets handling, auth plan, known gaps |
+| `docs/installer.md` | What the release installer does step by step, and what it deliberately does not do |
 | `docs/images.md` | Per-image reference (ports, env, volumes, what runs once vs per host) for assembling a stack by hand (#201) |
 | `docs/deployment.md` | Local dev, Docker image pattern, combined-with-FinVault deployment, CI |
 | `docs/api.md` | HTTP endpoints + event contract summary |

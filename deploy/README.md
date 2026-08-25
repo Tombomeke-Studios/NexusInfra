@@ -23,6 +23,11 @@ in with.
 
 Re-running it is safe: it will not overwrite an existing configuration without asking.
 
+Every step it takes is documented in
+[docs/installer.md](https://github.com/Tombomeke-Studios/NexusInfra/blob/main/docs/installer.md),
+including what it deliberately does not do. If you would rather not run it, the all-in-one image and
+a hand-written Compose file are equally supported.
+
 ## Which edition?
 
 | | **Community** | **Hosted** |

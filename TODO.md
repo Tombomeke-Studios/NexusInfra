@@ -172,7 +172,9 @@ gateway work" above.)_
 - [x] Document every image for people who assemble their own stack (#201)
 - [x] All-in-one image per edition — `nexusinfra-community` / `nexusinfra-hosted` (#203)
 - [ ] Slim the service images — Prisma CLI + engine targets (orchestrator is 501 MB) (#192) 📋
-- [ ] Slim the all-in-one image — devDependencies ship to users (1.13 GB) (#204) 📋
+- [x] Gateway test failed intermittently — the token was signed twice (#208) 🐛
+- [x] Slim the all-in-one — build tooling no longer ships to users, 1.07 GB → 915 MB (#204)
+- [x] Document the release installer, and link it from the README (#211)
 
 ### 🐛 Bugs / fixes (open)
 
