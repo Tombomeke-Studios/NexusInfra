@@ -1,6 +1,6 @@
 <div align="center">
 
-# NexusInfra
+# ⬢ NexusInfra
 
 **Deploy and run Docker servers across a fleet — from one panel.**
 
