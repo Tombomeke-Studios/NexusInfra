@@ -51,11 +51,49 @@ requires one.
   the handshake), mirroring FinVault's gateway.
 
 A valid token establishes only *who* the caller is. What they may do is a separate concern — see
-per-server authorization (#175).
+below.
 
 **Planned:** the same JWT issued by FinVault and validated at the gateway (#20/#17), giving one
 identity across the ecosystem. The provider seam in the Orchestrator's auth module exists so this
 becomes a swap rather than a rewrite.
+
+## Authorization — who may do what to a server (#175)
+
+Authentication and authorization are kept strictly apart. A token says who is calling; it never says
+what they may do. Access to a server is resolved **per request**, so revoking a share takes effect
+immediately rather than whenever the holder's token happens to expire.
+
+**Two kinds of role, deliberately not interchangeable:**
+
+- **Platform role** — panel-wide standing. Administrators manage the node fleet and accounts, and are
+  treated as owners of every server: they already control the hosts those containers run on, so
+  pretending otherwise would be theatre rather than security.
+- **Server role** — what one person may do to one server, from ownership, a direct share, or (later)
+  a team. Where several grants apply, the strongest wins.
+
+| Role | May |
+|---|---|
+| **viewer** | See the server, its logs and its resource usage |
+| **operator** | The above, plus start / stop / restart, the console, and reading files |
+| **admin** | The above, plus writing files, databases, backups, schedules and managing access |
+| **owner** | The above, plus deleting the server |
+
+Design decisions worth stating explicitly:
+
+- **No access answers 404, not 403.** A 403 would confirm that a server exists, letting anyone walk
+  identifiers to discover what other people run. The distinction is invisible to a legitimate user,
+  who sees 404 either way. Once the caller may see a server at all, a 403 on a specific action is
+  safe and used.
+- **A share can never confer ownership.** Only the roles below owner are grantable, so a server
+  admin cannot hand out — or grant themselves — the right to destroy the server and its backups.
+- **The guard covers a whole route subtree**, so a route added later is protected by default; it only
+  has to declare which permission it needs. Forgetting to declare one fails closed.
+- **Sensitive reads are treated as management, not viewing** — database credentials and the list of
+  who else has access are not visible to an operator.
+- **The interactive terminal is authorized, not merely authenticated.** It opens a root shell inside
+  the container, so it requires console access on that specific server.
+- **Billing follows the owner.** Usage accrues to whoever owns the server, never to the person who
+  pressed Start.
 
 ## Service-to-service auth (#169)
 

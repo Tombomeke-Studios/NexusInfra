@@ -15,9 +15,34 @@ import { createApiRouter } from './api.js';
 // waiting on DNS failures for a minute in the hosted CI leg (#173).
 const allowQuota: Parameters<typeof createApiRouter>[0]['checkQuota'] = async () => ({ allowed: true, limit: Infinity });
 
-function buildApp(repo: InMemoryRepository, published: Array<{ key: string; envelope: EventEnvelope }>) {
+// Every route is now behind authentication and per-server authorization (#175),
+// so these suites run as a real account. `asPrincipal` stands in for requireAuth,
+// which has its own tests in auth.test.ts.
+export const OWNER = { id: 'user-owner', email: 'owner@example.com', platformRole: 'user' as const };
+const PLATFORM_ADMIN = { id: 'user-root', email: 'root@example.com', platformRole: 'admin' as const };
+
+function asPrincipal(principal: { id: string; platformRole: 'owner' | 'admin' | 'user' } = OWNER): express.RequestHandler {
+  return (req, _res, next) => {
+    (req as express.Request & { principal?: unknown; userId?: string }).principal = principal;
+    (req as express.Request & { userId?: string }).userId = principal.id;
+    next();
+  };
+}
+
+/** Give the acting account a record, so shares can be matched to its address. */
+async function seedUser(repo: InMemoryRepository, user = OWNER) {
+  await repo.createUser({ id: user.id, email: user.email, displayName: user.id, passwordHash: '!', platformRole: user.platformRole });
+}
+
+function buildApp(
+  repo: InMemoryRepository,
+  published: Array<{ key: string; envelope: EventEnvelope }>,
+  principal: { id: string; platformRole: 'owner' | 'admin' | 'user' } = OWNER
+) {
   const app = express();
   app.use(express.json());
+
+  app.use(asPrincipal(principal));
   app.use(
     createApiRouter({
       repo,
@@ -40,10 +65,11 @@ describe('deployment API', () => {
   let published: Array<{ key: string; envelope: EventEnvelope }>;
   let app: express.Express;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     repo = new InMemoryRepository();
     published = [];
     app = buildApp(repo, published);
+    await seedUser(repo);
   });
 
   it('creates a deployment and emits server.start for the chosen node', async () => {
@@ -260,6 +286,8 @@ describe('deployment API', () => {
     const deprovisioned: string[] = [];
     const dbApp = express();
     dbApp.use(express.json());
+
+    dbApp.use(asPrincipal());
     dbApp.use(
       createApiRouter({
         repo,
@@ -311,6 +339,8 @@ describe('deployment API', () => {
     const removes: string[] = [];
     const bkApp = express();
     bkApp.use(express.json());
+
+    bkApp.use(asPrincipal());
     bkApp.use(
       createApiRouter({
         repo,
@@ -351,6 +381,8 @@ describe('deployment API', () => {
   });
 
   it('registers a node with a name/location and deregisters it', async () => {
+    // Managing the fleet is installation administration, not a tenant action.
+    const app = buildApp(repo, published, PLATFORM_ADMIN);
     const reg = await request(app).post('/nodes').send({ name: 'Home box', location: 'home-server' });
     expect(reg.status).toBe(201);
     expect(reg.body.name).toBe('Home box');
@@ -367,7 +399,14 @@ describe('deployment API', () => {
     await seedHealthyNode(repo, 'node-busy');
     const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
     await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'abc', nodeId: 'node-busy' });
-    expect((await request(app).delete('/nodes/node-busy')).status).toBe(409);
+    expect((await request(buildApp(repo, published, PLATFORM_ADMIN)).delete('/nodes/node-busy')).status).toBe(409);
+  });
+
+  it('refuses node registration and deregistration to an ordinary user', async () => {
+    expect((await request(app).post('/nodes').send({ name: 'Sneaky box' })).status).toBe(403);
+    await seedHealthyNode(repo, 'node-x');
+    expect((await request(app).delete('/nodes/node-x')).status).toBe(403);
+    expect(await repo.listNodes()).toHaveLength(1);
   });
 
   it('invites, validates, re-roles and revokes a subuser', async () => {
@@ -395,6 +434,8 @@ describe('deployment API', () => {
     const ran: string[] = [];
     const schedApp = express();
     schedApp.use(express.json());
+
+    schedApp.use(asPrincipal());
     schedApp.use(
       createApiRouter({
         repo,
@@ -435,6 +476,8 @@ describe('plan quota enforcement (#148)', () => {
   function buildApp(repo: InMemoryRepository, checkQuota: Parameters<typeof createApiRouter>[0]['checkQuota']) {
     const app = express();
     app.use(express.json());
+
+    app.use(asPrincipal());
     app.use(createApiRouter({ repo, publish: async () => true, checkQuota, provisionDatabase: async () => ({ containerId: 'db-c', port: 5432 }) }));
     return app;
   }
@@ -479,9 +522,15 @@ describe('multi-node agent routing (#171)', () => {
     await repo.upsertNode({ id, name: id, agentUrl, lastHeartbeat: new Date().toISOString(), cpuPercent: cpu, ramUsedMb: 1000, ramTotalMb: 8000 });
   }
 
-  function buildApp(repo: InMemoryRepository, calls: string[]) {
+  function buildApp(
+    repo: InMemoryRepository,
+    calls: string[],
+    principal: { id: string; platformRole: 'owner' | 'admin' | 'user' } = OWNER
+  ) {
     const app = express();
     app.use(express.json());
+
+    app.use(asPrincipal(principal));
     app.use(
       createApiRouter({
         repo,
@@ -528,9 +577,155 @@ describe('multi-node agent routing (#171)', () => {
 
   it('registers a node with an explicit agent URL', async () => {
     const repo = new InMemoryRepository();
-    const app = buildApp(repo, []);
+    const app = buildApp(repo, [], PLATFORM_ADMIN);
     const res = await request(app).post('/nodes').send({ id: 'node-c', agentUrl: 'http://agent-c:9100' });
     expect(res.status).toBe(201);
     expect((await repo.listNodes()).find((n) => n.id === 'node-c')?.agentUrl).toBe('http://agent-c:9100');
+  });
+});
+
+// ── Per-server authorization (#175) ──────────────────────────────────────────
+// The point of the whole sharing feature: someone else can run your server
+// without being able to read its files, take its backups, or hand out access.
+describe('per-server authorization', () => {
+  const GUEST = { id: 'user-guest', email: 'guest@example.com', platformRole: 'user' as const };
+
+  let repo: InMemoryRepository;
+  let ownerApp: express.Express;
+  let guestApp: express.Express;
+  let deploymentId: string;
+
+  /** Share the server with the guest at `role`, or revoke by passing null. */
+  async function shareAs(role: string | null) {
+    const existing = await repo.getSubuserFor(deploymentId, GUEST.email);
+    if (existing) await repo.deleteSubuser(existing.id);
+    if (role) await repo.createSubuser({ deploymentId, email: GUEST.email, role });
+  }
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    ownerApp = buildApp(repo, []);
+    guestApp = buildApp(repo, [], GUEST);
+    await seedUser(repo);
+    await seedUser(repo, GUEST);
+    await seedHealthyNode(repo);
+
+    const created = await request(ownerApp).post('/deployments').send({ name: 'shared-svc', dockerImage: 'nginx' });
+    deploymentId = created.body.id;
+    await repo.updateDeploymentStatus(deploymentId, { status: 'running', containerId: 'c1', nodeId: 'node-local' });
+  });
+
+  describe('someone with no access at all', () => {
+    it('cannot see the server in their list', async () => {
+      expect((await request(guestApp).get('/deployments')).body).toEqual([]);
+    });
+
+    it('gets 404 rather than 403, so ids cannot be probed for existence', async () => {
+      // 403 would confirm the server exists and belongs to someone else.
+      expect((await request(guestApp).get(`/deployments/${deploymentId}`)).status).toBe(404);
+      expect((await request(guestApp).post(`/deployments/${deploymentId}/stop`)).status).toBe(404);
+      expect((await request(guestApp).delete(`/deployments/${deploymentId}`)).status).toBe(404);
+    });
+
+    it('cannot reach a server it was never shared, even by exact id', async () => {
+      await request(guestApp).get(`/deployments/${deploymentId}/files?path=/`).expect(404);
+      await request(guestApp).post(`/deployments/${deploymentId}/exec`).send({ command: 'id' }).expect(404);
+    });
+  });
+
+  describe('a viewer', () => {
+    beforeEach(() => shareAs('viewer'));
+
+    it('sees the server, with their role attached', async () => {
+      const list = await request(guestApp).get('/deployments');
+      expect(list.body).toHaveLength(1);
+      expect(list.body[0]).toMatchObject({ id: deploymentId, role: 'viewer' });
+    });
+
+    it('cannot start, stop or restart it', async () => {
+      expect((await request(guestApp).post(`/deployments/${deploymentId}/stop`)).status).toBe(403);
+      expect((await request(guestApp).post(`/deployments/${deploymentId}/restart`)).status).toBe(403);
+      expect((await request(guestApp).post(`/deployments/${deploymentId}/start`)).status).toBe(403);
+    });
+
+    it('cannot read files or run commands', async () => {
+      expect((await request(guestApp).get(`/deployments/${deploymentId}/files?path=/`)).status).toBe(403);
+      expect((await request(guestApp).post(`/deployments/${deploymentId}/exec`).send({ command: 'id' })).status).toBe(403);
+    });
+  });
+
+  describe('an operator', () => {
+    beforeEach(() => shareAs('operator'));
+
+    it('can start, stop and restart the server — the reason the role exists', async () => {
+      expect((await request(guestApp).post(`/deployments/${deploymentId}/stop`)).status).toBe(202);
+      await repo.updateDeploymentStatus(deploymentId, { status: 'stopped', containerId: null });
+      expect((await request(guestApp).post(`/deployments/${deploymentId}/start`)).status).toBe(202);
+    });
+
+    it('cannot write files, manage backups, databases or schedules', async () => {
+      expect((await request(guestApp).put(`/deployments/${deploymentId}/files/content`).send({ path: '/x', content: 'y' })).status).toBe(403);
+      expect((await request(guestApp).get(`/deployments/${deploymentId}/backups`)).status).toBe(403);
+      expect((await request(guestApp).get(`/deployments/${deploymentId}/databases`)).status).toBe(403);
+      expect((await request(guestApp).post(`/deployments/${deploymentId}/schedules`).send({ name: 's', cron: '* * * * *', action: 'restart' })).status).toBe(403);
+    });
+
+    it('cannot see or change who else has access', async () => {
+      expect((await request(guestApp).get(`/deployments/${deploymentId}/subusers`)).status).toBe(403);
+      expect((await request(guestApp).post(`/deployments/${deploymentId}/subusers`).send({ email: 'friend@example.com', role: 'admin' })).status).toBe(403);
+    });
+
+    it('cannot delete the server', async () => {
+      expect((await request(guestApp).delete(`/deployments/${deploymentId}`)).status).toBe(403);
+      expect(await repo.getDeployment(deploymentId)).not.toBeNull();
+    });
+  });
+
+  describe('a server admin', () => {
+    beforeEach(() => shareAs('admin'));
+
+    it('can manage the server, but still cannot delete it', async () => {
+      expect((await request(guestApp).get(`/deployments/${deploymentId}/subusers`)).status).toBe(200);
+      expect((await request(guestApp).get(`/deployments/${deploymentId}/backups`)).status).toBe(200);
+      expect((await request(guestApp).delete(`/deployments/${deploymentId}`)).status).toBe(403);
+    });
+
+    it('cannot escalate their own grant to owner', async () => {
+      const res = await request(guestApp)
+        .post(`/deployments/${deploymentId}/subusers`)
+        .send({ email: GUEST.email, role: 'owner' });
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe('revoking a share', () => {
+    it('takes the server away again immediately', async () => {
+      await shareAs('operator');
+      expect((await request(guestApp).get(`/deployments/${deploymentId}`)).status).toBe(200);
+
+      await shareAs(null);
+      expect((await request(guestApp).get(`/deployments/${deploymentId}`)).status).toBe(404);
+      expect((await request(guestApp).get('/deployments')).body).toEqual([]);
+      expect((await request(guestApp).post(`/deployments/${deploymentId}/stop`)).status).toBe(404);
+    });
+  });
+
+  describe('the owner', () => {
+    it('keeps full control including deletion', async () => {
+      const list = await request(ownerApp).get('/deployments');
+      expect(list.body[0]).toMatchObject({ role: 'owner' });
+      expect((await request(ownerApp).get(`/deployments/${deploymentId}/subusers`)).status).toBe(200);
+      expect((await request(ownerApp).delete(`/deployments/${deploymentId}`)).status).toBe(204);
+    });
+  });
+
+  describe('a platform administrator', () => {
+    it('sees and controls every server without needing a share', async () => {
+      const adminApp = buildApp(repo, [], PLATFORM_ADMIN);
+      const list = await request(adminApp).get('/deployments');
+      expect(list.body).toHaveLength(1);
+      expect(list.body[0]).toMatchObject({ role: 'owner' });
+      expect((await request(adminApp).get(`/deployments/${deploymentId}`)).status).toBe(200);
+    });
   });
 });

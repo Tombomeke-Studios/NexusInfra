@@ -248,6 +248,12 @@ export interface Repository {
   appendDeploymentEvent(deploymentId: string, event: string, message: string): Promise<void>;
 
   listDeployments(): Promise<DeploymentView[]>;
+  /**
+   * Deployments this person may see: the ones they own plus the ones shared with
+   * them (#175). Shares are addressed by email until they are bound to accounts
+   * (#176), so both identifiers are needed.
+   */
+  listDeploymentsForUser(user: { id: string; email: string }): Promise<DeploymentView[]>;
   getDeployment(id: string): Promise<DeploymentDetail | null>;
   /** The server config behind a deployment (image/ports/env), for re-starting it. */
   getDeploymentConfig(deploymentId: string): Promise<ServerConfigRecord | null>;
@@ -278,6 +284,8 @@ export interface Repository {
   createSubuser(input: CreateServerSubuserInput): Promise<ServerSubuserRecord>;
   listSubusers(deploymentId: string): Promise<ServerSubuserRecord[]>;
   getSubuser(id: string): Promise<ServerSubuserRecord | null>;
+  /** The share held by one person on one server, if any — the authorization lookup. */
+  getSubuserFor(deploymentId: string, email: string): Promise<ServerSubuserRecord | null>;
   updateSubuserRole(id: string, role: string): Promise<ServerSubuserRecord | null>;
   deleteSubuser(id: string): Promise<void>;
 }
