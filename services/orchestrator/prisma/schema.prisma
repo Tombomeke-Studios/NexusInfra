@@ -86,14 +86,21 @@ model Deployment {
   subusers       ServerSubuser[]
 }
 
-// A person (by email) granted access to a server, with a role (#112). These are
-// the grants access.ts resolves on every request (#175); binding them to account
-// records rather than bare addresses is #176.
+// A person granted access to a server, with a role (#112). These are the grants
+// access.ts resolves on every request (#175).
+//
+// An invitation is addressed to an email, which may not correspond to an account
+// yet — you should be able to share a server with someone before they have signed
+// up. Such a grant stays pending and carries no access; it is bound to the
+// account and activated the moment that person appears (#176). The address is
+// kept either way, so revoking by email works in both states.
 model ServerSubuser {
   id           String     @id
   deployment   Deployment @relation(fields: [deploymentId], references: [id])
   deploymentId String
   email        String
+  userId       String?
+  status       String     @default("pending")
   role         String     @default("viewer")
   createdAt    DateTime   @default(now())
 

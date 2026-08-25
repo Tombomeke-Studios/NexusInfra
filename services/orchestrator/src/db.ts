@@ -157,6 +157,8 @@ function toSubuserRecord(s: PrismaSubuser): ServerSubuserRecord {
     id: s.id,
     deploymentId: s.deploymentId,
     email: s.email,
+    userId: s.userId,
+    status: s.status,
     role: s.role,
     createdAt: s.createdAt.toISOString(),
   };
@@ -340,7 +342,11 @@ export class PrismaRepository implements Repository {
   async listDeploymentsForUser(user: { id: string; email: string }): Promise<DeploymentView[]> {
     const rows = await this.client.deployment.findMany({
       where: {
-        OR: [{ serverConfig: { userId: user.id } }, { subusers: { some: { email: user.email } } }],
+        OR: [
+          { serverConfig: { userId: user.id } },
+          // Only active shares — a pending invitation grants nothing yet (#176).
+          { subusers: { some: { userId: user.id, status: 'active' } } },
+        ],
       },
       include: { serverConfig: true },
       orderBy: { createdAt: 'desc' },
@@ -460,8 +466,21 @@ export class PrismaRepository implements Repository {
     // Upsert on the (deployment, email) unique key: re-inviting updates the role.
     const s = await this.client.serverSubuser.upsert({
       where: { deploymentId_email: { deploymentId: input.deploymentId, email: input.email } },
-      create: { id: randomUUID(), deploymentId: input.deploymentId, email: input.email, role: input.role },
-      update: { role: input.role },
+      create: {
+        id: randomUUID(),
+        deploymentId: input.deploymentId,
+        email: input.email,
+        role: input.role,
+        userId: input.userId ?? null,
+        status: input.status ?? 'pending',
+      },
+      // Re-inviting changes the role; it must not un-bind an accepted share, so
+      // userId/status are only written when the caller supplies them.
+      update: {
+        role: input.role,
+        ...(input.userId !== undefined ? { userId: input.userId } : {}),
+        ...(input.status !== undefined ? { status: input.status } : {}),
+      },
     });
     return toSubuserRecord(s);
   }
@@ -479,6 +498,14 @@ export class PrismaRepository implements Repository {
   async getSubuserFor(deploymentId: string, email: string): Promise<ServerSubuserRecord | null> {
     const s = await this.client.serverSubuser.findUnique({ where: { deploymentId_email: { deploymentId, email } } });
     return s ? toSubuserRecord(s) : null;
+  }
+
+  async claimSubuserInvites(userId: string, email: string): Promise<number> {
+    const { count } = await this.client.serverSubuser.updateMany({
+      where: { email, status: { not: 'active' } },
+      data: { userId, status: 'active' },
+    });
+    return count;
   }
 
   async updateSubuserRole(id: string, role: string): Promise<ServerSubuserRecord | null> {
