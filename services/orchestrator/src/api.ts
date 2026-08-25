@@ -192,6 +192,9 @@ export function createApiRouter(deps: ApiDeps): Router {
       if (nodeHealth(pinned, Date.now()) !== 'healthy') {
         return res.status(409).json({ error: `node ${nodeId} is not healthy` });
       }
+      if (pinned.maintenance) {
+        return res.status(409).json({ error: `node ${nodeId} is in maintenance` });
+      }
       node = pinned;
     } else {
       node = selectNode(nodes, Date.now());
@@ -407,6 +410,21 @@ export function createApiRouter(deps: ApiDeps): Router {
       agentUrl: typeof agentUrl === 'string' ? agentUrl.trim() || null : undefined,
     });
     return res.status(201).json({ ...node, health: nodeHealth(node, Date.now()) });
+  });
+
+  // Drain a node, or put it back in the pool (#258). Maintenance means "keep
+  // running what you have, take nothing new"; it deliberately does not stop the
+  // deployments already there, which is the operator's separate decision.
+  router.patch('/nodes/:id/maintenance', requirePlatformAdmin, async (req: Request, res: Response) => {
+    const { maintenance } = req.body ?? {};
+    if (typeof maintenance !== 'boolean') {
+      return res.status(400).json({ error: 'maintenance must be a boolean' });
+    }
+    const existing = (await repo.listNodes()).find((n) => n.id === req.params.id);
+    if (!existing) return res.status(404).json({ error: 'node not found' });
+
+    const node = await repo.registerNode({ id: req.params.id, maintenance });
+    return res.json({ ...node, health: nodeHealth(node, Date.now()) });
   });
 
   // Deregister a node — refused while it still hosts a running deployment.

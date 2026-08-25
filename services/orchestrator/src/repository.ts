@@ -148,6 +148,9 @@ export class InMemoryRepository implements Repository {
       ramTotalMb: input.ramTotalMb ?? existing?.ramTotalMb ?? null,
       diskUsedGb: input.diskUsedGb ?? existing?.diskUsedGb ?? null,
       diskTotalGb: input.diskTotalGb ?? existing?.diskTotalGb ?? null,
+      // Maintenance is an administrator's decision; a liveness beat never touches
+      // it, or the node would silently re-enter the pool a second later (#258).
+      maintenance: existing?.maintenance ?? false,
     };
     this.nodes.set(node.id, node);
     return node;
@@ -165,6 +168,7 @@ export class InMemoryRepository implements Repository {
           name: input.name ?? existing.name,
           location: input.location !== undefined ? input.location : existing.location,
           agentUrl: input.agentUrl !== undefined ? input.agentUrl : existing.agentUrl,
+          maintenance: input.maintenance !== undefined ? input.maintenance : existing.maintenance,
         }
       : {
           id: input.id,
@@ -179,6 +183,7 @@ export class InMemoryRepository implements Repository {
           ramTotalMb: null,
           diskUsedGb: null,
           diskTotalGb: null,
+          maintenance: input.maintenance ?? false,
         };
     this.nodes.set(node.id, node);
     return node;

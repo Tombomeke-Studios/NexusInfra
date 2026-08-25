@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { Overview } from './Overview';
 
@@ -35,5 +36,32 @@ describe('Overview', () => {
     const runningLabel = await screen.findByText('Running servers');
     expect(runningLabel.previousSibling).toHaveTextContent('1');
     expect(screen.getByText('node-local')).toBeInTheDocument();
+  });
+
+  // Maintenance used to be a useState in this component: the node was relabelled,
+  // a toast claimed success, and the orchestrator kept placing servers there (#258).
+  it('sends a real drain request when a node enters maintenance', async () => {
+    render(<Overview />, { wrapper: MemoryRouter });
+    await userEvent.click(await screen.findByRole('button', { name: /enter maintenance/i }));
+
+    const call = fetchMock.mock.calls.find(([u, o]) => typeof u === 'string' && u.includes('/nodes/node-local/maintenance') && o?.method === 'PATCH');
+    expect(call).toBeDefined();
+    expect(JSON.parse(call![1].body as string)).toEqual({ maintenance: true });
+  });
+
+  it('reads the drain state from the API rather than from local state', async () => {
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => (String(url).includes('/nodes') ? jsonFor(url).map((n: Record<string, unknown>) => ({ ...n, maintenance: true })) : jsonFor(url)),
+      } as Response)
+    );
+    render(<Overview />, { wrapper: MemoryRouter });
+
+    // A node already draining when the page loads reads as such — the old
+    // implementation always started empty, so a reload silently un-drained it.
+    expect(await screen.findByText('maintenance')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /exit maintenance/i })).toBeInTheDocument();
   });
 });

@@ -25,6 +25,8 @@ export interface NodeView {
   diskUsedGb: number | null;
   diskTotalGb: number | null;
   health: NodeHealth;
+  /** Drained on purpose (#258): still running, but taking nothing new. */
+  maintenance?: boolean;
 }
 
 export interface DeploymentView {
@@ -260,6 +262,11 @@ export function getMonitoring(): Promise<MonitoringSnapshot> {
 /** Register (or relabel) a node's metadata (#113). It reads offline until its agent connects. */
 export function registerNode(input: { id?: string; name?: string; location?: string }): Promise<NodeView> {
   return request('/nodes', { method: 'POST', body: JSON.stringify(input) });
+}
+
+/** Drain a node, or put it back in the placement pool (#258). Platform admins only. */
+export function setNodeMaintenance(id: string, maintenance: boolean): Promise<NodeView> {
+  return request(`/nodes/${id}/maintenance`, { method: 'PATCH', body: JSON.stringify({ maintenance }) });
 }
 
 export function deregisterNode(id: string): Promise<void> {

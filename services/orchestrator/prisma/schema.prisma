@@ -60,6 +60,10 @@ model TeamMember {
 
 // A Docker host the Orchestrator can place containers on. Rows are maintained
 // from node heartbeats (monitoring.heartbeat.node.#), not created by hand.
+//
+// `maintenance` is the one field a heartbeat must never touch: it is an
+// administrator draining the host, and a liveness beat that reset it would put
+// the node back in the placement pool a second later (#258).
 model Node {
   id            String       @id
   name          String
@@ -72,6 +76,7 @@ model Node {
   ramTotalMb    Float?
   diskUsedGb    Float?
   diskTotalGb   Float?
+  maintenance   Boolean      @default(false)
   createdAt     DateTime     @default(now())
   deployments   Deployment[]
 }

@@ -94,6 +94,7 @@ function toUserRecord(u: PrismaUser): UserRecord {
 
 function toNodeRecord(n: PrismaNode): NodeRecord {
   return {
+    maintenance: n.maintenance,
     id: n.id,
     name: n.name,
     location: n.location,
@@ -334,6 +335,7 @@ export class PrismaRepository implements Repository {
         name: input.name ?? input.id,
         location: input.location ?? null,
         agentUrl: input.agentUrl ?? null,
+        maintenance: input.maintenance ?? false,
         // Registered-but-unseen → epoch so it reads offline until its agent beats.
         lastHeartbeat: new Date(0),
       },
@@ -341,6 +343,7 @@ export class PrismaRepository implements Repository {
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.location !== undefined ? { location: input.location } : {}),
         ...(input.agentUrl !== undefined ? { agentUrl: input.agentUrl } : {}),
+        ...(input.maintenance !== undefined ? { maintenance: input.maintenance } : {}),
       },
     });
     return toNodeRecord(node);

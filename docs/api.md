@@ -166,6 +166,17 @@ node is available. In the hosted edition, `409` when the plan's `maxServers` quo
 against the Billing Bridge; community edition never limits). On success the Orchestrator emits
 `infra.server.start` for the chosen node.
 
+### `PATCH /nodes/:id/maintenance`  *(platform administrators)*
+
+Drain a node, or return it to the placement pool (#258). Body `{ "maintenance": true | false }` →
+`200` with the node and its health.
+
+Maintenance means **keep running what you have, take nothing new**: the Orchestrator excludes the
+node from placement, and a request that pins a server to it (see `nodeId` above) is refused with
+`409`. It deliberately does **not** stop the deployments already there — draining and shutting down
+are separate decisions. Heartbeats never clear the flag, so a node stays drained until somebody
+lifts it. `400` if the body is not a boolean, `403` for non-administrators, `404` for an unknown node.
+
 ### `GET /deployments`
 
 List all deployments (newest first), each joined with its config name/image and current status
