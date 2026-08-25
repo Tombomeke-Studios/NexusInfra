@@ -122,6 +122,24 @@ gateway work" above.)_
 - [~] API Gateway: JWT validation, routing, WebSocket proxy (#20) — **HTTP core done** (CORS, rate limit, JWT, reverse proxy, `:9400`); WS proxy pending with the terminal
 - [ ] Replace stub login with real FinVault JWT via the Gateway (#17, #20)
 
+### Phase 6 — Multi-user sharing + two shippable editions
+
+> **The two products, made real.** NexusInfra ships as a **standalone self-hosted panel**
+> (community) and a **multi-tenant hosted instance** (hosted, FinVault billing on). Two things block
+> both: there are no real users (one hardcoded `admin`, and *no authorization at all* — every valid
+> JWT can stop, delete or open a root terminal in anyone's container), and there is no release
+> pipeline. Roles are **admin / operator / viewer** above the owner; sharing works per-server **and**
+> via teams; accounts are local, with signup policy following the edition.
+> Build **in order** — each is a feature branch + PR.
+
+- [x] Edition flag never reached the orchestrator — `/config` always said `community` (#173) 🐛
+- [ ] Real user accounts — `User` model, password login, edition-dependent signup (#174)
+- [ ] Access control — enforce per-server roles on every deployment route + the terminal WS (#175)
+- [ ] Subuser invites linked to real identities + `operator` role (#176)
+- [ ] Teams — account-level sharing of servers (#177)
+- [ ] Role-aware dashboard — "Shared with me" + gate actions by permission (#178)
+- [ ] Release pipeline — per-edition images on GHCR + `deploy/{community,hosted}` bundles (#179)
+
 ### 🐛 Bugs / fixes (open)
 
 - [x] Delete server button is a no-op — wire `DELETE /deployments/:id` end to end (#156)
