@@ -17,14 +17,14 @@ COPY --from=builder /app/shared/package*.json ./shared/
 COPY --from=builder /app/services/node-agent/dist ./services/node-agent/dist
 COPY --from=builder /app/services/node-agent/package*.json ./services/node-agent/
 RUN npm install --omit=dev
-# Build identity (#179). These are defaults the release workflow bakes in — the
-# runtime environment can still override NEXUS_EDITION, so one image is never
-# locked to an edition; the per-edition tags exist to make the intended one
-# obvious rather than to enforce it.
+# Build identity (#179, #189). The edition is stamped into the image as a file,
+# not left to the environment: pulling the :hosted image is enough, and a stray
+# NEXUS_EDITION cannot turn this build into the other edition (it would be
+# missing the code to run as one). See shared/src/edition.ts.
 ARG APP_VERSION=0.0.0-dev
 ARG NEXUS_EDITION=community
 ENV APP_VERSION=$APP_VERSION
-ENV NEXUS_EDITION=$NEXUS_EDITION
+RUN mkdir -p /etc/nexusinfra && printf '%s' "$NEXUS_EDITION" > /etc/nexusinfra/edition
 ENV PORT=9100
 EXPOSE 9100
 # Requires the host Docker socket mounted at runtime, e.g.

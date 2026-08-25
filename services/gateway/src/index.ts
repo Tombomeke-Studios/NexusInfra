@@ -1,4 +1,4 @@
-import { startHeartbeat } from 'shared';
+import { assertEditionIsRunnable, startHeartbeat } from 'shared';
 import { createGatewayApp } from './gateway.js';
 import { defaultRoutes } from './routes.js';
 import { RateLimiter } from './rateLimit.js';
@@ -9,6 +9,14 @@ import { RateLimiter } from './rateLimit.js';
 // (currently the Orchestrator, which itself fronts Billing Bridge + Control Room).
 // The WebSocket proxy for the interactive terminal (#69/#71) lands once that WS
 // backend exists; the HTTP path is here now.
+
+// Refuse to run this image as an edition it was not built for (#189).
+try {
+  assertEditionIsRunnable();
+} catch (err) {
+  console.error(`[Gateway] ${err instanceof Error ? err.message : err}`);
+  process.exit(1);
+}
 
 const PORT = Number(process.env.PORT) || 9400;
 const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || 'http://orchestrator:9200';

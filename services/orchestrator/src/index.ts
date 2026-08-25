@@ -2,7 +2,7 @@ import { createServer } from 'http';
 import express from 'express';
 import cors from 'cors';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
-import { buildEnvelope, buildInfo, consumeRabbitQueue, getInternalToken, INTERNAL_TOKEN_HEADER, publishRabbitEvent, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
+import { assertEditionIsRunnable, buildEnvelope, buildInfo, consumeRabbitQueue, getInternalToken, INTERNAL_TOKEN_HEADER, publishRabbitEvent, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
 import { PrismaRepository } from './db.js';
 import { agentFetch, createApiRouter, resolveContainerTarget } from './api.js';
 import { resolveAgentUrl } from './agentUrl.js';
@@ -25,6 +25,16 @@ import { startScheduler, type ScheduleActions } from './scheduler.js';
 // from heartbeats, places deployments on the least-loaded node (api.ts), commands
 // the Node Agent over the shared bus, and updates deployment state from the
 // agent's lifecycle reports.
+
+// Refuse to run this image as an edition it was not built for (#189): the
+// community images do not contain the hosted code, so starting anyway would mean
+// a half-enabled billing system rather than a working one.
+try {
+  assertEditionIsRunnable();
+} catch (err) {
+  console.error(`[Orchestrator] ${err instanceof Error ? err.message : err}`);
+  process.exit(1);
+}
 
 const PORT = Number(process.env.PORT) || 9200;
 const NODE_AGENT_URL = process.env.NODE_AGENT_URL || 'http://node-agent:9100';

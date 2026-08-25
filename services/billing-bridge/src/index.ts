@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { buildInfo, consumeRabbitQueue, getEdition, isHosted, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
+import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, getEdition, isHosted, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
 import { PrismaRepository } from './db.js';
 import { createBillingService } from './service.js';
 import { createBillingRouter } from './api.js';
@@ -11,6 +11,16 @@ import { startCycleRunner } from './cycle.js';
 // top-up flow to FinVault, and serves the dashboard's Billing page + the
 // Orchestrator's quota checks. In the community edition this service is inert:
 // it exposes /health so compose stays green but runs no billing.
+
+// Refuse to run this image as an edition it was not built for (#189). This
+// service is only published for hosted, so a community stamp here means
+// something is badly wrong with the deployment rather than merely misconfigured.
+try {
+  assertEditionIsRunnable();
+} catch (err) {
+  console.error(`[Billing Bridge] ${err instanceof Error ? err.message : err}`);
+  process.exit(1);
+}
 
 const PORT = Number(process.env.PORT) || 9300;
 const edition = getEdition();
