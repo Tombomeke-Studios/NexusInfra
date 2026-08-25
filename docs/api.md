@@ -259,10 +259,18 @@ gateway, #20). `404` if the deployment/subuser is unknown, `400` on a bad email/
 
 | Method + path | Purpose |
 |---|---|
-| `GET /deployments/:id/subusers` | List the server's subusers |
-| `POST /deployments/:id/subusers` | Invite/relabel by email — body `{ email, role }` (re-inviting updates the role) → `201` |
-| `PATCH /deployments/:id/subusers/:sid` | Change a subuser's role — body `{ role }` |
-| `DELETE /deployments/:id/subusers/:sid` | Revoke access → `204` |
+| `GET /deployments/:id/subusers` | Who has access, each with their role and `pending`/`active` state |
+| `POST /deployments/:id/subusers` | Invite by email — body `{ email, role }`, re-inviting updates the role → `201` |
+| `PATCH /deployments/:id/subusers/:sid` | Change someone's role — body `{ role }` |
+| `DELETE /deployments/:id/subusers/:sid` | Revoke access → `204`, effective on the next request |
+
+`role` ∈ `viewer | operator | admin` — ownership is never grantable, so `owner` is rejected with
+`400`. All four require the `subuser.manage` permission, so an operator can neither see nor change
+who else has access. Inviting yourself is refused.
+
+Inviting an address that already has an account binds and activates it immediately. Otherwise the
+invitation is stored **pending** and grants nothing until that person registers or signs in with
+that address, at which point it is claimed automatically (#176).
 
 ### `POST /deployments/:id/stop`
 

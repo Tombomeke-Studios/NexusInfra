@@ -26,7 +26,7 @@ checklist; every item carries its issue ref). The order matters and each step is
 1. ~~Edition flag reaches every service (#173)~~ — done.
 2. **Accounts (#174)** — real users, local identity behind an `AuthProvider` seam.
 3. ~~Access control (#175)~~ — done. Every server route declares a permission; no access answers 404.
-4. Subuser invites bound to real accounts (#176) → teams (#177) → role-aware UI (#178).
+4. ~~Subuser invites bound to real accounts (#176)~~ — done. Next: teams (#177) → role-aware UI (#178).
 5. Release pipeline: per-edition images + `deploy/{community,hosted}` bundles (#179).
 
 **Vocabulary** — keep these distinct, they are two different things:
