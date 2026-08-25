@@ -59,12 +59,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve the version
-        id: version
+      - name: Resolve the version and image namespace
+        id: meta
         run: |
           VERSION="${{ github.event.inputs.version }}"
           if [ -z "$VERSION" ]; then VERSION="${GITHUB_REF_NAME#v}"; fi
-          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # GHCR rejects a mixed-case repository name, and the GitHub owner is
+          # not necessarily lowercase.
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -83,11 +86,11 @@ jobs:
           file: services/${{ matrix.service }}/Dockerfile
           push: true
           build-args: |
-            APP_VERSION=${{ steps.version.outputs.value }}
+            APP_VERSION=${{ steps.meta.outputs.version }}
             NEXUS_EDITION=${{ matrix.edition }}
           tags: |
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/nexusinfra-${{ matrix.service }}:${{ steps.version.outputs.value }}-${{ matrix.edition }}
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/nexusinfra-${{ matrix.service }}:${{ matrix.edition }}
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/nexusinfra-${{ matrix.service }}:${{ steps.meta.outputs.version }}-${{ matrix.edition }}
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/nexusinfra-${{ matrix.service }}:${{ matrix.edition }}
           # The two editions differ only in a build arg, so the second leg is
           # almost entirely cache hits.
           cache-from: type=gha,scope=${{ matrix.service }}
@@ -106,12 +109,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve the version
-        id: version
+      - name: Resolve the version and image namespace
+        id: meta
         run: |
           VERSION="${{ github.event.inputs.version }}"
           if [ -z "$VERSION" ]; then VERSION="${GITHUB_REF_NAME#v}"; fi
-          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # GHCR rejects a mixed-case repository name, and the GitHub owner is
+          # not necessarily lowercase.
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -128,8 +134,8 @@ jobs:
           file: dashboard/Dockerfile
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/nexusinfra-dashboard:${{ steps.version.outputs.value }}
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/nexusinfra-dashboard:latest
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/nexusinfra-dashboard:${{ steps.meta.outputs.version }}
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/nexusinfra-dashboard:latest
           cache-from: type=gha,scope=dashboard
           cache-to: type=gha,mode=max,scope=dashboard
 
