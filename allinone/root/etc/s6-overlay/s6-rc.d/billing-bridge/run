@@ -1,0 +1,16 @@
+#!/command/with-contenv sh
+set -a
+. /run/nexusinfra.env
+# Both services read DATABASE_URL but need separate databases, and the env file
+# is shared. Point this one at its own before starting, or it would open the
+# orchestrator's database and migrate the wrong schema into it.
+DATABASE_URL="$BILLING_DATABASE_URL"
+set +a
+exec 2>&1
+# Only present in the hosted image; the community build never installs it.
+if [ ! -d /app/services/billing-bridge/dist ]; then
+  echo "[billing-bridge] not part of this edition; nothing to run"
+  exec sleep infinity
+fi
+cd /app/services/billing-bridge && npx prisma migrate deploy >/dev/null 2>&1 || true
+exec node dist/index.js

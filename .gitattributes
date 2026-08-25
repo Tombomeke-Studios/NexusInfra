@@ -1,2 +1,21 @@
-# Auto detect text files and perform LF normalization
+# Line endings.
+#
+# Scripts that run inside a Linux container must be checked out with LF whatever
+# the developer's platform does. With CRLF the kernel reads the carriage return
+# as part of the interpreter path and the container dies with "bad interpreter" —
+# a failure that only appears on a fresh clone on Windows, which is the worst
+# place for it to appear.
 * text=auto
+
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+
+# s6 service definitions: run scripts and type files, none of which have
+# extensions.
+allinone/root/**            text eol=lf
+deploy/install.sh           text eol=lf
+
+# PowerShell is happier with CRLF on Windows.
+*.ps1           text eol=crlf

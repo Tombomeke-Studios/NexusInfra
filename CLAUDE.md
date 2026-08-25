@@ -311,6 +311,7 @@ is the migrations directory.
 | `docker-compose.yml` | RabbitMQ + control-room + node-agent + orchestrator + dashboard stack |
 | `vitest.workspace.ts` | Splits tests into `backend` (node) and `dashboard` (jsdom) projects |
 | `.env.example` | Env contract — documents the FinVault-shared vars (`RABBITMQ_URL`, `FINVAULT_MESSAGE_KEY`) |
+| `allinone/` | All-in-one image (#203): one container with every service under s6, its own broker, and first-start secret generation. Published as `nexusinfra-community` / `nexusinfra-hosted`. **Single machine** — a second host runs the standalone agent |
 | `deploy/install.sh` · `deploy/install.ps1` | Release installer: picks an edition, generates `JWT_SECRET`/`INTERNAL_API_TOKEN`/admin password, writes `.env`, starts the stack. Never overwrites an existing `.env` unasked (#191) |
 | `deploy/community/` · `deploy/hosted/` | Self-contained release bundles: compose pinned to published images + `.env.example` + README. Neither needs a checkout of this repo; both are attached to each GitHub release (#179) |
 | `.github/workflows/release.yml` | On a `v*` tag: re-run CI in both editions, then publish `nexusinfra/<service>:X.Y.Z-{community,hosted}` to GHCR (nested so the six read as one family, #200). `billing-bridge` builds hosted only (#179) |
@@ -361,6 +362,13 @@ is the migrations directory.
 - **Anything hosted-only added to the dashboard must be excluded from the community build** — alias
   it in `vite.config.ts` and add a marker to `verify-edition.mjs`, or the community bundle silently
   starts shipping code it cannot run.
+- **Two Prisma schemas in one workspace collide.** They both generate into the hoisted
+  `node_modules/.prisma/client` and the last one wins — invisible while each service has its own
+  image, fatal once two share one. `billing-bridge` generates into its own directory; anything new
+  with a schema must do the same.
+- **Anything that runs inside a container needs LF line endings** — see `.gitattributes`. CRLF makes
+  the kernel read the carriage return as part of the interpreter path (`bad interpreter`), and it
+  only shows up on a fresh clone on Windows.
 - **The dashboard's `permissions.ts` is a mirror, not a second source of truth.** It exists so the
   panel doesn't offer buttons that would 403; change it in the same commit as `access.ts` or the two
   drift. Hiding a control is never a security measure — the API is.
