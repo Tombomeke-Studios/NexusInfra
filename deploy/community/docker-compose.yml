@@ -86,9 +86,9 @@ services:
     depends_on: [orchestrator]
 
   dashboard:
-    # One dashboard image serves both editions — it reads the edition at runtime
-    # from the Orchestrator, so there is nothing to bake in.
-    image: ghcr.io/tombomeke-studios/nexusinfra-dashboard:${NEXUSINFRA_VERSION:-latest}
+    # Built for this edition (#190): the community bundle does not contain the
+    # billing UI at all, rather than hiding it.
+    image: ghcr.io/tombomeke-studios/nexusinfra-dashboard:${NEXUSINFRA_VERSION:-community}
     container_name: nexusinfra-dashboard
     restart: unless-stopped
     ports: ['${DASHBOARD_PORT:-8095}:80']
