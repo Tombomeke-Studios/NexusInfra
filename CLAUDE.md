@@ -123,6 +123,21 @@ A "unit" = one function, feature, fix, or refactor — the smallest shippable sl
 2. After merge to `staging`, verify CI passes on staging push.
 3. Open a PR `staging → main` only after step 2 is signed off. Wait for CI.
 4. After merge to `main`: tag the release (`git tag vX.Y.Z`) and push the tag.
+5. **Back-merge `main` into `dev`** with a PR, then sync `staging` from `dev`. Do not skip this.
+
+> **Why step 5 exists.** Merging a promotion PR creates a merge commit **on the target branch** —
+> `dev → staging` puts one on `staging`, `staging → main` puts one on `main`. They are born on the
+> receiving side and never travel back on their own, so `main` silently drifts ahead of `dev` by two
+> commits per release. The code is fine; the history is not, and by the third release `main` was six
+> commits ahead of `dev` with an identical working tree.
+>
+> Check it with `git log --oneline origin/dev..origin/main` — that should be empty once a release is
+> finished. `git diff origin/dev origin/main` being empty only tells you no *content* is missing.
+>
+> A back-merge leaves one small sync commit behind each time. The alternative is to fast-forward the
+> lower branches instead (`git push origin main:dev`), which adds no commits at all, but rewrites
+> nothing only because the branches are strict ancestors — verify that with
+> `git merge-base --is-ancestor origin/dev origin/main` before ever reaching for it.
 
 ## 3. Commit rules
 
