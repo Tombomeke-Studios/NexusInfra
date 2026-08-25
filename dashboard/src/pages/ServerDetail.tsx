@@ -47,6 +47,7 @@ import {
 import { StatusBadge } from '../components/StatusBadge';
 import { useToast } from '../components/Toast';
 import { InfoHint } from '../components/InfoHint';
+import { permissionsFor, ROLE_LABELS, type ServerPermission, type ServerRole } from '../permissions';
 import { Terminal } from '../components/Terminal';
 
 // Server detail — ported from the redesign. The header/status/actions are real;
@@ -54,6 +55,22 @@ import { Terminal } from '../components/Terminal';
 // up later (console → #66–#72, files/databases/backups/etc. → their own work).
 const TABS = ['console', 'terminal', 'files', 'databases', 'backups', 'network', 'schedules', 'subusers', 'startup', 'settings'] as const;
 type Tab = (typeof TABS)[number];
+
+// Which permission each tab needs (#178). A tab the caller cannot use is hidden
+// rather than shown and refused. This mirrors the server-side matrix; the API
+// enforces it regardless of what the panel decides to render.
+const TAB_PERMISSION: Record<Tab, ServerPermission> = {
+  console: 'server.logs',
+  terminal: 'console.connect',
+  files: 'file.read',
+  databases: 'database.manage',
+  backups: 'backup.manage',
+  network: 'server.view',
+  schedules: 'server.view',
+  subusers: 'subuser.manage',
+  startup: 'server.view',
+  settings: 'server.delete',
+};
 
 export function ServerDetail() {
   const { id = '' } = useParams();
@@ -104,6 +121,13 @@ export function ServerDetail() {
 
   const isGame = d.type === 'game' || d.dockerImage.startsWith('nexusinfra/');
   const running = d.status === 'running';
+  // What this caller may do here. Absent on older responses, in which case
+  // permissionsFor allows everything and the API remains the real gate.
+  const allows = permissionsFor(d.role as ServerRole | undefined);
+  const visibleTabs = TABS.filter((t) => allows(TAB_PERMISSION[t]));
+  // The default tab may not be one this role can open, so fall back to the first
+  // that is rather than rendering an empty panel.
+  const activeTab = visibleTabs.includes(tab) ? tab : visibleTabs[0];
 
   return (
     <div style={{ maxWidth: 1080, margin: '0 auto', padding: '24px 24px 48px', animation: 'rise 300ms var(--ease-out) both' }}>
@@ -125,12 +149,23 @@ export function ServerDetail() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {running ? (
             <>
-              <button className="btn btn--secondary" data-ripple onClick={() => act(restartDeployment, 'restart')}>Restart</button>
-              <button className="btn btn--danger" data-ripple data-burst="danger" onClick={() => act(stopDeployment, 'stop')}>Stop</button>
-              <button className="btn btn--secondary" data-ripple onClick={() => toast('Kill is not wired yet', 'info')}>Kill</button>
+              {allows('control.restart') && <button className="btn btn--secondary" data-ripple onClick={() => act(restartDeployment, 'restart')}>Restart</button>}
+              {allows('control.stop') && (
+                <>
+                  <button className="btn btn--danger" data-ripple data-burst="danger" onClick={() => act(stopDeployment, 'stop')}>Stop</button>
+                  <button className="btn btn--secondary" data-ripple onClick={() => toast('Kill is not wired yet', 'info')}>Kill</button>
+                </>
+              )}
             </>
           ) : (
-            <button className="btn btn--secondary" data-ripple data-burst="success" onClick={() => act(startDeployment, 'start')}>Start</button>
+            allows('control.start') && <button className="btn btn--secondary" data-ripple data-burst="success" onClick={() => act(startDeployment, 'start')}>Start</button>
+          )}
+          {/* Say plainly whose server this is when it isn't yours — what you can
+              do here follows from that role. */}
+          {d.role && d.role !== 'owner' && (
+            <span className="subtle" style={{ alignSelf: 'center', fontSize: '.82rem' }} title="Shared with you — what you can do here depends on this role">
+              Your role: {ROLE_LABELS[d.role as ServerRole]}
+            </span>
           )}
         </div>
       </div>
@@ -140,24 +175,24 @@ export function ServerDetail() {
 
       {/* Tab bar */}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', borderBottom: '1px solid var(--color-border)', marginBottom: 22 }}>
-        {TABS.map((t) => (
-          <button key={t} data-ripple onClick={() => setTab(t)} className={`tab${tab === t ? ' is-active' : ''}`}>
+        {visibleTabs.map((t) => (
+          <button key={t} data-ripple onClick={() => setTab(t)} className={`tab${activeTab === t ? ' is-active' : ''}`}>
             {t}
           </button>
         ))}
       </div>
 
       {/* Tab content */}
-      {tab === 'console' && <ConsoleTab id={d.id} running={running} isGame={isGame} containerId={d.containerId} />}
-      {tab === 'terminal' && <TerminalTab id={d.id} running={running} />}
-      {tab === 'files' && <FilesTab id={d.id} running={running} />}
-      {tab === 'databases' && <DatabasesTab id={d.id} running={running} />}
-      {tab === 'backups' && <BackupsTab id={d.id} running={running} />}
-      {tab === 'network' && <NetworkTab />}
-      {tab === 'schedules' && <SchedulesTab id={d.id} />}
-      {tab === 'subusers' && <SubusersTab id={d.id} />}
-      {tab === 'startup' && <StartupTab image={d.dockerImage} isGame={isGame} envs={d.events.length} />}
-      {tab === 'settings' && <SettingsTab id={d.id} teamId={d.teamId ?? null} onDelete={onDelete} />}
+      {activeTab === 'console' && <ConsoleTab id={d.id} running={running} isGame={isGame} containerId={d.containerId} />}
+      {activeTab === 'terminal' && <TerminalTab id={d.id} running={running} />}
+      {activeTab === 'files' && <FilesTab id={d.id} running={running} />}
+      {activeTab === 'databases' && <DatabasesTab id={d.id} running={running} />}
+      {activeTab === 'backups' && <BackupsTab id={d.id} running={running} />}
+      {activeTab === 'network' && <NetworkTab />}
+      {activeTab === 'schedules' && <SchedulesTab id={d.id} />}
+      {activeTab === 'subusers' && <SubusersTab id={d.id} />}
+      {activeTab === 'startup' && <StartupTab image={d.dockerImage} isGame={isGame} envs={d.events.length} />}
+      {activeTab === 'settings' && <SettingsTab id={d.id} teamId={d.teamId ?? null} onDelete={onDelete} />}
     </div>
   );
 }

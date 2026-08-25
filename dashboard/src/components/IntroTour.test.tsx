@@ -14,17 +14,21 @@ describe('IntroTour', () => {
     render(<IntroTour open onClose={onClose} />);
 
     expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByText('Step 1 of 4')).toBeInTheDocument();
+
+    // Read the length from the tour itself, so adding a step doesn't break this.
+    const total = Number(/Step \d+ of (\d+)/.exec(screen.getByText(/Step \d+ of \d+/).textContent ?? '')?.[1]);
+    expect(total).toBeGreaterThan(1);
+    expect(screen.getByText(`Step 1 of ${total}`)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
-    expect(screen.getByText('Step 2 of 4')).toBeInTheDocument();
+    expect(screen.getByText(`Step 2 of ${total}`)).toBeInTheDocument();
     // Back returns to the previous step.
     await userEvent.click(screen.getByRole('button', { name: 'Back' }));
-    expect(screen.getByText('Step 1 of 4')).toBeInTheDocument();
+    expect(screen.getByText(`Step 1 of ${total}`)).toBeInTheDocument();
 
     // Advance to the last step and finish.
-    for (let i = 0; i < 3; i++) await userEvent.click(screen.getByRole('button', { name: 'Next' }));
-    expect(screen.getByText('Step 4 of 4')).toBeInTheDocument();
+    for (let i = 0; i < total - 1; i++) await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByText(`Step ${total} of ${total}`)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Get started' }));
     expect(onClose).toHaveBeenCalled();
   });
