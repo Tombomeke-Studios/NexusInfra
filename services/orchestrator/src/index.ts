@@ -7,6 +7,7 @@ import { PrismaRepository } from './db.js';
 import { agentFetch, createApiRouter, resolveContainerTarget } from './api.js';
 import { resolveAgentUrl } from './agentUrl.js';
 import { verifyToken } from './auth.js';
+import { can, resolveRole } from './access.js';
 import { pipeSockets, toWsUrl, type DuplexSocket } from './wsProxy.js';
 import { createBillingProxyRouter } from './billingProxy.js';
 import { createMonitoringRouter } from './monitoring.js';
@@ -108,11 +109,13 @@ server.on('upgrade', async (req, socket, head) => {
   const match = /^\/deployments\/([^/]+)\/terminal$/.exec(url.pathname);
   if (!match) return socket.destroy();
 
-  // Auth: the JWT rides as a query param (browsers can't set WS headers).
+  // Authentication: the JWT rides as a query param (browsers can't set WS
+  // headers on the handshake).
   const token = url.searchParams.get('token');
   if (!token) return socket.destroy();
+  let principal;
   try {
-    verifyToken(token);
+    principal = verifyToken(token);
   } catch {
     return socket.destroy();
   }
@@ -120,6 +123,14 @@ server.on('upgrade', async (req, socket, head) => {
   const detail = await repo.getDeployment(match[1]);
   const target = resolveContainerTarget(detail);
   if (target.status !== 200) return socket.destroy();
+
+  // Authorization: this opens a root shell inside the container, so holding a
+  // valid token is not enough — the caller needs console access on *this*
+  // server. Every failure closes the socket without saying why.
+  const caller = await repo.getUser(principal.id);
+  const grant = caller ? await repo.getSubuserFor(detail!.id, caller.email) : null;
+  const role = resolveRole({ principal, ownerId: detail!.userId, grant });
+  if (!can(role, 'console.connect')) return socket.destroy();
 
   // Dial the agent that actually owns this deployment (#171).
   const agentUrl = await agentUrlFor(detail!.nodeId);
