@@ -9,6 +9,35 @@ and [`../CONCEPTS/integration/`](../CONCEPTS/integration/).
 
 ---
 
+## 0. Where we are — read this first
+
+**One codebase, two products.** `NEXUS_EDITION=community|hosted` (default `community`) decides which
+one a running stack is. Never fork the two apart; anything edition-specific goes behind that flag.
+
+| | **Community** | **Hosted** |
+|---|---|---|
+| Who runs it | Anyone self-hosting the panel on their own machines | The public/portfolio instance |
+| Billing & FinVault | off | on (Billing Bridge, credit wallet, plan quotas) |
+| Accounts | created by an administrator | customers register themselves |
+
+**Current phase: 6 — multi-user sharing + two shippable releases** ([TODO.md](TODO.md) has the
+checklist; every item carries its issue ref). The order matters and each step is one branch + PR:
+
+1. ~~Edition flag reaches every service (#173)~~ — done.
+2. **Accounts (#174)** — real users, local identity behind an `AuthProvider` seam.
+3. **Access control (#175)** — the pure permission core plus enforcement on every route. Until this
+   lands, *any* signed-in user can act on *any* server; treat that as the headline open risk.
+4. Subuser invites bound to real accounts (#176) → teams (#177) → role-aware UI (#178).
+5. Release pipeline: per-edition images + `deploy/{community,hosted}` bundles (#179).
+
+**Vocabulary** — keep these distinct, they are two different things:
+- **Platform role** (`owner` / `admin` / `user`) — panel-wide standing: who may manage nodes and
+  accounts. Rides on the JWT.
+- **Server role** (`owner` / `admin` / `operator` / `viewer`) — what one person may do to one
+  server, granted directly or through a team. Resolved per request, never stored on the token.
+
+---
+
 ## 1. Language policy
 
 **Everything is written in English** so the project is uniform end to end:
@@ -149,7 +178,7 @@ is the migrations directory.
 | Run the dashboard (dev) | `npm --workspace dashboard run dev` (http://localhost:5173) |
 | RabbitMQ management UI | http://localhost:15672 (guest/guest) |
 | Control Room health / status | http://localhost:9000/health · /status |
-| Orchestrator API | http://localhost:9200 (login `admin`/`admin`) |
+| Orchestrator API | http://localhost:9200 (sign in as `ADMIN_EMAIL` / `ADMIN_PASSWORD`) |
 | Billing Bridge (hosted only) | http://localhost:9300/health · billing routes when `NEXUS_EDITION=hosted` |
 | API Gateway | http://localhost:9400 (fronts the orchestrator; JWT + rate limit) |
 
@@ -206,6 +235,8 @@ is the migrations directory.
 | `src/dbProvision.ts` | Pure managed-DB helpers: `isDatabaseEngine` guard + `generateDatabaseCredentials` (safe name/user/password) |
 | `src/cron.ts` | Pure 5-field cron matcher (`cronMatches`, `isValidCron`) for the schedule runner |
 | `src/scheduler.ts` | Schedule runner: pure `selectDue`/`tickSchedules` + `startScheduler` (1-min poll); actions injected |
+| `src/users.ts` | Account domain: bcrypt hashing, email normalisation, password rules, edition-derived signup policy, and `createUserService` (register / authenticate / change password / first-run bootstrap) (#174) |
+| `src/auth.ts` | `AuthProvider` seam (`createLocalAuthProvider`; FinVault JWT swaps in at #17) + `signToken`/`verifyToken` → `Principal`, `requireAuth`, `principalOf`, `requirePlatformAdmin`, and the auth/account/admin routers. **No anonymous fallback** — no token means 401 |
 | `src/config.ts` | `createConfigRouter` — public `GET /config` → `{ edition }` (edition flag, mounted before auth) |
 | `src/api.ts` | Express deployment API: create/list/get deployments, stop/start/restart/**delete**, node health; enforces plan quotas via the Billing Bridge (hosted) |
 | `src/lifecycle.ts` | Consumes `infra.server.started/stopped/crashed`, updates deployment status + audit |
@@ -304,6 +335,13 @@ is the migrations directory.
 - **Every Orchestrator → Node Agent call must go through `agentFetch`** (or carry
   `INTERNAL_TOKEN_HEADER` explicitly, as the terminal WS dial does). The agent rejects untokened
   requests with 401 (#169) — a bare `fetch` to `NODE_AGENT_URL` will silently start failing.
+- **A valid token says who you are, never what you may do.** `requireAuth` only authenticates;
+  authorization is per-server and resolved separately (#175). Never infer permission from the fact
+  that a request reached your handler.
+- **Never read a user id from the request body or a query param** — take it from `principalOf(req)`.
+  A caller-supplied id is a caller-chosen identity.
+- **Never return a raw user record over HTTP** — go through `toPublicUser`, which drops the
+  credential digest. The same applies to anything embedding a user.
 - Heartbeat cadence: 1s pulse; Control Room thresholds: degraded ≥3s, offline ≥10s.
 - All timestamps are UTC ISO-8601 strings in event payloads.
 - Dockerfiles build from the **repo root** context (they copy `shared/` + the service dir).

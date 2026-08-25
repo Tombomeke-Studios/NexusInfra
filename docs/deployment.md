@@ -13,7 +13,9 @@ docker-compose up --build # full stack
 
 The stack publishes: RabbitMQ (`5672` / UI `15672`), Control Room (`9000`), Node Agent (`9100`),
 Orchestrator (`9200`), and the dashboard (`8095`). Open the dashboard at `http://localhost:8095`
-and sign in with the seeded dev user (`admin` / `admin`).
+and sign in as the administrator seeded on first start — `ADMIN_EMAIL` (default `admin@local`) with
+`ADMIN_PASSWORD` (default `admin`). The service warns on every start while that default is in place;
+set a real password before the panel is reachable by anyone else.
 
 Or hybrid: `docker-compose up rabbitmq` + `npm run dev` (backend) and
 `npm --workspace dashboard run dev` (UI on `5173`) for hot reloading.

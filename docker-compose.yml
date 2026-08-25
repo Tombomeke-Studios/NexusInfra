@@ -73,6 +73,10 @@ services:
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
       - DATABASE_URL=file:/data/orchestrator.db
       - JWT_SECRET=${JWT_SECRET:-dev-secret}
+      # Administrator seeded on first start (#174). Override before exposing the
+      # panel — the default password is well known and warns on every start.
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@local}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
       - NODE_AGENT_URL=http://node-agent:9100
       - CONTROL_ROOM_URL=http://control-room:9000
       - BILLING_BRIDGE_URL=http://billing-bridge:9300
