@@ -20,13 +20,17 @@ other people. An optional hosted edition adds usage-based billing through
 
 ---
 
+
+---
+
 ## Contents
 
 - [What it does](#what-it-does)
 - [Two editions](#two-editions)
 - [Installation](#installation)
-- [Architecture](#architecture)
+- [Using the panel](#using-the-panel)
 - [Sharing and access control](#sharing-and-access-control)
+- [Architecture](#architecture)
 - [Components](#components)
 - [HTTP API](#http-api)
 - [FinVault integration](#finvault-integration)
@@ -124,6 +128,82 @@ remapping just that service; it is git-ignored.
 
 ---
 
+## Using the panel
+
+| Where | What you can do |
+|---|---|
+| **Overview** | Node health at a glance — live CPU and memory per machine, running-server counts, and the status of the platform services themselves. Register a new node here. |
+| **New Deployment** | Pick a Docker image or a game preset, set ports, environment variables, CPU/memory limits and a restart policy, then deploy. Every option has an explanation next to it. |
+| **Servers** | Everything you own and everything shared with you, with live status and controls appropriate to your role. |
+| **Teams** | Create a team, add people by email, and share whole sets of servers at once. |
+| **Preferences** | Defaults for the deployment form, so you are not re-typing the same values. |
+
+Open a server and you get the tools you would expect from a control panel, all working against the
+real container:
+
+| Tab | What it does |
+|---|---|
+| **Console** | Live container logs, streamed, plus one-shot commands |
+| **Terminal** | A full interactive shell, over a WebSocket |
+| **Files** | Browse, read, edit, upload, rename and delete inside the container |
+| **Databases** | Provision a real MySQL, MariaDB or PostgreSQL container with generated credentials |
+| **Backups** | Take and restore tar snapshots of the server's data |
+| **Schedules** | Cron-driven restarts and backups |
+| **Subusers** | Share this server with someone, and set what they may do |
+| **Settings** | Attach the server to a team, or delete it |
+
+<details>
+<summary><b>Driving the same loop from the command line</b></summary>
+
+```bash
+# authenticate
+TOKEN=$(curl -s -X POST http://localhost:9200/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"email":"admin@local","password":"'"$ADMIN_PASSWORD"'"}' \
+  | node -pe 'JSON.parse(require("fs").readFileSync(0)).token')
+
+# deploy nginx on a free host port
+curl -X POST http://localhost:9200/deployments \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"name":"my-nginx","dockerImage":"nginx:alpine","ports":{"8087":"80"}}'
+
+curl -H "authorization: Bearer $TOKEN" http://localhost:9200/deployments   # status: running
+curl http://localhost:8087                                                 # the nginx welcome page
+
+# share it with a colleague, as an operator
+curl -X POST http://localhost:9200/deployments/$ID/subusers \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"email":"colleague@example.com","role":"operator"}'
+```
+
+</details>
+
+---
+
+## Sharing and access control
+
+A server is owned by the account that created it, and can be shared two ways: directly with a person
+by email, or with a **team** whose members all gain access to every server attached to it.
+
+| Role | Permitted |
+|---|---|
+| **Viewer** | See the server, its logs and its resource usage |
+| **Operator** | The above, plus start, stop, restart, the console, and reading files |
+| **Admin** | The above, plus writing files, databases, backups, schedules and managing access |
+| **Owner** | The above, plus deleting the server |
+
+Access is resolved on **every request**, so revoking a share takes effect immediately rather than
+whenever a token happens to expire. A caller with no access receives `404` rather than `403`, so
+server identifiers cannot be probed for existence. A share can never confer ownership.
+
+Invitations can be sent to people who do not have an account yet; they remain inert until that person
+signs up with the address, at which point the grant activates automatically.
+
+The full model, including the reasoning behind these decisions, is in
+[docs/security.md](docs/security.md).
+
+---
+
 ## Architecture
 
 ```mermaid
@@ -190,30 +270,6 @@ sequenceDiagram
     Q->>O: status becomes running
     U-->>O: GET /deployments reflects it
 ```
-
----
-
-## Sharing and access control
-
-A server is owned by the account that created it, and can be shared two ways: directly with a person
-by email, or with a **team** whose members all gain access to every server attached to it.
-
-| Role | Permitted |
-|---|---|
-| **Viewer** | See the server, its logs and its resource usage |
-| **Operator** | The above, plus start, stop, restart, the console, and reading files |
-| **Admin** | The above, plus writing files, databases, backups, schedules and managing access |
-| **Owner** | The above, plus deleting the server |
-
-Access is resolved on **every request**, so revoking a share takes effect immediately rather than
-whenever a token happens to expire. A caller with no access receives `404` rather than `403`, so
-server identifiers cannot be probed for existence. A share can never confer ownership.
-
-Invitations can be sent to people who do not have an account yet; they remain inert until that person
-signs up with the address, at which point the grant activates automatically.
-
-The full model, including the reasoning behind these decisions, is in
-[docs/security.md](docs/security.md).
 
 ---
 
