@@ -1,31 +1,20 @@
 <div align="center">
 
-# ⬢ NexusInfra
+# NexusInfra
 
-### Deploy and run Docker servers across a fleet — from one panel.
+**Deploy and run Docker servers across a fleet — from one panel.**
 
-_A self-hostable infrastructure & server-management platform: create a container from the web panel,
-and NexusInfra places it on the least-loaded host, runs it, and tracks it live — with usage-based
-billing wired to **[FinVault](https://github.com/Tombomeke-Studios/FinVault)** over a shared event bus._
-
-<br/>
+A self-hostable infrastructure and server-management platform. Create a container from the web panel;
+NexusInfra places it on the least-loaded host, runs it, tracks it live, and lets you share it with
+other people. An optional hosted edition adds usage-based billing through
+[FinVault](https://github.com/Tombomeke-Studios/FinVault).
 
 [![CI](https://github.com/Tombomeke-Studios/NexusInfra/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/Tombomeke-Studios/NexusInfra/actions/workflows/ci.yml)
-![Phase](https://img.shields.io/badge/Phase_2-Core-3b82f6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-60_passing-6e9f18?style=flat-square&logo=vitest&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-460%20passing-6e9f18?style=flat-square&logo=vitest&logoColor=white)
+![Editions](https://img.shields.io/badge/editions-community%20%C2%B7%20hosted-8b5cf6?style=flat-square)
 ![Node](https://img.shields.io/badge/Node-%E2%89%A518-339933?style=flat-square&logo=nodedotjs&logoColor=white)
-![PRs welcome](https://img.shields.io/badge/PRs-welcome-8b5cf6?style=flat-square)
-![License](https://img.shields.io/badge/License-Internal-64748b?style=flat-square)
-
-<br/>
-
-![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
-![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
-![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
-![RabbitMQ](https://img.shields.io/badge/RabbitMQ-FF6600?style=for-the-badge&logo=rabbitmq&logoColor=white)
-![Prisma](https://img.shields.io/badge/Prisma-2D3748?style=for-the-badge&logo=prisma&logoColor=white)
-![Express](https://img.shields.io/badge/Express-000000?style=for-the-badge&logo=express&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white)
 
 </div>
 
@@ -33,51 +22,105 @@ billing wired to **[FinVault](https://github.com/Tombomeke-Studios/FinVault)** o
 
 ## Contents
 
-- [Highlights](#highlights)
-- [Two editions, one codebase](#two-editions-one-codebase)
+- [What it does](#what-it-does)
+- [Two editions](#two-editions)
+- [Installation](#installation)
 - [Architecture](#architecture)
-- [The deployment loop](#the-deployment-loop)
-- [Quickstart — run the panel](#quickstart--run-the-panel)
-- [Using the panel](#using-the-panel)
+- [Sharing and access control](#sharing-and-access-control)
 - [Components](#components)
 - [HTTP API](#http-api)
-- [Integration with FinVault](#integration-with-finvault)
-- [Testing](#testing)
-- [Project layout](#project-layout)
+- [FinVault integration](#finvault-integration)
+- [Development](#development)
 - [Documentation](#documentation)
+- [Project status](#project-status)
+- [Use of AI in this project](#use-of-ai-in-this-project)
 
 ---
 
-## Highlights
+## What it does
 
-- 🚀 **One-click deploys** — describe a server (image, ports, env) in the web panel; NexusInfra runs it.
-- 🧠 **Resource-aware placement** — the Orchestrator picks the least-loaded **healthy** node.
-- 📡 **Live status** — heartbeats drive `healthy → degraded → offline`; the Servers page polls in real time.
-- 🐳 **Real Docker** — node agents drive the Docker API on each host to start/stop/restart containers.
-- 🔒 **Encrypted events** — payloads are AES-256-GCM encrypted on a shared bus, wire-compatible with FinVault.
-- 👥 **Share your servers** — invite people by email or by team, with roles from read-only to full control.
-- 💳 **Billing-ready** — the `payment.*` contract with FinVault is pre-defined for usage-based billing.
+- **Deploy containers from a web panel.** Describe a server — image, ports, environment, CPU and
+  memory limits — and NexusInfra runs it on a real Docker host.
+- **Place work automatically.** The Orchestrator selects the least-loaded healthy node; commands are
+  addressed per node, so agents only act on their own workloads.
+- **Manage a server after it starts.** Live logs, an interactive terminal, a file browser, managed
+  databases, tar backups, and cron schedules — all against the real container.
+- **Share servers with other people.** Invite by email or through a team, with roles ranging from
+  read-only to full control. Access is resolved on every request.
+- **Watch the fleet.** Heartbeats drive `healthy → degraded → offline`, with uptime tracking.
+- **Bill for usage, optionally.** The hosted edition meters runtime against a credit wallet funded
+  through FinVault, over an encrypted shared event bus.
 
 ---
 
-## Two editions, one codebase
+## Two editions
 
-NexusInfra ships as two products chosen by a single runtime flag — no fork, no divergence.
+NexusInfra is one codebase that ships as two products. Which one you get is decided by the image you
+pull — the community images do not contain the hosted code at all.
 
 | | **Community** | **Hosted** |
 |---|---|---|
-| For | anyone self-hosting the panel on their own machines | a multi-tenant instance |
-| Accounts | an administrator creates them | customers register themselves |
-| Billing, quotas, FinVault | off | on |
-| Get it | `install.sh` / `install.ps1`, choose **community** | the same installer, choose **hosted** |
+| Intended for | self-hosting on your own machines | running a multi-tenant service |
+| Accounts | created by an administrator | customers register themselves |
+| Billing, quotas, FinVault | not included | included |
+| Requires FinVault | no | yes |
 
-Download the release archive, run the installer, answer one question. It generates the secrets,
-writes the configuration and starts the stack — see [deploy/README.md](deploy/README.md).
+Everything else — deployments, the console and terminal, files, databases, backups, schedules,
+sharing and teams — is identical in both.
 
-The editions are **separate images**, and the community images do not contain the hosted code at
-all: the tag decides what you get, with nothing to configure afterwards. Each release publishes
-`nexusinfra-<service>:X.Y.Z-community` and `:X.Y.Z-hosted` to GHCR alongside the archive — see
-[docs/deployment.md](docs/deployment.md).
+Choose **community** unless you are actually charging other people to run servers.
+
+---
+
+## Installation
+
+Download the release archive, unpack it, and run the installer. It asks which edition you want,
+generates the secrets, writes the configuration and starts the stack.
+
+```bash
+./install.sh                                              # Linux, macOS
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1      # Windows
+```
+
+No checkout of this repository is required. Full detail, including manual setup and upgrades, is in
+[deploy/README.md](deploy/README.md).
+
+<details>
+<summary><b>Running from source, for development</b></summary>
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+This builds and starts RabbitMQ, the Control Room, a local Node Agent, the Orchestrator, the API
+Gateway and the dashboard.
+
+| Service | URL |
+|---|---|
+| Web dashboard | http://localhost:8095 |
+| Orchestrator API | http://localhost:9200 |
+| API Gateway | http://localhost:9400 |
+| Control Room status | http://localhost:9000/status |
+| RabbitMQ management | http://localhost:15672 |
+
+Sign in as `ADMIN_EMAIL` (default `admin@local`) with `ADMIN_PASSWORD`. The service warns on every
+start while the default password is in place — change it before the panel is reachable by anyone else.
+
+For UI work, run the dashboard under Vite instead for hot reload:
+
+```bash
+npm install
+npm --workspace dashboard run dev    # http://localhost:5173
+```
+
+If a port is already taken by another application, add a local `docker-compose.override.yml`
+remapping just that service; it is git-ignored.
+
+</details>
 
 ---
 
@@ -86,24 +129,27 @@ all: the tag decides what you get, with nothing to configure afterwards. Each re
 ```mermaid
 graph TB
     subgraph Client
-        WEB["🖥️ Web Dashboard<br/><small>React · Vite</small>"]
+        WEB["Web Dashboard<br/><small>React · Vite</small>"]
     end
 
     subgraph "Control plane"
-        ORCH["🧠 Orchestrator<br/><small>deployments · node registry</small>"]
-        MON["📡 Control Room<br/><small>heartbeats · status</small>"]
-        BILL["💳 Billing Bridge<br/><small>runtime → payments</small>"]
+        GW["API Gateway<br/><small>JWT · rate limit · proxy</small>"]
+        ORCH["Orchestrator<br/><small>deployments · access control</small>"]
+        MON["Control Room<br/><small>heartbeats · uptime</small>"]
+        BILL["Billing Bridge<br/><small>usage → payments</small>"]
     end
 
     subgraph "Docker hosts"
-        N1["🐳 Node Agent<br/><small>host 1</small>"]
-        N2["🐳 Node Agent<br/><small>host 2</small>"]
+        N1["Node Agent<br/><small>host 1</small>"]
+        N2["Node Agent<br/><small>host 2</small>"]
     end
 
-    RMQ(["🐇 RabbitMQ<br/><small>finvault.events</small>"])
-    FV["🏦 FinVault<br/><small>payments</small>"]
+    RMQ(["RabbitMQ<br/><small>finvault.events</small>"])
+    FV["FinVault<br/><small>payments</small>"]
 
-    WEB -->|REST + JWT| ORCH
+    WEB -->|REST + JWT| GW
+    GW --> ORCH
+    ORCH -->|internal token| N1
     ORCH <-.->|server.start / started| RMQ
     MON <-.->|heartbeats| RMQ
     BILL <-.->|payment.*| RMQ
@@ -112,6 +158,7 @@ graph TB
     RMQ <-.-> FV
 
     style WEB fill:#3178c6,stroke:#3178c6,color:#fff
+    style GW fill:#1d4ed8,stroke:#1d4ed8,color:#fff
     style ORCH fill:#1d4ed8,stroke:#1d4ed8,color:#fff
     style MON fill:#1d4ed8,stroke:#1d4ed8,color:#fff
     style BILL fill:#94a3b8,stroke:#94a3b8,color:#fff
@@ -121,189 +168,151 @@ graph TB
     style N2 fill:#374151,stroke:#374151,color:#fff
 ```
 
-Every service speaks FinVault's on-the-wire event format — same envelope, AES-256-GCM payloads, and
-`finvault.events` exchange — so the two platforms integrate with **zero FinVault-side changes**.
+Every service speaks FinVault's on-the-wire event format — the same envelope, AES-256-GCM payloads
+and `finvault.events` exchange — so the two platforms integrate with no changes on the FinVault side.
 
----
-
-## The deployment loop
+### The deployment loop
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant U as 🖥️ Dashboard
-    participant O as 🧠 Orchestrator
-    participant Q as 🐇 RabbitMQ
-    participant A as 🐳 Node Agent
+    participant U as Dashboard
+    participant O as Orchestrator
+    participant Q as RabbitMQ
+    participant A as Node Agent
 
-    U->>O: POST /deployments {image, ports}
-    O->>O: pick least-loaded healthy node · record deployment
+    U->>O: POST /deployments {image, ports, limits}
+    O->>O: authorize · select least-loaded healthy node · record
     O->>Q: server.start {node, image}
     Q->>A: deliver command
-    A->>A: docker run
+    A->>A: docker run, with the configured limits
     A->>Q: server.started {containerId}
-    Q->>O: status → running
-    U-->>O: poll /deployments → running ✅
+    Q->>O: status becomes running
+    U-->>O: GET /deployments reflects it
 ```
 
 ---
 
-## Quickstart — run the panel
+## Sharing and access control
 
-**Prerequisites:** Docker + Docker Compose, and Node ≥ 18 (only if you want to run pieces outside Docker).
+A server is owned by the account that created it, and can be shared two ways: directly with a person
+by email, or with a **team** whose members all gain access to every server attached to it.
 
-```bash
-# 1 · configure (defaults work for local dev; match FinVault's values to integrate)
-cp .env.example .env
-
-# 2 · build & start the whole stack
-docker-compose up --build
-```
-
-That brings up RabbitMQ, the Control Room, a local Node Agent, the Orchestrator, and the dashboard.
-
-### 👉 Open it
-
-| What | URL | Notes |
-|---|---|---|
-| **Web dashboard** | **http://localhost:8095** | Sign in with the seeded administrator — `admin@local` and the password from `ADMIN_PASSWORD` (default `admin` locally). **Change it before exposing the panel.** |
-| Orchestrator API | http://localhost:9200 | See [docs/api.md](docs/api.md) |
-| Control Room status | http://localhost:9000/status | Live heartbeat view |
-| RabbitMQ management | http://localhost:15672 | `guest` / `guest` |
-
-> **Port already in use?** If a sibling app already holds a port (e.g. `9000`), drop a
-> `docker-compose.override.yml` locally to remap just that service — it stays out of version control.
-
-Prefer hot-reload while developing the UI? Run the dashboard with Vite instead:
-
-```bash
-npm install
-npm --workspace dashboard run dev   # http://localhost:5173
-```
-
----
-
-## Using the panel
-
-| Page | What you can do |
+| Role | Permitted |
 |---|---|
-| **Sign in** | Authenticate with the seeded dev user to get a session token. |
-| **Overview** | See running-server and node counts, plus a colour-coded health tile per node. |
-| **New Deployment** | Enter a name, Docker image, and optional port / env rows, then **Deploy**. |
-| **Servers** | Watch each deployment's live status (`pending → running → stopped/crashed`) and **Stop** running ones. |
+| **Viewer** | See the server, its logs and its resource usage |
+| **Operator** | The above, plus start, stop, restart, the console, and reading files |
+| **Admin** | The above, plus writing files, databases, backups, schedules and managing access |
+| **Owner** | The above, plus deleting the server |
 
-Behind the scenes, deploying `nginx` with port `8080:80` places the container on a healthy node, runs
-it on that host's Docker daemon, and reflects the status back on the Servers page within seconds.
+Access is resolved on **every request**, so revoking a share takes effect immediately rather than
+whenever a token happens to expire. A caller with no access receives `404` rather than `403`, so
+server identifiers cannot be probed for existence. A share can never confer ownership.
 
-<details>
-<summary><b>Drive the same loop from the CLI</b></summary>
+Invitations can be sent to people who do not have an account yet; they remain inert until that person
+signs up with the address, at which point the grant activates automatically.
 
-```bash
-# authenticate
-TOKEN=$(curl -s -X POST http://localhost:9200/auth/login \
-  -H 'content-type: application/json' \
-  -d '{"username":"admin","password":"admin"}' | sed 's/.*"token":"\([^"]*\)".*/\1/')
-
-# deploy nginx (pick a free host port)
-curl -X POST http://localhost:9200/deployments \
-  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"name":"my-nginx","dockerImage":"nginx","ports":{"8087":"80"}}'
-
-curl -H "authorization: Bearer $TOKEN" http://localhost:9200/deployments  # → running
-curl http://localhost:8087                                                # nginx welcome page
-```
-
-</details>
+The full model, including the reasoning behind these decisions, is in
+[docs/security.md](docs/security.md).
 
 ---
 
 ## Components
 
-| Component | Status | Role |
-|---|:--:|---|
-| **`shared`** | ✅ | Event contract — envelope, AES-256-GCM encryption, RabbitMQ helpers (FinVault-compatible) |
-| **Control Room** | ✅ | Heartbeat monitoring; `healthy → degraded → offline` status; HTTP status view |
-| **Node Agent** | ✅ | Runs on a Docker host; starts/stops/restarts containers and reports heartbeats + CPU/RAM/disk |
-| **Orchestrator** | ✅ | Node registry, deployment API with resource-aware placement, lifecycle tracking |
-| **Web Dashboard** | ✅ | React/Vite panel: login, overview, deployment form, live server list + stop |
-| **Billing Bridge** | 📋 | Runtime tracking → `payment.request` to FinVault; suspend on failure |
-| **API Gateway** | 📋 | Production auth (FinVault JWT), routing, WebSocket proxy |
-
-✅ built · 📋 planned — see [TODO.md](TODO.md) for the roadmap.
+| Component | Role |
+|---|---|
+| **`shared`** | Event contract — envelope, AES-256-GCM encryption, RabbitMQ helpers, edition and version resolution |
+| **Control Room** | Heartbeat monitoring, `healthy → degraded → offline` status, uptime and transitions |
+| **Node Agent** | Runs on a Docker host: container lifecycle, logs, stats, files, exec, terminal, databases, backups |
+| **Orchestrator** | Accounts, per-server authorization, deployment API with resource-aware placement, teams, schedules |
+| **API Gateway** | Single external entry point: CORS, per-client rate limiting, JWT validation, reverse proxy |
+| **Billing Bridge** | Hosted edition only: usage metering, credit wallet, monthly cycle, FinVault top-ups |
+| **Web Dashboard** | React and Vite panel, built per edition |
 
 ---
 
 ## HTTP API
 
-The Orchestrator (`:9200`) is the control plane; all routes below the login require a Bearer token.
+The Orchestrator (`:9200`) is the control plane. Every route below the public ones requires a Bearer
+token, **and** a sufficient role on the server being addressed.
 
-| Method & path | Purpose |
+| Method and path | Purpose |
 |---|---|
-| `POST /auth/login` | Exchange dev credentials for a JWT |
-| `GET /nodes` | Registered nodes with resources + derived health |
-| `POST /deployments` | Create a deployment → place on a node → start the container |
-| `GET /deployments` · `GET /deployments/:id` | List / inspect deployments (with the event trail) |
-| `POST /deployments/:id/stop` | Stop a running deployment |
+| `POST /auth/login` | Exchange credentials for a JWT |
+| `POST /auth/register` | Create an account (hosted edition only) |
+| `GET /me` | The signed-in account |
+| `GET /nodes` | Registered nodes with resources and derived health |
+| `POST /deployments` | Create a deployment, place it on a node, start the container |
+| `GET /deployments` | Servers you own or that are shared with you, each with your role |
+| `POST /deployments/:id/{start,stop,restart}` | Control a server |
+| `GET /deployments/:id/{logs,stats}` | Live streams from the owning node |
+| `POST /deployments/:id/subusers` | Share a server with someone |
+| `GET /teams` · `POST /teams/:id/members` | Team management |
 
-Full request/response shapes and the event contract live in **[docs/api.md](docs/api.md)**.
+Full request and response shapes, status codes and the event contract are in
+[docs/api.md](docs/api.md).
 
 ---
 
-## Integration with FinVault
+## FinVault integration
 
 Both platforms share one RabbitMQ topic exchange, `finvault.events`, with a dead-letter exchange
 `finvault.events.dlx`. Payloads are AES-256-GCM encrypted with a key derived from
-`FINVAULT_MESSAGE_KEY`; the event `type` stays readable for routing. Because `shared/` reproduces
-FinVault's envelope and encryption exactly, either platform can consume the other's events — verified
-by a round-trip test.
+`FINVAULT_MESSAGE_KEY`; the event `type` stays readable so it can be routed on. Because `shared/`
+reproduces FinVault's envelope and encryption exactly, either platform can consume the other's
+events — guarded by a round-trip test that locks the wire format.
 
 ```mermaid
 sequenceDiagram
-    participant BB as 💳 NexusInfra
-    participant Q as 🐇 finvault.events
-    participant FV as 🏦 FinVault
+    participant BB as NexusInfra
+    participant Q as finvault.events
+    participant FV as FinVault
 
     BB->>Q: payment.request
     Q->>FV: process payment
     alt Paid
         FV->>Q: payment.confirmed
-        Q->>BB: keep servers running
+        Q->>BB: credit the wallet
     else Unpaid
         FV->>Q: payment.failed
         Q->>BB: suspend the user's servers
     end
 ```
 
-To connect the two, point `RABBITMQ_URL` at FinVault's broker and set the same `FINVAULT_MESSAGE_KEY`.
+To connect the two, point `RABBITMQ_URL` at FinVault's broker and set an identical
+`FINVAULT_MESSAGE_KEY` on both sides.
 
 ---
 
-## Testing
+## Development
 
 ```bash
-npm test     # backend (Node) + dashboard (jsdom) via Vitest — 60 tests
-npm run lint # ESLint across all workspaces
+npm install
+npm run build     # shared first, then every service
+npm test          # 460 tests: backend (Node) + dashboard (jsdom), via Vitest
+npm run lint      # ESLint across all workspaces
 ```
 
-The suite includes the FinVault wire-compatibility guard that locks the envelope shape and encryption
-layout — never change those without an equivalent change in FinVault.
-
----
-
-## Project layout
+CI runs the suite twice, once per edition, because billing routes, plan quotas and signup policy only
+execute in the hosted edition.
 
 ```
 NexusInfra/
-├── shared/            # Event contract + RabbitMQ helpers (FinVault-compatible)
+├── shared/              Event contract, RabbitMQ helpers, edition and version resolution
 ├── services/
-│   ├── control-room/  # Heartbeat monitoring + status endpoint
-│   ├── node-agent/    # Docker container lifecycle + node heartbeats
-│   └── orchestrator/  # Deployment API, node registry, lifecycle (Prisma/SQLite)
-├── dashboard/         # React + Vite web panel
-├── docs/              # architecture · api · security · deployment
-├── docker-compose.yml
+│   ├── control-room/    Heartbeat monitoring and status
+│   ├── node-agent/      Container lifecycle, files, exec, terminal, databases, backups
+│   ├── orchestrator/    Accounts, authorization, deployments, teams (Prisma/SQLite)
+│   ├── gateway/         API gateway: JWT, rate limiting, reverse proxy
+│   └── billing-bridge/  Usage metering and the FinVault payment flow (hosted)
+├── dashboard/           React and Vite web panel
+├── deploy/              Release bundles and installers for both editions
+├── docs/                architecture · api · security · deployment · billing
+├── docker-compose.yml   Development stack, built from source
 └── .env.example
 ```
+
+Conventions, the branching model and the codebase map are in [CLAUDE.md](CLAUDE.md).
 
 ---
 
@@ -312,13 +321,50 @@ NexusInfra/
 | Document | Contents |
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | Services as built, event-bus topology, routing keys, status model |
-| [docs/api.md](docs/api.md) | HTTP endpoints and the event-contract summary |
-| [docs/security.md](docs/security.md) | Payload encryption, secrets handling, auth plan |
-| [docs/deployment.md](docs/deployment.md) | Local dev, image pattern, CI, combined FinVault deployment |
-| [TODO.md](TODO.md) | Working checklist and roadmap, grouped per branch |
+| [docs/api.md](docs/api.md) | HTTP endpoints, status codes and the event-contract summary |
+| [docs/security.md](docs/security.md) | Authentication, the authorization model, payload encryption, secrets |
+| [docs/deployment.md](docs/deployment.md) | Editions, releases, images, CI, combined FinVault deployment |
+| [docs/billing.md](docs/billing.md) | Pricing, quotas, the credit wallet and the monthly cycle |
+| [deploy/README.md](deploy/README.md) | Installing a release |
+| [TODO.md](TODO.md) | Roadmap and working checklist |
 | [CLAUDE.md](CLAUDE.md) | Contributor guide — conventions, workflow, codebase map |
 
+---
+
+## Project status
+
+The panel is feature-complete and has been exercised against real containers: deployments, file
+management, the console, managed databases, backups, node registration, live logs and statistics, and
+the full sharing flow including roles, invitations and teams.
+
+Known limitations, stated plainly rather than left to be discovered:
+
+- **Not yet hardened for the public internet.** There is no TLS termination in the shipped bundles,
+  and the default broker credentials need replacing. Treat the bundles as a starting point.
+- **SQLite, not PostgreSQL.** Fine for a single control plane; a migration path is on the roadmap.
+- **The hosted edition has not been verified against a live FinVault instance** — the event contract
+  is test-guarded on this side, but the two have not yet been run together.
+- **The interactive terminal and the gateway proxy are unit-tested but not yet exercised end to end**
+  against a running stack.
+
+See [TODO.md](TODO.md) for what is planned.
+
+---
+
+## Use of AI in this project
+
+This project was built with substantial assistance from AI tooling (Anthropic's Claude), used as a
+development collaborator throughout: implementation, tests, and documentation.
+
+Direction, architectural decisions, review and acceptance are the author's. Every change went through
+the same process as any other contribution — a branch, a pull request, continuous integration, and
+review before merge — and the test suite, the security model and the release process are there to be
+inspected rather than taken on trust.
+
+It is stated here because it is a fair thing for anyone reading or relying on this code to know.
+
+---
+
 <div align="center">
-<br/>
-<sub>Part of the <strong><a href="https://github.com/Tombomeke-Studios">Tombomeke Studios</a></strong> product ecosystem — alongside <a href="https://github.com/Tombomeke-Studios/FinVault">FinVault</a>.</sub>
+<sub>Part of the <strong><a href="https://github.com/Tombomeke-Studios">Tombomeke Studios</a></strong> ecosystem, alongside <a href="https://github.com/Tombomeke-Studios/FinVault">FinVault</a>.</sub>
 </div>
