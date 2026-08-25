@@ -97,7 +97,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
   bundles:
-    name: Attach the deployment bundles
+    name: Attach the release archive
     needs: [services]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
@@ -106,14 +106,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Package each edition's compose bundle
+      # One archive containing both editions and the installer (#192), rather
+      # than a tarball per edition. Choosing an edition is a question the
+      # installer asks, not a download you have to get right beforehand.
+      - name: Package the release archive
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          STAGE="nexusinfra-$VERSION"
+          mkdir -p "$STAGE"
+          cp -r deploy/community deploy/hosted "$STAGE/"
+          cp deploy/install.sh deploy/install.ps1 deploy/README.md "$STAGE/"
+          chmod +x "$STAGE/install.sh"
+          # Pin both bundles to this exact release, so an archive keeps
+          # installing the same thing however old it is.
           for edition in community hosted; do
-            tar -czf "nexusinfra-$edition-$VERSION.tar.gz" -C deploy "$edition"
+            printf '\n# Pinned by the %s release archive.\nNEXUSINFRA_VERSION=%s-%s\n' \
+              "$VERSION" "$VERSION" "$edition" >> "$STAGE/$edition/.env.example"
           done
+          zip -rq "$STAGE.zip" "$STAGE"
+          tar -czf "$STAGE.tar.gz" "$STAGE"
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: nexusinfra-*.tar.gz
+          files: |
+            nexusinfra-*.zip
+            nexusinfra-*.tar.gz
           generate_release_notes: true
