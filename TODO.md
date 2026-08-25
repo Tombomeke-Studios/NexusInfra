@@ -193,8 +193,8 @@ gateway work" above.)_
 > None of this is new work in the product sense — it is closing the gap between what the UI claims
 > and what the code does. Build **in order**; each is a feature branch + PR.
 
-- [ ] Network tab is hardcoded — render real port allocations, drop the fake SFTP host (#217) 🐛
-- [ ] Startup tab invents environment variables — show the server's own (#218) 🐛
+- [x] Network tab is hardcoded — render real port allocations, drop the fake SFTP host (#217) 🐛
+- [x] Startup tab invents environment variables — show the server's own (#218) 🐛
 - [ ] "Reinstall server" is a no-op — implement it or remove the card (#219) 🐛
 - [ ] A server's config cannot be edited after creation — `PATCH /deployments/:id` (#220)
 - [ ] Account settings page — change your own password (`/me` exists, nothing calls it) (#221)
