@@ -57,11 +57,16 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > **API Gateway** HTTP core (#20 — CORS, rate limiting, JWT, reverse proxy), **Delete server** wired end
 > to end (#156), Control Room health surfaced in the panel (#157) plus **uptime % / transitions** (#165).
 >
-> **⚠️ Not yet verified live:** the terminal's PTY/WebSocket path and the gateway are unit-tested but
-> have not been exercised against a running stack. Neither has the Phase 6 sharing flow: accounts,
-> roles, invitations and teams are covered by 451 unit tests, but the two-account walkthrough
-> (invite → operator starts the server → viewer is refused) has not been run against a live stack.
-> Do a `docker compose up -d --build` pass for both.
+> **✅ Verified live (community edition, from the release bundle):** the whole stack started from
+> published-image compose, every service reported `edition: community`, and the sharing flow was
+> walked end to end against a real `nginx:alpine` container — a stranger got **404** (not 403), an
+> **operator stopped and started the container for real** while being refused files-write, backups,
+> databases, subusers, delete and node registration, a **viewer** was refused control but could still
+> look, and **revoking access took effect on the next request**. Self-registration was refused in
+> community, and the served dashboard bundle contained **no billing code**.
+>
+>  **⚠️ Still not verified live:** the terminal's PTY/WebSocket path, the gateway proxy, and the
+> hosted edition (needs FinVault on a shared broker).
 >
 > **Phase 6 is complete (#173–#179) — the panel is multi-user and both editions are shippable.**
 > Real accounts replace the single hardcoded login, and **every** server route is now authorized:
