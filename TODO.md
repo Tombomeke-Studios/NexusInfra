@@ -137,7 +137,7 @@ gateway work" above.)_
 - [x] Access control — per-server roles enforced on every deployment route + the terminal WS (#175)
 - [x] Subuser invites bound to real accounts (pending until claimed) + `operator` role (#176)
 - [x] Teams — account-level sharing of servers (#177)
-- [ ] Role-aware dashboard — "Shared with me" + gate actions by permission (#178)
+- [x] Role-aware dashboard — "Shared with me" + actions gated by permission (#178)
 - [ ] Release pipeline — per-edition images on GHCR + `deploy/{community,hosted}` bundles (#179)
 
 ### 🐛 Bugs / fixes (open)

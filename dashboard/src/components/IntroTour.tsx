@@ -27,6 +27,14 @@ const STEPS: Step[] = [
     title: 'Tools for each server',
     body: 'Open a server to reach its live Console (real container logs), a real file browser, managed databases, live resource stats, and settings. Everything streams from the node running it.',
   },
+  {
+    title: 'Sharing a server',
+    body: 'A server’s Subusers tab invites someone by email and gives them a role: a viewer sees status and logs, an operator can also start, stop and restart it, and an admin manages everything except deleting it. Invite someone without an account yet and the invitation waits, granting nothing until they sign up with that address.',
+  },
+  {
+    title: 'Teams, for sharing more than once',
+    body: 'A team shares every server attached to it with everyone in it, so you don’t invite each person to each server. Create one on the Teams page, then attach a server from its Settings tab. Servers always stay owned by whoever created them — deleting a team never deletes a server.',
+  },
 ];
 
 export function IntroTour({ open, onClose }: { open: boolean; onClose: () => void }) {

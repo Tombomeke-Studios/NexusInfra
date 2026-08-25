@@ -26,7 +26,7 @@ checklist; every item carries its issue ref). The order matters and each step is
 1. ~~Edition flag reaches every service (#173)~~ — done.
 2. **Accounts (#174)** — real users, local identity behind an `AuthProvider` seam.
 3. ~~Access control (#175)~~ — done. Every server route declares a permission; no access answers 404.
-4. ~~Subuser invites bound to real accounts (#176)~~ · ~~teams (#177)~~ — done. Next: role-aware UI (#178).
+4. ~~Subuser invites bound to real accounts (#176)~~ · ~~teams (#177)~~ · ~~role-aware UI (#178)~~ — done.
 5. Release pipeline: per-edition images + `deploy/{community,hosted}` bundles (#179).
 
 **Vocabulary** — keep these distinct, they are two different things:
@@ -283,6 +283,7 @@ is the migrations directory.
 | `src/api.ts` | Typed Orchestrator client (login, nodes, deployments, create, stop); attaches the JWT; `ApiError` on non-2xx |
 | `src/session.ts` | Token get/set/clear + `isAuthenticated` (single place that touches the token in localStorage) |
 | `src/edition.tsx` | `EditionProvider` + `useEdition()` — reads `GET /config`, exposes `edition`/`isHosted` so billing UI renders only in hosted |
+| `src/permissions.ts` | The panel's copy of the server permission matrix (#178) — `can`/`permissionsFor`/`ROLE_LABELS`. **Mirrors `orchestrator/src/access.ts`; change both together.** An absent role means full access, so an owner is never locked out of their own server |
 | `src/prefs.ts` | Persisted client preferences (localStorage): first-run intro flag + customisable New Deployment defaults (`getDeploymentDefaults`) |
 | `src/gameSpec.ts` | Pure `buildGameDeployment` — maps the game picker to a real image + startup env/port (Minecraft/Valheim/Rust/CS2) |
 | `src/pages/Preferences.tsx` | Preferences page — edit/save/reset the New Deployment defaults |
@@ -344,6 +345,9 @@ is the migrations directory.
   A caller-supplied id is a caller-chosen identity.
 - **Never return a raw user record over HTTP** — go through `toPublicUser`, which drops the
   credential digest. The same applies to anything embedding a user.
+- **The dashboard's `permissions.ts` is a mirror, not a second source of truth.** It exists so the
+  panel doesn't offer buttons that would 403; change it in the same commit as `access.ts` or the two
+  drift. Hiding a control is never a security measure — the API is.
 - Heartbeat cadence: 1s pulse; Control Room thresholds: degraded ≥3s, offline ≥10s.
 - All timestamps are UTC ISO-8601 strings in event payloads.
 - Dockerfiles build from the **repo root** context (they copy `shared/` + the service dir).

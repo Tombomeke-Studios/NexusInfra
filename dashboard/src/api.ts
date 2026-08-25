@@ -32,6 +32,8 @@ export interface DeploymentView {
   name: string;
   dockerImage: string;
   type: string;
+  /** The account that owns this server — not necessarily the caller (#178). */
+  userId?: string;
   /** The team this server is shared with, if any (#177). */
   teamId?: string | null;
   /** The caller's role on this server (#175) — absent only on older responses. */
