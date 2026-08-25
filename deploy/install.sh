@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# NexusInfra installer (#192).
+# NexusInfra installer (#191).
 #
 # Picks an edition, generates the secrets, writes .env and offers to start the
 # stack. The alternative is asking people to read a README and hand-generate

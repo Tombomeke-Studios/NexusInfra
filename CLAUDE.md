@@ -310,7 +310,7 @@ is the migrations directory.
 | `docker-compose.yml` | RabbitMQ + control-room + node-agent + orchestrator + dashboard stack |
 | `vitest.workspace.ts` | Splits tests into `backend` (node) and `dashboard` (jsdom) projects |
 | `.env.example` | Env contract — documents the FinVault-shared vars (`RABBITMQ_URL`, `FINVAULT_MESSAGE_KEY`) |
-| `deploy/install.sh` · `deploy/install.ps1` | Release installer: picks an edition, generates `JWT_SECRET`/`INTERNAL_API_TOKEN`/admin password, writes `.env`, starts the stack. Never overwrites an existing `.env` unasked (#192) |
+| `deploy/install.sh` · `deploy/install.ps1` | Release installer: picks an edition, generates `JWT_SECRET`/`INTERNAL_API_TOKEN`/admin password, writes `.env`, starts the stack. Never overwrites an existing `.env` unasked (#191) |
 | `deploy/community/` · `deploy/hosted/` | Self-contained release bundles: compose pinned to published images + `.env.example` + README. Neither needs a checkout of this repo; both are attached to each GitHub release (#179) |
 | `.github/workflows/release.yml` | On a `v*` tag: re-run CI in both editions, then publish `nexusinfra-<service>:X.Y.Z-{community,hosted}` to GHCR. The dashboard is edition-neutral (one tag); `billing-bridge` builds hosted only (#179) |
 | `.github/workflows/ci.yml` | CI: npm ci → build → lint (if present) → test, on PRs and pushes to dev/staging/main |

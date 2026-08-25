@@ -1,4 +1,4 @@
-# NexusInfra installer for Windows (#192).
+# NexusInfra installer for Windows (#191).
 #
 # The PowerShell counterpart of install.sh — same questions, same result. Windows
 # is a first-class target here: the panel is commonly self-hosted on a desktop
