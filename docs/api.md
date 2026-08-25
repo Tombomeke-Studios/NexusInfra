@@ -148,14 +148,20 @@ Request:
   "env": {},
   "type": "app",
   "autoRestart": true,
+  "nodeId": "node-rack-1",
   "resourceLimits": { "cpuPercent": 50, "ramPercent": 50, "diskPercent": 50, "swapPercent": 0, "ioPriority": "normal", "restartPolicy": "on-failure", "oomKill": false }
 }
 ```
 
 `name` and `dockerImage` are required; the rest are optional and stored with the server config (#106) so
 a re-start reuses them. The limits ride on `server.start` and the Node Agent enforces them on the
-container — RAM/CPU caps, swap, block-I/O weight, restart policy and the OOM killer (#107). Responses:
-`201` with the deployment (including its event trail), `400` on missing fields, `503` when no healthy
+container — RAM/CPU caps, swap, block-I/O weight, restart policy and the OOM killer (#107).
+
+`nodeId` pins the server to a specific node (#254); omit it to let the Orchestrator place it on the
+least-loaded healthy node. A pin is honoured or refused, never silently reassigned — `400` for an
+unknown node, `409` for one that is not healthy.
+
+Responses: `201` with the deployment (including its event trail), `400` on missing fields, `503` when no healthy
 node is available. In the hosted edition, `409` when the plan's `maxServers` quota is reached (checked
 against the Billing Bridge; community edition never limits). On success the Orchestrator emits
 `infra.server.start` for the chosen node.

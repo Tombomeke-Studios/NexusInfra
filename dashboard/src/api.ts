@@ -81,6 +81,8 @@ export interface CreateDeploymentInput {
   resourceLimits?: ResourceLimits;
   autoRestart?: boolean;
   type?: string;
+  /** Pin the server to a node; omit to let the orchestrator pick the emptiest (#254). */
+  nodeId?: string;
 }
 
 /** Thrown when the API responds with a non-2xx status; carries the HTTP status. */

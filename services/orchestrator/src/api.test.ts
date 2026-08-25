@@ -142,6 +142,51 @@ describe('deployment API', () => {
     expect(nodes.body[0].health).toBe('healthy');
   });
 
+  // The panel's Placement control let you pin a server to a node, and the choice
+  // was never sent — the orchestrator always picked the least-loaded node (#254).
+  describe('placement', () => {
+    it('honours a pinned node instead of picking one', async () => {
+      await seedHealthyNode(repo, 'node-busy');
+      await seedHealthyNode(repo, 'node-idle');
+      // Make node-busy the loaded one, so least-loaded would never choose it.
+      await repo.upsertNode({ id: 'node-busy', lastHeartbeat: new Date().toISOString(), cpuPercent: 90, ramUsedMb: 7000, ramTotalMb: 8000 });
+
+      const res = await request(app).post('/deployments').send({ name: 'pinned', dockerImage: 'nginx', nodeId: 'node-busy' });
+      expect(res.status).toBe(201);
+      expect(res.body.nodeId).toBe('node-busy');
+
+      const start = published.find((p) => p.key === 'infra.server.start');
+      expect((readPayload(start!.envelope.event) as Record<string, unknown>).nodeId).toBe('node-busy');
+    });
+
+    it('still picks the least-loaded node when none is pinned', async () => {
+      await seedHealthyNode(repo, 'node-idle');
+      const res = await request(app).post('/deployments').send({ name: 'auto', dockerImage: 'nginx' });
+      expect(res.status).toBe(201);
+      expect(res.body.nodeId).toBe('node-idle');
+    });
+
+    it('refuses an unknown pinned node rather than silently placing it elsewhere', async () => {
+      await seedHealthyNode(repo, 'node-idle');
+      const res = await request(app).post('/deployments').send({ name: 'pinned', dockerImage: 'nginx', nodeId: 'node-ghost' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/node/i);
+      // Nothing was created or commanded.
+      expect(await repo.listDeployments()).toHaveLength(0);
+      expect(published.some((p) => p.key === 'infra.server.start')).toBe(false);
+    });
+
+    it('refuses a pinned node that is not healthy', async () => {
+      await seedHealthyNode(repo, 'node-idle');
+      // Registered but never seen — reads offline.
+      await repo.registerNode({ id: 'node-down' });
+
+      const res = await request(app).post('/deployments').send({ name: 'pinned', dockerImage: 'nginx', nodeId: 'node-down' });
+      expect(res.status).toBe(409);
+      expect(res.body.error).toMatch(/not healthy|offline/i);
+    });
+  });
+
   it('stops a running deployment by emitting server.stop', async () => {
     await seedHealthyNode(repo);
     const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });

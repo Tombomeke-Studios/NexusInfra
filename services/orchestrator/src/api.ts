@@ -168,7 +168,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   // Create a deployment: persist config, place it on the least-loaded node, and
   // command the agent to start it.
   router.post('/deployments', async (req: Request, res: Response) => {
-    const { name, dockerImage, ports, env, resourceLimits, autoRestart, type } = req.body ?? {};
+    const { name, dockerImage, ports, env, resourceLimits, autoRestart, type, nodeId } = req.body ?? {};
     if (typeof name !== 'string' || typeof dockerImage !== 'string' || !name || !dockerImage) {
       return res.status(400).json({ error: 'name and dockerImage are required' });
     }
@@ -181,7 +181,21 @@ export function createApiRouter(deps: ApiDeps): Router {
       return res.status(409).json({ error: `server quota reached for your plan (max ${serverQuota.limit})` });
     }
 
-    const node = selectNode(await repo.listNodes(), Date.now());
+    // Placement: a pinned node is honoured, anything else is least-loaded (#254).
+    // Pinning is a deliberate choice — an unknown or unhealthy target is refused
+    // rather than quietly reassigned, which is what made the picker a no-op.
+    const nodes = await repo.listNodes();
+    let node: NodeRecord | null;
+    if (typeof nodeId === 'string' && nodeId) {
+      const pinned = nodes.find((n) => n.id === nodeId);
+      if (!pinned) return res.status(400).json({ error: `unknown node ${nodeId}` });
+      if (nodeHealth(pinned, Date.now()) !== 'healthy') {
+        return res.status(409).json({ error: `node ${nodeId} is not healthy` });
+      }
+      node = pinned;
+    } else {
+      node = selectNode(nodes, Date.now());
+    }
     if (!node) {
       return res.status(503).json({ error: 'No healthy node available to place the deployment' });
     }
