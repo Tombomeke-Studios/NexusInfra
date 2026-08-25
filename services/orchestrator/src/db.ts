@@ -337,6 +337,23 @@ export class PrismaRepository implements Repository {
     }));
   }
 
+  async listDeploymentsForUser(user: { id: string; email: string }): Promise<DeploymentView[]> {
+    const rows = await this.client.deployment.findMany({
+      where: {
+        OR: [{ serverConfig: { userId: user.id } }, { subusers: { some: { email: user.email } } }],
+      },
+      include: { serverConfig: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return rows.map((d) => ({
+      ...toDeploymentRecord(d),
+      name: d.serverConfig.name,
+      dockerImage: d.serverConfig.dockerImage,
+      userId: d.serverConfig.userId,
+      type: d.serverConfig.type,
+    }));
+  }
+
   async getDeploymentConfig(deploymentId: string): Promise<ServerConfigRecord | null> {
     const d = await this.client.deployment.findUnique({
       where: { id: deploymentId },
@@ -456,6 +473,11 @@ export class PrismaRepository implements Repository {
 
   async getSubuser(id: string): Promise<ServerSubuserRecord | null> {
     const s = await this.client.serverSubuser.findUnique({ where: { id } });
+    return s ? toSubuserRecord(s) : null;
+  }
+
+  async getSubuserFor(deploymentId: string, email: string): Promise<ServerSubuserRecord | null> {
+    const s = await this.client.serverSubuser.findUnique({ where: { deploymentId_email: { deploymentId, email } } });
     return s ? toSubuserRecord(s) : null;
   }
 

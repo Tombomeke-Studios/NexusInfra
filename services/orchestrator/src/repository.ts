@@ -195,6 +195,13 @@ export class InMemoryRepository implements Repository {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
+  async listDeploymentsForUser(user: { id: string; email: string }): Promise<DeploymentView[]> {
+    const sharedWith = new Set(
+      [...this.subusers.values()].filter((s) => s.email === user.email).map((s) => s.deploymentId)
+    );
+    return (await this.listDeployments()).filter((d) => d.userId === user.id || sharedWith.has(d.id));
+  }
+
   async getDeployment(id: string): Promise<DeploymentDetail | null> {
     const deployment = this.deployments.get(id);
     if (!deployment) return null;
@@ -356,6 +363,10 @@ export class InMemoryRepository implements Repository {
 
   async getSubuser(id: string): Promise<ServerSubuserRecord | null> {
     return this.subusers.get(id) ?? null;
+  }
+
+  async getSubuserFor(deploymentId: string, email: string): Promise<ServerSubuserRecord | null> {
+    return [...this.subusers.values()].find((s) => s.deploymentId === deploymentId && s.email === email) ?? null;
   }
 
   async updateSubuserRole(id: string, role: string): Promise<ServerSubuserRecord | null> {
