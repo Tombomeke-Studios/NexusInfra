@@ -11,7 +11,8 @@ import { pipeSockets, toWsUrl, type DuplexSocket } from './wsProxy.js';
 import { createBillingProxyRouter } from './billingProxy.js';
 import { createMonitoringRouter } from './monitoring.js';
 import { createConfigRouter } from './config.js';
-import { createAuthRouter, requireAuth } from './auth.js';
+import { createAccountRouter, createAuthRouter, createUserAdminRouter, requireAuth } from './auth.js';
+import { createUserService } from './users.js';
 import { createNodeRegistry } from './nodeRegistry.js';
 import { createLifecycle } from './lifecycle.js';
 import { createSuspendHandler, type SuspendPayload } from './suspend.js';
@@ -35,6 +36,7 @@ async function agentUrlFor(nodeId: string | null): Promise<string> {
   return resolveAgentUrl(node, NODE_AGENT_URL);
 }
 
+const users = createUserService({ repo });
 const registry = createNodeRegistry(repo);
 const lifecycle = createLifecycle(repo);
 const suspend = createSuspendHandler({ repo });
@@ -71,9 +73,11 @@ app.get('/health', (_req, res) => {
 });
 // Public runtime config (edition flag) — read by the dashboard before login.
 app.use(createConfigRouter());
-// Public login, then everything below requires a valid Bearer token.
-app.use(createAuthRouter());
+// Public login/registration, then everything below requires a valid Bearer token.
+app.use(createAuthRouter({ users }));
 app.use(requireAuth);
+app.use(createAccountRouter({ users, repo }));
+app.use(createUserAdminRouter({ users, repo }));
 app.use(createApiRouter({ repo, scheduleActions }));
 // Authenticated billing proxy → Billing Bridge (hosted edition; injects the JWT user id).
 app.use(createBillingProxyRouter());
@@ -134,6 +138,24 @@ server.on('upgrade', async (req, socket, head) => {
 });
 
 server.listen(PORT, () => console.log(`[Orchestrator] HTTP + WS listening on http://localhost:${PORT}`));
+
+// ── First-run bootstrap ───────────────────────────────────────────────────────
+// Make sure there is always exactly one way in on a fresh install, and repair the
+// backfilled owner (which has no usable password) on an upgraded one.
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@local';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
+
+void users
+  .bootstrapOwner({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD })
+  .then((outcome) => {
+    if (outcome !== 'exists') {
+      console.log(`[Orchestrator] Administrator account ${outcome === 'created' ? 'created' : 'password set'}: ${ADMIN_EMAIL}`);
+    }
+    if (!process.env.ADMIN_PASSWORD) {
+      console.warn('[Orchestrator] WARNING: administrator password is the built-in default. Set ADMIN_PASSWORD before exposing this panel.');
+    }
+  })
+  .catch((err) => console.error('[Orchestrator] Could not bootstrap the administrator account:', err instanceof Error ? err.message : err));
 
 // Evaluate schedules once a minute (restart/backup on a cron).
 startScheduler(repo, scheduleActions);

@@ -24,7 +24,11 @@ export interface MatchedRoute {
 export function defaultRoutes(orchestrator: string): RouteRule[] {
   return [
     { prefix: '/config', target: orchestrator, public: true },
+    // Login and registration must be reachable without a token; the Orchestrator
+    // decides whether registration is open for this edition (#174).
     { prefix: '/auth', target: orchestrator, public: true },
+    { prefix: '/me', target: orchestrator },
+    { prefix: '/users', target: orchestrator },
     { prefix: '/deployments', target: orchestrator },
     { prefix: '/nodes', target: orchestrator },
     { prefix: '/monitoring', target: orchestrator },
