@@ -100,6 +100,38 @@ describe('InMemoryRepository', () => {
     expect(saved?.resourceLimits).toEqual({ cpuPercent: 40, ramPercent: 60, restartPolicy: 'on-failure', oomKill: true });
   });
 
+  // The detail view is what the server-detail page renders. Without the runtime
+  // configuration on it, the Network and Startup tabs had nothing real to show
+  // and rendered invented values instead (#217, #218).
+  it('carries the runtime configuration on the detail view', async () => {
+    const config = await repo.createServerConfig({
+      userId: 'dev-user',
+      name: 'web',
+      dockerImage: 'nginx:alpine',
+      ports: { '8080': '80' },
+      env: { LOG_LEVEL: 'debug' },
+      autoRestart: true,
+      resourceLimits: { cpuPercent: 40, ramPercent: 60 },
+    });
+    const deployment = await repo.createDeployment(config.id, 'node-1');
+
+    const detail = await repo.getDeployment(deployment.id);
+    expect(detail?.ports).toEqual({ '8080': '80' });
+    expect(detail?.env).toEqual({ LOG_LEVEL: 'debug' });
+    expect(detail?.resourceLimits).toEqual({ cpuPercent: 40, ramPercent: 60 });
+    expect(detail?.autoRestart).toBe(true);
+  });
+
+  it('defaults the detail view configuration to empty rather than omitting it', async () => {
+    const config = await repo.createServerConfig({ userId: 'u', name: 'svc', dockerImage: 'nginx' });
+    const deployment = await repo.createDeployment(config.id, 'node-1');
+
+    const detail = await repo.getDeployment(deployment.id);
+    expect(detail?.ports).toEqual({});
+    expect(detail?.env).toEqual({});
+    expect(detail?.autoRestart).toBe(false);
+  });
+
   it('defaults resourceLimits to an empty object when omitted', async () => {
     const config = await repo.createServerConfig({ userId: 'u', name: 'svc', dockerImage: 'nginx' });
     expect(config.resourceLimits).toEqual({});

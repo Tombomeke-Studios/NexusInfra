@@ -603,13 +603,18 @@ export class PrismaRepository implements Repository {
       include: { serverConfig: true, events: { orderBy: { timestamp: 'asc' } } },
     });
     if (!d) return null;
+    const config = toConfigRecord(d.serverConfig);
     return {
       ...toDeploymentRecord(d),
-      name: d.serverConfig.name,
-      dockerImage: d.serverConfig.dockerImage,
-      userId: d.serverConfig.userId,
-      teamId: d.serverConfig.teamId,
-      type: d.serverConfig.type,
+      name: config.name,
+      dockerImage: config.dockerImage,
+      userId: config.userId,
+      teamId: config.teamId,
+      type: config.type,
+      ports: config.ports,
+      env: config.env,
+      resourceLimits: config.resourceLimits,
+      autoRestart: config.autoRestart,
       events: d.events.map((e) => ({
         id: e.id,
         deploymentId: e.deploymentId,
