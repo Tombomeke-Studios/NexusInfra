@@ -46,6 +46,15 @@ RUN npm run build --workspace=services/control-room \
 RUN npm run build --workspace=dashboard \
  && cd dashboard && node scripts/verify-edition.mjs "$NEXUS_EDITION"
 
+# Drop the build tooling before the runtime stage copies node_modules.
+# TypeScript, tsx, Babel, esbuild, vite and vitest are all needed to *produce*
+# the image and useless inside it, and shipping them means every user downloads
+# a compiler they will never run (#204).
+#
+# The Prisma CLI survives this on purpose: it is a real dependency, because
+# migrations are applied when the container starts.
+RUN npm prune --omit=dev
+
 # ── Runtime ──────────────────────────────────────────────────────────────────
 FROM node:18-slim
 
