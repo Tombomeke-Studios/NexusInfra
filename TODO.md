@@ -196,6 +196,18 @@ gateway work" above.)_
 - [x] Network tab is hardcoded — render real port allocations, drop the fake SFTP host (#217) 🐛
 - [x] Startup tab invents environment variables — show the server's own (#218) 🐛
 - [x] "Reinstall server" is a no-op — removed; Start already recreates from config (#219) 🐛
+
+**Second sweep — the panel fabricates telemetry.** Worse than the tabs: when a real stream fails,
+the panel does not say so, it *invents plausible data*. A broken node shows drifting meters and
+scrolling log lines describing events that never happened.
+
+- [ ] Live CPU/RAM/network are invented when the stats stream fails (#250) 🐛
+- [ ] The console invents log lines when the log stream fails (#251) 🐛
+- [ ] Player count and TPS are fabricated for every game server (#252) 🐛
+- [ ] Kill button is a no-op — unlike Reinstall, this one is worth building (#253) 🐛
+- [ ] Placement picker is ignored — a pinned node is silently overruled (#254) 🐛
+- [ ] The startup command field is never sent anywhere (#255) 🐛
+- [ ] Feature limit sliders (databases/backups) are never sent or enforced (#256) 🐛
 - [ ] A server's config cannot be edited after creation — `PATCH /deployments/:id` (#220)
 - [ ] Account settings page — change your own password (`/me` exists, nothing calls it) (#221)
 - [ ] Admin user management page — list/create accounts without curl (#222)
