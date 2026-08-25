@@ -48,7 +48,11 @@ export function accessGuard(repo: Repository) {
     const share = caller ? await repo.getSubuserFor(deployment.id, caller.email) : null;
     const grant = share?.status === 'active' && share.userId === principal.id ? share : null;
 
-    const role = resolveRole({ principal, ownerId: deployment.userId, grant });
+    // A server may also be shared with a team (#177); membership of it grants the
+    // member's team role. Where both apply, access.ts takes the stronger.
+    const membership = deployment.teamId ? await repo.getTeamMember(deployment.teamId, principal.id) : null;
+
+    const role = resolveRole({ principal, ownerId: deployment.userId, teamId: deployment.teamId, grant, membership });
     if (!role) {
       res.status(404).json({ error: 'deployment not found' });
       return;

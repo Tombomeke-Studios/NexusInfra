@@ -19,6 +19,9 @@ import type {
   ServerDatabaseRecord,
   ServerScheduleRecord,
   ServerSubuserRecord,
+  TeamMemberRecord,
+  TeamMemberView,
+  TeamRecord,
   UpdateServerScheduleInput,
   UpsertNodeInput,
   UserRecord,
@@ -33,6 +36,8 @@ import type {
  */
 export class InMemoryRepository implements Repository {
   private users = new Map<string, UserRecord>();
+  private teams = new Map<string, TeamRecord>();
+  private teamMembers = new Map<string, TeamMemberRecord>();
   private nodes = new Map<string, NodeRecord>();
   private configs = new Map<string, ServerConfigRecord>();
   private deployments = new Map<string, DeploymentRecord>();
@@ -71,6 +76,62 @@ export class InMemoryRepository implements Repository {
     const updated = { ...user, passwordHash };
     this.users.set(id, updated);
     return updated;
+  }
+
+  // ── Teams (#177) ────────────────────────────────────────────────────────────
+  async createTeam(input: { id: string; name: string; ownerId: string }): Promise<TeamRecord> {
+    const team: TeamRecord = { ...input, createdAt: new Date().toISOString() };
+    this.teams.set(team.id, team);
+    return team;
+  }
+
+  async getTeam(id: string): Promise<TeamRecord | null> {
+    return this.teams.get(id) ?? null;
+  }
+
+  async listTeamsForUser(userId: string): Promise<TeamRecord[]> {
+    const memberOf = new Set([...this.teamMembers.values()].filter((m) => m.userId === userId).map((m) => m.teamId));
+    return [...this.teams.values()].filter((t) => t.ownerId === userId || memberOf.has(t.id));
+  }
+
+  async deleteTeam(id: string): Promise<void> {
+    for (const [key, m] of this.teamMembers) if (m.teamId === id) this.teamMembers.delete(key);
+    // Detach the team's servers so they stay reachable by their owner.
+    for (const [key, c] of this.configs) if (c.teamId === id) this.configs.set(key, { ...c, teamId: null });
+    this.teams.delete(id);
+  }
+
+  async addTeamMember(input: { teamId: string; userId: string; role: string }): Promise<TeamMemberRecord> {
+    const existing = [...this.teamMembers.values()].find((m) => m.teamId === input.teamId && m.userId === input.userId);
+    const member: TeamMemberRecord = {
+      id: existing?.id ?? randomUUID(),
+      ...input,
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
+    };
+    this.teamMembers.set(member.id, member);
+    return member;
+  }
+
+  async listTeamMembers(teamId: string): Promise<TeamMemberView[]> {
+    return [...this.teamMembers.values()]
+      .filter((m) => m.teamId === teamId)
+      .map((m) => {
+        const user = this.users.get(m.userId);
+        return { ...m, email: user?.email ?? '', displayName: user?.displayName ?? m.userId };
+      });
+  }
+
+  async getTeamMember(teamId: string, userId: string): Promise<TeamMemberRecord | null> {
+    return [...this.teamMembers.values()].find((m) => m.teamId === teamId && m.userId === userId) ?? null;
+  }
+
+  async removeTeamMember(teamId: string, userId: string): Promise<void> {
+    for (const [key, m] of this.teamMembers) if (m.teamId === teamId && m.userId === userId) this.teamMembers.delete(key);
+  }
+
+  async setServerTeam(serverConfigId: string, teamId: string | null): Promise<void> {
+    const config = this.configs.get(serverConfigId);
+    if (config) this.configs.set(serverConfigId, { ...config, teamId });
   }
 
   async upsertNode(input: UpsertNodeInput): Promise<NodeRecord> {
@@ -135,6 +196,7 @@ export class InMemoryRepository implements Repository {
     const config: ServerConfigRecord = {
       id: randomUUID(),
       userId: input.userId,
+      teamId: input.teamId ?? null,
       name: input.name,
       dockerImage: input.dockerImage,
       ports: input.ports ?? {},
@@ -200,7 +262,11 @@ export class InMemoryRepository implements Repository {
     const sharedWith = new Set(
       [...this.subusers.values()].filter((s) => s.userId === user.id && s.status === 'active').map((s) => s.deploymentId)
     );
-    return (await this.listDeployments()).filter((d) => d.userId === user.id || sharedWith.has(d.id));
+    // Plus everything shared with a team they belong to (#177).
+    const myTeams = new Set([...this.teamMembers.values()].filter((m) => m.userId === user.id).map((m) => m.teamId));
+    return (await this.listDeployments()).filter(
+      (d) => d.userId === user.id || sharedWith.has(d.id) || (d.teamId !== null && myTeams.has(d.teamId))
+    );
   }
 
   async getDeployment(id: string): Promise<DeploymentDetail | null> {
@@ -398,6 +464,6 @@ export class InMemoryRepository implements Repository {
   private toView(d: DeploymentRecord): DeploymentView | null {
     const config = this.configs.get(d.serverConfigId);
     if (!config) return null;
-    return { ...d, name: config.name, dockerImage: config.dockerImage, userId: config.userId, type: config.type };
+    return { ...d, name: config.name, dockerImage: config.dockerImage, userId: config.userId, teamId: config.teamId, type: config.type };
   }
 }

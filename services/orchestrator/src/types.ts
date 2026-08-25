@@ -48,6 +48,8 @@ export interface NodeRecord {
 export interface ServerConfigRecord {
   id: string;
   userId: string;
+  /** The team this server is shared with, if any (#177). */
+  teamId: string | null;
   name: string;
   dockerImage: string;
   ports: Record<string, string>;
@@ -74,6 +76,7 @@ export interface DeploymentView extends DeploymentRecord {
   name: string;
   dockerImage: string;
   userId: string;
+  teamId: string | null;
   type: string;
 }
 
@@ -124,6 +127,28 @@ export interface CreateServerBackupInput {
 }
 
 export type SubuserRole = 'admin' | 'viewer';
+
+/** A group that shares servers (#177). */
+export interface TeamRecord {
+  id: string;
+  name: string;
+  ownerId: string;
+  createdAt: string;
+}
+
+export interface TeamMemberRecord {
+  id: string;
+  teamId: string;
+  userId: string;
+  role: string;
+  createdAt: string;
+}
+
+/** A member joined with the account behind it — what the Teams page renders. */
+export interface TeamMemberView extends TeamMemberRecord {
+  email: string;
+  displayName: string;
+}
 
 /** `pending` = invited but not yet bound to an account, and carries no access (#176). */
 export type SubuserStatus = 'pending' | 'active';
@@ -203,6 +228,7 @@ export interface UpsertNodeInput {
 
 export interface CreateServerConfigInput {
   userId: string;
+  teamId?: string | null;
   name: string;
   dockerImage: string;
   ports?: Record<string, string>;
@@ -241,6 +267,20 @@ export interface Repository {
   listUsers(): Promise<UserRecord[]>;
   countUsers(): Promise<number>;
   setUserPassword(id: string, passwordHash: string): Promise<UserRecord | null>;
+
+  // Teams (#177).
+  createTeam(input: { id: string; name: string; ownerId: string }): Promise<TeamRecord>;
+  getTeam(id: string): Promise<TeamRecord | null>;
+  /** Teams this person owns or belongs to. */
+  listTeamsForUser(userId: string): Promise<TeamRecord[]>;
+  deleteTeam(id: string): Promise<void>;
+  addTeamMember(input: { teamId: string; userId: string; role: string }): Promise<TeamMemberRecord>;
+  listTeamMembers(teamId: string): Promise<TeamMemberView[]>;
+  /** This person's standing in one team, if they belong to it — the authorization lookup. */
+  getTeamMember(teamId: string, userId: string): Promise<TeamMemberRecord | null>;
+  removeTeamMember(teamId: string, userId: string): Promise<void>;
+  /** Attach a server to a team, or detach it with null. */
+  setServerTeam(serverConfigId: string, teamId: string | null): Promise<void>;
 
   upsertNode(input: UpsertNodeInput): Promise<NodeRecord>;
   listNodes(): Promise<NodeRecord[]>;

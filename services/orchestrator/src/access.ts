@@ -109,6 +109,8 @@ export interface AccessInput {
   principal: { id: string; platformRole: PlatformRole };
   /** The account that owns the server. */
   ownerId: string;
+  /** The team this server is shared with, if any (#177). */
+  teamId?: string | null;
   /** A direct share on this server, if the caller has one. */
   grant?: { role: string } | null;
   /** The caller's membership of the team this server is shared with, if any (#177). */
