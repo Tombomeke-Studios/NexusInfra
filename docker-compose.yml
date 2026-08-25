@@ -24,6 +24,7 @@ services:
       - "9000:9000"
     environment:
       - PORT=9000
+      - NEXUS_EDITION=${NEXUS_EDITION:-community}
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
     depends_on:
@@ -41,6 +42,7 @@ services:
       - "9100:9100"
     environment:
       - PORT=9100
+      - NEXUS_EDITION=${NEXUS_EDITION:-community}
       - NODE_ID=node-local
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
@@ -64,6 +66,9 @@ services:
       - "9200:9200"
     environment:
       - PORT=9200
+      # Must match every other service's edition — the Orchestrator serves
+      # GET /config to the dashboard and gates plan-quota checks on it (#173).
+      - NEXUS_EDITION=${NEXUS_EDITION:-community}
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
       - DATABASE_URL=file:/data/orchestrator.db
@@ -113,6 +118,7 @@ services:
       - "9400:9400"
     environment:
       - PORT=9400
+      - NEXUS_EDITION=${NEXUS_EDITION:-community}
       - ORCHESTRATOR_URL=http://orchestrator:9200
       - JWT_SECRET=${JWT_SECRET:-dev-secret}
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
