@@ -24,6 +24,14 @@ COPY --from=builder /app/services/billing-bridge/prisma ./services/billing-bridg
 # prisma (CLI, for migrate deploy) + @prisma/client are runtime deps; the
 # postinstall regenerates the client against the copied schema.
 RUN npm install --omit=dev
+# Build identity (#179). These are defaults the release workflow bakes in — the
+# runtime environment can still override NEXUS_EDITION, so one image is never
+# locked to an edition; the per-edition tags exist to make the intended one
+# obvious rather than to enforce it.
+ARG APP_VERSION=0.0.0-dev
+ARG NEXUS_EDITION=community
+ENV APP_VERSION=$APP_VERSION
+ENV NEXUS_EDITION=$NEXUS_EDITION
 ENV PORT=9300
 ENV DATABASE_URL=file:./billing.db
 ENV NEXUS_EDITION=community

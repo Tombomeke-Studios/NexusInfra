@@ -27,7 +27,9 @@ checklist; every item carries its issue ref). The order matters and each step is
 2. **Accounts (#174)** — real users, local identity behind an `AuthProvider` seam.
 3. ~~Access control (#175)~~ — done. Every server route declares a permission; no access answers 404.
 4. ~~Subuser invites bound to real accounts (#176)~~ · ~~teams (#177)~~ · ~~role-aware UI (#178)~~ — done.
-5. Release pipeline: per-edition images + `deploy/{community,hosted}` bundles (#179).
+5. ~~Release pipeline: per-edition images + `deploy/{community,hosted}` bundles (#179)~~ — done.
+
+**Phase 6 is complete.** Tag `vX.Y.Z` on `main` to cut a release; see [docs/deployment.md](docs/deployment.md).
 
 **Vocabulary** — keep these distinct, they are two different things:
 - **Platform role** (`owner` / `admin` / `user`) — panel-wide standing: who may manage nodes and
@@ -305,6 +307,8 @@ is the migrations directory.
 | `docker-compose.yml` | RabbitMQ + control-room + node-agent + orchestrator + dashboard stack |
 | `vitest.workspace.ts` | Splits tests into `backend` (node) and `dashboard` (jsdom) projects |
 | `.env.example` | Env contract — documents the FinVault-shared vars (`RABBITMQ_URL`, `FINVAULT_MESSAGE_KEY`) |
+| `deploy/community/` · `deploy/hosted/` | Self-contained release bundles: compose pinned to published images + `.env.example` + README. Neither needs a checkout of this repo; both are attached to each GitHub release (#179) |
+| `.github/workflows/release.yml` | On a `v*` tag: re-run CI in both editions, then publish `nexusinfra-<service>:X.Y.Z-{community,hosted}` to GHCR. The dashboard is edition-neutral (one tag); `billing-bridge` builds hosted only (#179) |
 | `.github/workflows/ci.yml` | CI: npm ci → build → lint (if present) → test, on PRs and pushes to dev/staging/main |
 | `eslint.config.js` | Flat ESLint config (typescript-eslint recommended) covering all workspaces |
 
