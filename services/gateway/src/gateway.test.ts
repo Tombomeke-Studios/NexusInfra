@@ -8,7 +8,12 @@ import { RateLimiter } from './rateLimit.js';
 const TARGET = 'http://orchestrator:9200';
 const SECRET = 'test-secret';
 const routes = defaultRoutes(TARGET);
-const token = () => jwt.sign({ sub: 'user-1' }, SECRET);
+// Signed once, deliberately. jwt.sign stamps `iat` with second granularity,
+// so signing separately for the request and for the assertion produces two
+// different strings whenever the calls straddle a second boundary — which is
+// exactly the intermittent failure this used to cause (#208).
+const TOKEN = jwt.sign({ sub: 'user-1' }, SECRET);
+const token = () => TOKEN;
 
 function upstream(body: unknown, status = 200) {
   return {
