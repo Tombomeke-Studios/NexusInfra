@@ -1,0 +1,192 @@
+// Orchestrator persistence — Prisma + SQLite (FinVault pattern, PostgreSQL-ready).
+// This schema (and its generated migrations/) is the source of truth for the data
+// model; docs describe it in prose only (see CLAUDE.md documentation rules).
+//
+// Entities mirror CONCEPTS/infrastructure-platform/functional-analysis.md §2.2.
+// JSON-shaped columns (ports, environmentVars, resourceLimits) are stored as
+// serialized strings because SQLite has no native JSON type.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// A person who can sign in to the panel (#174). Identity is local: the
+// Orchestrator stores the credential and issues the JWT. `platformRole` is
+// panel-wide standing (who may manage nodes and see every server), distinct from
+// the per-server role a user holds on an individual deployment.
+//
+// `id` is deliberately free-form rather than always a UUID: the backfill
+// migration seeds rows whose ids are the legacy `ServerConfig.userId` strings
+// ("admin", "dev-user") so existing deployments keep a valid owner.
+model User {
+  id           String   @id
+  email        String   @unique
+  displayName  String
+  passwordHash String
+  platformRole String   @default("user")
+  createdAt    DateTime @default(now())
+}
+
+// A group of people who share servers (#177). Per-server invitations cover
+// one-off sharing; a team means "everyone here gets my servers" without
+// re-inviting each person to each one. A server is still owned by an individual
+// and is optionally shared to one team, so ownership never becomes ambiguous.
+model Team {
+  id        String       @id
+  name      String
+  ownerId   String
+  createdAt DateTime     @default(now())
+  members   TeamMember[]
+  servers   ServerConfig[]
+}
+
+// Somebody's standing inside a team, which becomes their role on every server
+// that team is shared with.
+model TeamMember {
+  id        String   @id
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId    String
+  userId    String
+  role      String   @default("viewer")
+  createdAt DateTime @default(now())
+
+  @@unique([teamId, userId])
+}
+
+// A Docker host the Orchestrator can place containers on. Rows are maintained
+// from node heartbeats (monitoring.heartbeat.node.#), not created by hand.
+model Node {
+  id            String       @id
+  name          String
+  location      String?
+  ipAddress     String?
+  agentUrl      String?
+  lastHeartbeat DateTime
+  cpuPercent    Float?
+  ramUsedMb     Float?
+  ramTotalMb    Float?
+  diskUsedGb    Float?
+  diskTotalGb   Float?
+  createdAt     DateTime     @default(now())
+  deployments   Deployment[]
+}
+
+// A user's desired server (image + runtime config). One config can be deployed
+// many times over its lifetime.
+model ServerConfig {
+  id              String       @id
+  userId          String
+  // Detaching rather than cascading: deleting a team must never delete servers.
+  team            Team?        @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  teamId          String?
+  name            String
+  dockerImage     String
+  ports           String       @default("{}")
+  environmentVars String       @default("{}")
+  resourceLimits  String       @default("{}")
+  autoRestart     Boolean      @default(false)
+  type            String       @default("generic")
+  createdAt       DateTime     @default(now())
+  deployments     Deployment[]
+}
+
+// A single placement of a ServerConfig onto a Node. Status transitions:
+// pending -> running -> stopped, or -> crashed / failed.
+model Deployment {
+  id             String            @id
+  serverConfig   ServerConfig      @relation(fields: [serverConfigId], references: [id])
+  serverConfigId String
+  node           Node?             @relation(fields: [nodeId], references: [id])
+  nodeId         String?
+  containerId    String?
+  status         String            @default("pending")
+  startedAt      DateTime?
+  stoppedAt      DateTime?
+  createdAt      DateTime          @default(now())
+  events         DeploymentEvent[]
+  databases      ServerDatabase[]
+  backups        ServerBackup[]
+  schedules      ServerSchedule[]
+  subusers       ServerSubuser[]
+}
+
+// A person granted access to a server, with a role (#112). These are the grants
+// access.ts resolves on every request (#175).
+//
+// An invitation is addressed to an email, which may not correspond to an account
+// yet — you should be able to share a server with someone before they have signed
+// up. Such a grant stays pending and carries no access; it is bound to the
+// account and activated the moment that person appears (#176). The address is
+// kept either way, so revoking by email works in both states.
+model ServerSubuser {
+  id           String     @id
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+  deploymentId String
+  email        String
+  userId       String?
+  status       String     @default("pending")
+  role         String     @default("viewer")
+  createdAt    DateTime   @default(now())
+
+  @@unique([deploymentId, email])
+}
+
+// A recurring task for a server, evaluated by the orchestrator's scheduler on a
+// 5-field cron expression (#111). Actions: restart the server or snapshot a backup.
+model ServerSchedule {
+  id           String     @id
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+  deploymentId String
+  name         String
+  cron         String
+  action       String
+  enabled      Boolean    @default(true)
+  lastRunAt    DateTime?
+  createdAt    DateTime   @default(now())
+}
+
+// A point-in-time snapshot of a server's data directory, stored as a tar on the
+// owning node and restorable back into the container (#110).
+model ServerBackup {
+  id           String     @id
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+  deploymentId String
+  name         String
+  path         String
+  ref          String
+  sizeBytes    Int        @default(0)
+  status       String     @default("ready")
+  createdAt    DateTime   @default(now())
+}
+
+// A managed database provisioned for a server: its own engine container with
+// generated credentials, started by the owning node agent (#109).
+model ServerDatabase {
+  id           String     @id
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+  deploymentId String
+  engine       String
+  name         String
+  username     String
+  password     String
+  host         String
+  port         Int
+  containerId  String?
+  status       String     @default("running")
+  createdAt    DateTime   @default(now())
+}
+
+// Append-only audit trail for a deployment's lifecycle.
+model DeploymentEvent {
+  id           String     @id
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+  deploymentId String
+  event        String
+  message      String
+  timestamp    DateTime   @default(now())
+}

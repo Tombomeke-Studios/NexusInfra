@@ -1,0 +1,148 @@
+services:
+  # Standalone RabbitMQ for local NexusInfra dev.
+  # In a combined deployment with FinVault, omit this service and point
+  # control-room's RABBITMQ_URL at FinVault's `finvault-rabbitmq` container so
+  # both platforms share the same `finvault.events` topic exchange.
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: nexusinfra-rabbitmq
+    ports:
+      - "5672:5672"   # AMQP protocol
+      - "15672:15672" # Management dashboard
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+  control-room:
+    build:
+      context: .
+      dockerfile: services/control-room/Dockerfile
+    container_name: nexusinfra-control-room
+    ports:
+      - "9000:9000"
+    environment:
+      - PORT=9000
+      - NEXUS_EDITION=${NEXUS_EDITION:-community}
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
+    depends_on:
+      - rabbitmq
+
+  node-agent:
+    build:
+      context: .
+      dockerfile: services/node-agent/Dockerfile
+    container_name: nexusinfra-node-agent
+    # Publishing 9100 is a dev convenience for poking the internal API directly.
+    # It is NOT needed in production — the Orchestrator reaches the agent over the
+    # compose network. Drop this mapping there to keep the surface off the host.
+    ports:
+      - "9100:9100"
+    environment:
+      - PORT=9100
+      - NEXUS_EDITION=${NEXUS_EDITION:-community}
+      - NODE_ID=node-local
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
+      # Must match the Orchestrator's value (#169).
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-dev-internal-token}
+      # Advertised on the heartbeat so the Orchestrator routes this node's
+      # deployments to this agent (#171). Uses the compose service DNS name.
+      - AGENT_URL=http://node-agent:9100
+    # The agent drives the host Docker daemon, so it needs the socket mounted.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - rabbitmq
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: services/orchestrator/Dockerfile
+    container_name: nexusinfra-orchestrator
+    ports:
+      - "9200:9200"
+    environment:
+      - PORT=9200
+      # Must match every other service's edition — the Orchestrator serves
+      # GET /config to the dashboard and gates plan-quota checks on it (#173).
+      - NEXUS_EDITION=${NEXUS_EDITION:-community}
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
+      - DATABASE_URL=file:/data/orchestrator.db
+      - JWT_SECRET=${JWT_SECRET:-dev-secret}
+      # Administrator seeded on first start (#174). Override before exposing the
+      # panel — the default password is well known and warns on every start.
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@local}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+      - NODE_AGENT_URL=http://node-agent:9100
+      - CONTROL_ROOM_URL=http://control-room:9000
+      - BILLING_BRIDGE_URL=http://billing-bridge:9300
+      # Must match the Node Agent's value (#169).
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-dev-internal-token}
+    volumes:
+      - orchestrator_data:/data
+    depends_on:
+      - rabbitmq
+
+  # Billing Bridge — hosted edition only. With NEXUS_EDITION=community (default)
+  # it stays inert (health only, no billing); set it to `hosted` to turn on
+  # usage tracking, the credit wallet and the FinVault top-up flow.
+  billing-bridge:
+    build:
+      context: .
+      dockerfile: services/billing-bridge/Dockerfile
+    container_name: nexusinfra-billing-bridge
+    ports:
+      - "9300:9300"
+    environment:
+      - PORT=9300
+      - NEXUS_EDITION=${NEXUS_EDITION:-community}
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
+      - DATABASE_URL=file:/data/billing.db
+      - BILLING_WALLET_ID=${BILLING_WALLET_ID:-nexusinfra}
+    volumes:
+      - billing_data:/data
+    depends_on:
+      - rabbitmq
+
+  # API Gateway (#20) — single external entry point: CORS, per-client rate
+  # limiting, JWT validation, and a reverse proxy to the Orchestrator. Available
+  # on :9400; the dashboard still calls the Orchestrator directly for now (rewire
+  # nginx /api → gateway once the WS terminal proxy lands).
+  gateway:
+    build:
+      context: .
+      dockerfile: services/gateway/Dockerfile
+    container_name: nexusinfra-gateway
+    ports:
+      - "9400:9400"
+    environment:
+      - PORT=9400
+      - NEXUS_EDITION=${NEXUS_EDITION:-community}
+      - ORCHESTRATOR_URL=http://orchestrator:9200
+      - JWT_SECRET=${JWT_SECRET:-dev-secret}
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
+    depends_on:
+      - orchestrator
+      - rabbitmq
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: nexusinfra-dashboard
+    ports:
+      - "8095:80"
+    # nginx proxies /api to the orchestrator service (see dashboard/nginx.conf).
+    depends_on:
+      - orchestrator
+
+volumes:
+  rabbitmq_data:
+  orchestrator_data:
+  billing_data:
