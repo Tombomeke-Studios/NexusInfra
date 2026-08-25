@@ -159,6 +159,7 @@ is the migrations directory.
 | Services, endpoints, event contracts, infra topology | [docs/architecture.md](docs/architecture.md) |
 | Auth, secrets, message encryption, security concerns | [docs/security.md](docs/security.md) |
 | Docker, CI/CD, deployment | [docs/deployment.md](docs/deployment.md) |
+| A service's port, env vars or volumes | **also** [docs/images.md](docs/images.md) — people assemble stacks from it |
 | API endpoints, request/response formats, routing keys | [docs/api.md](docs/api.md) |
 | New/moved/renamed files, new commands, new gotchas | **This file** (map in section 7) |
 | Setup / how-to-run instructions | README.md |
@@ -312,7 +313,7 @@ is the migrations directory.
 | `.env.example` | Env contract — documents the FinVault-shared vars (`RABBITMQ_URL`, `FINVAULT_MESSAGE_KEY`) |
 | `deploy/install.sh` · `deploy/install.ps1` | Release installer: picks an edition, generates `JWT_SECRET`/`INTERNAL_API_TOKEN`/admin password, writes `.env`, starts the stack. Never overwrites an existing `.env` unasked (#191) |
 | `deploy/community/` · `deploy/hosted/` | Self-contained release bundles: compose pinned to published images + `.env.example` + README. Neither needs a checkout of this repo; both are attached to each GitHub release (#179) |
-| `.github/workflows/release.yml` | On a `v*` tag: re-run CI in both editions, then publish `nexusinfra-<service>:X.Y.Z-{community,hosted}` to GHCR. The dashboard is edition-neutral (one tag); `billing-bridge` builds hosted only (#179) |
+| `.github/workflows/release.yml` | On a `v*` tag: re-run CI in both editions, then publish `nexusinfra/<service>:X.Y.Z-{community,hosted}` to GHCR (nested so the six read as one family, #200). `billing-bridge` builds hosted only (#179) |
 | `.github/workflows/ci.yml` | CI: npm ci → build → lint (if present) → test, on PRs and pushes to dev/staging/main |
 | `eslint.config.js` | Flat ESLint config (typescript-eslint recommended) covering all workspaces |
 
@@ -321,6 +322,7 @@ is the migrations directory.
 |---|---|
 | `docs/architecture.md` | Services as built, event bus topology, routing keys in use, status model |
 | `docs/security.md` | Payload encryption, secrets handling, auth plan, known gaps |
+| `docs/images.md` | Per-image reference (ports, env, volumes, what runs once vs per host) for assembling a stack by hand (#201) |
 | `docs/deployment.md` | Local dev, Docker image pattern, combined-with-FinVault deployment, CI |
 | `docs/api.md` | HTTP endpoints + event contract summary |
 

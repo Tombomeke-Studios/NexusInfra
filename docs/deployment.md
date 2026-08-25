@@ -87,9 +87,9 @@ Tagging `vX.Y.Z` runs `.github/workflows/release.yml`, which re-runs the full su
 and then publishes to GHCR:
 
 ```
-ghcr.io/tombomeke-studios/nexusinfra-<service>:X.Y.Z-community   (+ a moving :community)
-ghcr.io/tombomeke-studios/nexusinfra-<service>:X.Y.Z-hosted      (+ a moving :hosted)
-ghcr.io/tombomeke-studios/nexusinfra-dashboard:X.Y.Z             (+ :latest)
+ghcr.io/tombomeke-studios/nexusinfra/<service>:X.Y.Z-community   (+ a moving :community)
+ghcr.io/tombomeke-studios/nexusinfra/<service>:X.Y.Z-hosted      (+ a moving :hosted)
+ghcr.io/tombomeke-studios/nexusinfra/dashboard:X.Y.Z             (+ :latest)
 ```
 
 **The tag decides the edition, and nothing else has to.** Each image carries a stamp recording the
@@ -111,6 +111,9 @@ application is about 0.1% of what ships; the weight is the base images and Prism
 
 Services also report their `version` and *resolved* `edition` from `GET /health`, which is the fastest
 way to confirm a running container is what you think it is.
+
+Per-image configuration — ports, environment, volumes — is in [images.md](images.md), which is the
+reference for building a stack without the installer.
 
 ### The release archive
 

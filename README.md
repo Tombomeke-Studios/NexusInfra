@@ -379,6 +379,7 @@ Conventions, the branching model and the codebase map are in [CLAUDE.md](CLAUDE.
 | [docs/architecture.md](docs/architecture.md) | Services as built, event-bus topology, routing keys, status model |
 | [docs/api.md](docs/api.md) | HTTP endpoints, status codes and the event-contract summary |
 | [docs/security.md](docs/security.md) | Authentication, the authorization model, payload encryption, secrets |
+| [docs/images.md](docs/images.md) | Every published image — ports, environment, volumes — for assembling a stack by hand |
 | [docs/deployment.md](docs/deployment.md) | Editions, releases, images, CI, combined FinVault deployment |
 | [docs/billing.md](docs/billing.md) | Pricing, quotas, the credit wallet and the monthly cycle |
 | [deploy/README.md](deploy/README.md) | Installing a release |
