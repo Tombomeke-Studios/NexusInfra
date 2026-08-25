@@ -325,6 +325,25 @@ the Orchestrator, which proxies the Control Room's `/status`. Returns `{ monitor
 lastSeenMsAgo }], reachable }`. If the Control Room is unreachable, `200` with `{ monitored: [],
 reachable: false }` so the panel can show it as down rather than erroring.
 
+### Teams (#177)
+
+| Route | Purpose |
+|---|---|
+| `GET /teams` | Teams the caller owns or belongs to |
+| `POST /teams` | Create a team — body `{ name }` → `201`, caller becomes its owner |
+| `GET /teams/:id` | The team with its members |
+| `DELETE /teams/:id` | Delete it → `204`; its servers are **detached, not deleted** |
+| `POST /teams/:id/members` | Add someone — body `{ email, role }` → `201` |
+| `PATCH /teams/:id/members/:userId` | Change a member's role — body `{ role }` |
+| `DELETE /teams/:id/members/:userId` | Remove a member, or yourself to leave → `204` |
+| `PATCH /deployments/:id/team` | Share a server with a team, or detach — body `{ teamId }` (`null` detaches) |
+
+`role` ∈ `viewer | operator | admin`, as for a per-server share. A team the caller doesn't belong to
+answers `404`. Only the team owner may add, re-role or remove others (`403` otherwise); anyone may
+remove themselves. Adding an address with no account yet is `404` — team membership needs a real
+account, since it grants access to every server the team holds. Attaching a server requires
+owner-level permission on it and membership of the target team.
+
 ### Billing proxy (authenticated) — hosted edition
 
 The dashboard's Billing page (#149) talks only to the Orchestrator, which proxies to the Billing Bridge

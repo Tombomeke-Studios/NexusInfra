@@ -32,6 +32,10 @@ export interface DeploymentView {
   name: string;
   dockerImage: string;
   type: string;
+  /** The team this server is shared with, if any (#177). */
+  teamId?: string | null;
+  /** The caller's role on this server (#175) — absent only on older responses. */
+  role?: 'owner' | 'admin' | 'operator' | 'viewer';
   nodeId: string | null;
   containerId: string | null;
   status: DeploymentStatus;
@@ -531,4 +535,62 @@ export function streamStats(id: string, onStats: (stats: ContainerStats) => void
       // Ignore a malformed sample; the next one follows.
     }
   }, signal);
+}
+
+// ── Teams (#177) ──────────────────────────────────────────────────────────────
+export interface Team {
+  id: string;
+  name: string;
+  ownerId: string;
+  createdAt: string;
+}
+
+export interface TeamMember {
+  id: string;
+  teamId: string;
+  userId: string;
+  email: string;
+  displayName: string;
+  role: string;
+  createdAt: string;
+}
+
+export interface TeamDetail extends Team {
+  members: TeamMember[];
+}
+
+/** Teams the caller owns or belongs to. */
+export function listTeams(): Promise<Team[]> {
+  return request('/teams');
+}
+
+export function getTeam(id: string): Promise<TeamDetail> {
+  return request(`/teams/${id}`);
+}
+
+export function createTeam(name: string): Promise<Team> {
+  return request('/teams', { method: 'POST', body: JSON.stringify({ name }) });
+}
+
+export function deleteTeam(id: string): Promise<void> {
+  return request(`/teams/${id}`, { method: 'DELETE' });
+}
+
+/** The invitee must already have an account — a team grants access to every server it holds. */
+export function addTeamMember(id: string, email: string, role: SubuserRole): Promise<TeamMember> {
+  return request(`/teams/${id}/members`, { method: 'POST', body: JSON.stringify({ email, role }) });
+}
+
+export function updateTeamMemberRole(id: string, userId: string, role: SubuserRole): Promise<TeamMember> {
+  return request(`/teams/${id}/members/${userId}`, { method: 'PATCH', body: JSON.stringify({ role }) });
+}
+
+/** Removing yourself is how you leave a team. */
+export function removeTeamMember(id: string, userId: string): Promise<void> {
+  return request(`/teams/${id}/members/${userId}`, { method: 'DELETE' });
+}
+
+/** Share a server with a team, or detach it with null. Requires ownership. */
+export function setServerTeam(deploymentId: string, teamId: string | null): Promise<{ deploymentId: string; teamId: string | null }> {
+  return request(`/deployments/${deploymentId}/team`, { method: 'PATCH', body: JSON.stringify({ teamId }) });
 }

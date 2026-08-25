@@ -7,6 +7,7 @@ import { NewDeployment } from './pages/NewDeployment';
 import { Servers } from './pages/Servers';
 import { ServerDetail } from './pages/ServerDetail';
 import { NodeDetail } from './pages/NodeDetail';
+import { Teams } from './pages/Teams';
 import { Preferences } from './pages/Preferences';
 import { Billing } from './pages/Billing';
 import { useEdition } from './edition';
@@ -28,6 +29,7 @@ export function AppRoutes() {
           <Route path="/servers" element={<Servers />} />
           <Route path="/servers/:id" element={<ServerDetail />} />
           <Route path="/nodes/:id" element={<NodeDetail />} />
+          <Route path="/teams" element={<Teams />} />
           <Route path="/preferences" element={<Preferences />} />
           {/* Billing is hosted-edition only (#149). */}
           {isHosted && <Route path="/billing" element={<Billing />} />}

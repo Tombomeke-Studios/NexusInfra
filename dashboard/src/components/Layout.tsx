@@ -57,6 +57,9 @@ export function Layout() {
           <NavLink to="/servers" className="navlink" data-ripple>
             Servers
           </NavLink>
+          <NavLink to="/teams" className="navlink" data-ripple>
+            Teams
+          </NavLink>
           <NavLink to="/preferences" className="navlink" data-ripple>
             Preferences
           </NavLink>
