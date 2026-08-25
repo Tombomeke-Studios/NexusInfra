@@ -894,7 +894,16 @@ function SchedulesTab({ id }: { id: string }) {
 // ── Subusers — real per-server access control (#112) ────────────────────────
 const ROLE_COLOR: Record<string, { soft: string; color: string }> = {
   admin: { soft: 'var(--color-success-soft)', color: 'var(--color-success)' },
+  operator: { soft: 'var(--color-primary-soft)', color: 'var(--color-primary)' },
   viewer: { soft: 'var(--color-neutral-soft)', color: 'var(--color-neutral)' },
+};
+
+// What each role actually means, shown under the address so the choice is not a
+// guess. Mirrors the server-side matrix in access.ts.
+const ROLE_SUMMARY: Record<string, string> = {
+  admin: 'Manage the server — everything but deleting it',
+  operator: 'Start, stop, restart and use the console',
+  viewer: 'Read-only — status, logs and usage',
 };
 
 function SubusersTab({ id }: { id: string }) {
@@ -953,7 +962,7 @@ function SubusersTab({ id }: { id: string }) {
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <strong style={{ fontSize: '.92rem' }}>Subusers<InfoHint text="Grant other people access to this server by email, as admin (manage) or viewer (read-only). Access is enforced once real multi-user login lands (via the FinVault gateway); for now this manages who's on the list." label="Subusers help" /></strong>
+        <strong style={{ fontSize: '.92rem' }}>Subusers<InfoHint text="Grant other people access to this server by email. Viewer sees status and logs; operator can also start, stop and restart it; admin can manage everything except deleting it. Access is enforced on every request, so revoking takes effect at once. Inviting someone who has no account yet leaves the invitation pending — it grants nothing until they sign up with that address." label="Subusers help" /></strong>
       </div>
 
       <div className="card" style={{ padding: 14, marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -964,7 +973,7 @@ function SubusersTab({ id }: { id: string }) {
         <div>
           <span className="field__label" style={{ fontSize: '.78rem' }}>Role</span>
           <div style={{ display: 'flex', gap: 6 }}>
-            {(['viewer', 'admin'] as SubuserRole[]).map((r) => (
+            {(['viewer', 'operator', 'admin'] as SubuserRole[]).map((r) => (
               <button key={r} type="button" data-ripple onClick={() => setRole(r)} className={`opt${role === r ? ' is-active' : ''}`} style={{ textTransform: 'capitalize' }}>{r}</button>
             ))}
           </div>
@@ -981,10 +990,16 @@ function SubusersTab({ id }: { id: string }) {
               <span style={{ flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: '50%', background: 'var(--color-primary-soft)', color: 'var(--color-primary)', fontWeight: 700, fontSize: '.85rem' }}>{u.email[0]?.toUpperCase()}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: '.88rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email}</div>
-                <div className="subtle" style={{ fontSize: '.78rem' }}>{u.role === 'admin' ? 'Manage server' : 'Read-only'}</div>
+                <div className="subtle" style={{ fontSize: '.78rem' }}>
+                  {u.status === 'pending' && (
+                    <span title="Invited, but they have not signed up yet — this grants no access until they do" style={{ color: 'var(--color-warning)', fontWeight: 600 }}>Pending · </span>
+                  )}
+                  {ROLE_SUMMARY[u.role] ?? u.role}
+                </div>
               </div>
               <select className="select" value={u.role} onChange={(e) => void changeRole(u, e.target.value as SubuserRole)} aria-label={`Role for ${u.email}`} style={{ width: 'auto', minHeight: 32, padding: '0 8px', fontSize: '.78rem', color: rc.color, background: rc.soft, borderColor: rc.soft }}>
                 <option value="viewer">viewer</option>
+                <option value="operator">operator</option>
                 <option value="admin">admin</option>
               </select>
               <button className="icon-btn" data-ripple aria-label={`Revoke ${u.email}`} onClick={() => revoke(u)}>✕</button>

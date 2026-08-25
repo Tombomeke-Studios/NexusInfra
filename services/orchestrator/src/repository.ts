@@ -196,8 +196,9 @@ export class InMemoryRepository implements Repository {
   }
 
   async listDeploymentsForUser(user: { id: string; email: string }): Promise<DeploymentView[]> {
+    // Only active shares — a pending invitation grants nothing yet (#176).
     const sharedWith = new Set(
-      [...this.subusers.values()].filter((s) => s.email === user.email).map((s) => s.deploymentId)
+      [...this.subusers.values()].filter((s) => s.userId === user.id && s.status === 'active').map((s) => s.deploymentId)
     );
     return (await this.listDeployments()).filter((d) => d.userId === user.id || sharedWith.has(d.id));
   }
@@ -348,6 +349,9 @@ export class InMemoryRepository implements Repository {
       id: existing?.id ?? randomUUID(),
       deploymentId: input.deploymentId,
       email: input.email,
+      // Re-inviting must not un-bind an already-accepted share.
+      userId: input.userId ?? existing?.userId ?? null,
+      status: input.status ?? existing?.status ?? 'pending',
       role: input.role,
       createdAt: existing?.createdAt ?? new Date().toISOString(),
     };
@@ -367,6 +371,16 @@ export class InMemoryRepository implements Repository {
 
   async getSubuserFor(deploymentId: string, email: string): Promise<ServerSubuserRecord | null> {
     return [...this.subusers.values()].find((s) => s.deploymentId === deploymentId && s.email === email) ?? null;
+  }
+
+  async claimSubuserInvites(userId: string, email: string): Promise<number> {
+    let claimed = 0;
+    for (const [id, s] of this.subusers) {
+      if (s.email !== email || s.status === 'active') continue;
+      this.subusers.set(id, { ...s, userId, status: 'active' });
+      claimed += 1;
+    }
+    return claimed;
   }
 
   async updateSubuserRole(id: string, role: string): Promise<ServerSubuserRecord | null> {

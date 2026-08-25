@@ -41,10 +41,12 @@ export function accessGuard(repo: Repository) {
     }
 
     const principal = principalOf(req);
-    // Shares are addressed by email until they are bound to accounts (#176), so
-    // the caller's own address is what matches them.
+    // A share is addressed to an email and bound to the account when that person
+    // first appears (#176). Only a bound, active share grants anything — a
+    // pending invitation to an address nobody has claimed must not open a door.
     const caller = await repo.getUser(principal.id);
-    const grant = caller ? await repo.getSubuserFor(deployment.id, caller.email) : null;
+    const share = caller ? await repo.getSubuserFor(deployment.id, caller.email) : null;
+    const grant = share?.status === 'active' && share.userId === principal.id ? share : null;
 
     const role = resolveRole({ principal, ownerId: deployment.userId, grant });
     if (!role) {

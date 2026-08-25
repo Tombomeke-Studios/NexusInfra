@@ -125,10 +125,15 @@ export interface CreateServerBackupInput {
 
 export type SubuserRole = 'admin' | 'viewer';
 
+/** `pending` = invited but not yet bound to an account, and carries no access (#176). */
+export type SubuserStatus = 'pending' | 'active';
+
 export interface ServerSubuserRecord {
   id: string;
   deploymentId: string;
   email: string;
+  userId: string | null;
+  status: string;
   role: string;
   createdAt: string;
 }
@@ -137,6 +142,8 @@ export interface CreateServerSubuserInput {
   deploymentId: string;
   email: string;
   role: string;
+  userId?: string | null;
+  status?: string;
 }
 
 export type ScheduleAction = 'restart' | 'backup';
@@ -286,6 +293,12 @@ export interface Repository {
   getSubuser(id: string): Promise<ServerSubuserRecord | null>;
   /** The share held by one person on one server, if any — the authorization lookup. */
   getSubuserFor(deploymentId: string, email: string): Promise<ServerSubuserRecord | null>;
+  /**
+   * Bind every pending invitation addressed to `email` to that account and
+   * activate it (#176). Called when the person first appears; returns how many
+   * were claimed.
+   */
+  claimSubuserInvites(userId: string, email: string): Promise<number>;
   updateSubuserRole(id: string, role: string): Promise<ServerSubuserRecord | null>;
   deleteSubuser(id: string): Promise<void>;
 }

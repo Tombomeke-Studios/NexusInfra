@@ -445,12 +445,28 @@ export function runSchedule(id: string, sid: string): Promise<{ status: string }
 }
 
 // ── Subusers (#112) ───────────────────────────────────────────────────────────
-export type SubuserRole = 'admin' | 'viewer';
+/**
+ * Roles that can be granted to someone else (#175). `operator` is the one this
+ * feature exists for: run my server, but don't read its files or reshare it.
+ * Ownership is never grantable.
+ */
+export type SubuserRole = 'admin' | 'operator' | 'viewer';
+
+export const SUBUSER_ROLE_LABELS: Record<SubuserRole, string> = {
+  viewer: 'Viewer — see status, logs and usage',
+  operator: 'Operator — start, stop, restart and console',
+  admin: 'Admin — everything except deleting the server',
+};
+
+/** `pending` = invited but not yet signed up; the grant is inert until they are (#176). */
+export type SubuserStatus = 'pending' | 'active';
 
 export interface ServerSubuser {
   id: string;
   deploymentId: string;
   email: string;
+  userId: string | null;
+  status: SubuserStatus;
   role: string;
   createdAt: string;
 }

@@ -128,6 +128,9 @@ export function createUserService(deps: { repo: Repository }): UserService {
       passwordHash: await hashPassword(input.password),
       platformRole: input.platformRole ?? 'user',
     } satisfies CreateUserInput);
+
+    // Anything shared with this address while it had no account (#176).
+    await repo.claimSubuserInvites(user.id, user.email);
     return { ok: true, user };
   }
 
@@ -137,7 +140,13 @@ export function createUserService(deps: { repo: Repository }): UserService {
     // backfill turned it into admin@local.
     const user = (await repo.getUserByEmail(normalizeEmail(identifier))) ?? (await repo.getUser(identifier.trim()));
     if (!user) return null;
-    return (await verifyPassword(password, user.passwordHash)) ? user : null;
+    if (!(await verifyPassword(password, user.passwordHash))) return null;
+
+    // Servers may have been shared with this address before the account existed
+    // (#176). Bind those invitations now, so access appears on first sign-in
+    // rather than requiring the owner to invite again.
+    await repo.claimSubuserInvites(user.id, user.email);
+    return user;
   }
 
   async function changePassword(userId: string, current: string, next: string): Promise<RegisterResult> {

@@ -95,6 +95,18 @@ Design decisions worth stating explicitly:
 - **Billing follows the owner.** Usage accrues to whoever owns the server, never to the person who
   pressed Start.
 
+### Invitations (#176)
+
+A server can be shared with someone who has no account yet. That invitation is addressed to an email
+and **grants nothing** until it is bound to a real account — it is claimed automatically when that
+person registers or signs in with the address. Two consequences worth being explicit about:
+
+- Holding an invited address is not the same as holding the account. Access is checked against the
+  bound account, so an unclaimed invitation cannot be used by whoever happens to control the mailbox
+  at some later point without also completing a sign-up.
+- Changing someone's role never un-binds an accepted share, and revoking one takes effect on the very
+  next request.
+
 ## Service-to-service auth (#169)
 
 The Node Agent's HTTP/WS surface drives Docker directly — `POST /exec/:id`, file writes, and a
