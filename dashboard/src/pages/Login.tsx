@@ -1,31 +1,34 @@
 import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { login } from '../api';
+import { Link, useNavigate } from 'react-router-dom';
+import { login, register } from '../api';
 import { setToken } from '../session';
+import { useEdition } from '../edition';
 import { IconHexagon } from '../components/Icons';
 import { ThemeToggle } from '../components/ThemeToggle';
 
 // Login screen — ported from the redesign (NexusInfra.dc.html): aurora backdrop
 // (App-level), a spotlight card with a floaty brand, and a magnetic/ripple
 // primary button (FX activated by the interaction layer).
-export function Login() {
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('admin');
+export function Login({ mode = 'sign-in' }: { mode?: 'sign-in' | 'register' }) {
+  const registering = mode === 'register';
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
+  const { isHosted } = useEdition();
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      const { token } = await login(username, password);
+      const { token } = registering ? await register(email, password) : await login(email, password);
       setToken(token);
       navigate('/', { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed');
+      setError(err instanceof Error ? err.message : registering ? 'Could not create the account' : 'Login failed');
     } finally {
       setBusy(false);
     }
@@ -57,17 +60,18 @@ export function Login() {
               NexusInfra
             </span>
 
-            <h1 style={{ fontSize: '1.4rem' }}>Sign in</h1>
+            <h1 style={{ fontSize: '1.4rem' }}>{registering ? 'Create your account' : 'Sign in'}</h1>
             <p style={{ color: 'var(--color-text-muted)', margin: '4px 0 22px' }}>Server management panel</p>
 
             <form onSubmit={onSubmit}>
               <label className="field">
-                <span className="field__label">Username</span>
+                <span className="field__label">Email</span>
                 <input
                   className="input"
-                  aria-label="Username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
+                  aria-label="Email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   autoComplete="username"
                 />
               </label>
@@ -81,7 +85,7 @@ export function Login() {
                     type={showPw ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    autoComplete="current-password"
+                    autoComplete={registering ? 'new-password' : 'current-password'}
                   />
                   <button
                     type="button"
@@ -102,13 +106,25 @@ export function Login() {
 
               <button type="submit" className="btn btn--primary btn--block" data-magnetic data-ripple data-burst="primary" disabled={busy}>
                 {busy && <span className="spinner" />}
-                {busy ? 'Signing in…' : 'Sign in'}
+                {busy ? (registering ? 'Creating account…' : 'Signing in…') : registering ? 'Create account' : 'Sign in'}
               </button>
             </form>
 
-            <p className="subtle" style={{ marginTop: 16, fontSize: '0.82rem' }}>
-              Dev credentials: <span className="mono">admin / admin</span>
-            </p>
+            {/* Only the hosted edition lets people sign themselves up; on a
+                self-hosted panel an administrator creates the accounts. */}
+            {isHosted && (
+              <p className="subtle" style={{ marginTop: 16, fontSize: '0.82rem' }}>
+                {registering ? (
+                  <>
+                    Already have an account? <Link to="/login">Sign in</Link>
+                  </>
+                ) : (
+                  <>
+                    No account yet? <Link to="/register">Create one</Link>
+                  </>
+                )}
+              </p>
+            )}
           </div>
         </div>
       </div>

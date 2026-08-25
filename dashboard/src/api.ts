@@ -114,8 +114,43 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 }
 
-export function login(username: string, password: string): Promise<{ token: string }> {
-  return request('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+// ── Accounts (#174) ───────────────────────────────────────────────────────────
+export type PlatformRole = 'owner' | 'admin' | 'user';
+
+export interface CurrentUser {
+  id: string;
+  email: string;
+  displayName: string;
+  platformRole: PlatformRole;
+  createdAt: string;
+}
+
+/** Accepts an email, or the legacy username for installs that predate accounts. */
+export function login(email: string, password: string): Promise<{ token: string }> {
+  return request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+}
+
+/** Self-registration — only reachable in the hosted edition; 403 otherwise. */
+export function register(email: string, password: string, displayName?: string): Promise<{ token: string; user: CurrentUser }> {
+  return request('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, displayName }) });
+}
+
+export function getCurrentUser(): Promise<CurrentUser> {
+  return request('/me');
+}
+
+export function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  return request('/me/password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) });
+}
+
+/** Administrator-only account list — how a panel admin sees who has access. */
+export function listUsers(): Promise<CurrentUser[]> {
+  return request('/users');
+}
+
+/** Administrator-created account: the way in when self-registration is closed. */
+export function createUser(input: { email: string; password: string; displayName?: string; platformRole?: PlatformRole }): Promise<CurrentUser> {
+  return request('/users', { method: 'POST', body: JSON.stringify(input) });
 }
 
 // ── Runtime config (edition flag) ─────────────────────────────────────────────
