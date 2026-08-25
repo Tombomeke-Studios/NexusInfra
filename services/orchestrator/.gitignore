@@ -1,0 +1,5 @@
+dist/
+*.db
+*.db-journal
+prisma/*.db
+prisma/*.db-journal

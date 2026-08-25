@@ -1,0 +1,100 @@
+# NexusInfra — Community edition
+#
+# The standalone, self-hosted server panel: you own the machines, so there is no
+# billing and no FinVault dependency. Runs entirely from published images; no
+# checkout of this repository is needed beyond this directory.
+#
+#   1. cp .env.example .env   and set ADMIN_PASSWORD + INTERNAL_API_TOKEN + JWT_SECRET
+#   2. docker compose up -d
+#   3. open http://localhost:8095
+#
+# The image tag decides the edition — these are the `community` images, and they
+# do not contain the hosted code. Pin NEXUSINFRA_VERSION to a released version
+# rather than tracking the moving tag if you would like upgrades to be deliberate.
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: nexusinfra-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    # Not published: only the services on this network need the broker. Publish
+    # it only if you run node agents on other machines, and put TLS in front.
+
+  control-room:
+    image: ghcr.io/tombomeke-studios/nexusinfra-control-room:${NEXUSINFRA_VERSION:-community}
+    container_name: nexusinfra-control-room
+    restart: unless-stopped
+    ports: ['9000:9000']
+    environment:
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
+      - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:-}
+    depends_on: [rabbitmq]
+
+  node-agent:
+    image: ghcr.io/tombomeke-studios/nexusinfra-node-agent:${NEXUSINFRA_VERSION:-community}
+    container_name: nexusinfra-node-agent
+    restart: unless-stopped
+    environment:
+      - NODE_ID=${NODE_ID:-node-local}
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
+      - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:-}
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?set a strong random value in .env}
+      - AGENT_URL=http://node-agent:9100
+    # The agent drives the host's Docker daemon, so it needs the socket. Its port
+    # is deliberately NOT published: it is an internal API the Orchestrator calls
+    # over this network, and it can start containers.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - agent_backups:/var/lib/nexusinfra/backups
+    depends_on: [rabbitmq]
+
+  orchestrator:
+    image: ghcr.io/tombomeke-studios/nexusinfra-orchestrator:${NEXUSINFRA_VERSION:-community}
+    container_name: nexusinfra-orchestrator
+    restart: unless-stopped
+    ports: ['9200:9200']
+    environment:
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
+      - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:-}
+      - DATABASE_URL=file:/data/orchestrator.db
+      - JWT_SECRET=${JWT_SECRET:?set a strong random value in .env}
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?set a strong random value in .env}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@local}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?set a real password in .env}
+      - NODE_AGENT_URL=http://node-agent:9100
+      - CONTROL_ROOM_URL=http://control-room:9000
+      - DATABASE_PUBLIC_HOST=${DATABASE_PUBLIC_HOST:-localhost}
+    volumes:
+      - orchestrator_data:/data
+    depends_on: [rabbitmq]
+
+  gateway:
+    image: ghcr.io/tombomeke-studios/nexusinfra-gateway:${NEXUSINFRA_VERSION:-community}
+    container_name: nexusinfra-gateway
+    restart: unless-stopped
+    ports: ['9400:9400']
+    environment:
+      - ORCHESTRATOR_URL=http://orchestrator:9200
+      - JWT_SECRET=${JWT_SECRET:?set a strong random value in .env}
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
+      - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:-}
+    depends_on: [orchestrator]
+
+  dashboard:
+    # Built for this edition (#190): the community bundle does not contain the
+    # billing UI at all, rather than hiding it.
+    image: ghcr.io/tombomeke-studios/nexusinfra-dashboard:${NEXUSINFRA_VERSION:-community}
+    container_name: nexusinfra-dashboard
+    restart: unless-stopped
+    ports: ['${DASHBOARD_PORT:-8095}:80']
+    depends_on: [orchestrator]
+
+volumes:
+  rabbitmq_data:
+  orchestrator_data:
+  agent_backups:

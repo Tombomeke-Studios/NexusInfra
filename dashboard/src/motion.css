@@ -1,0 +1,295 @@
+/* Animation primitives. Enter animations use ease-out curves and short durations
+   (200–320ms). The global prefers-reduced-motion rule in index.css collapses all
+   of these to ~0ms, so motion is opt-out for free. */
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Standard easing: a gentle overshoot-free ease-out. */
+:root {
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --stagger-step: 55ms;
+}
+
+/* ── Design keyframes (from NexusInfra.dc.html) ─────────────────────────── */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-success) 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+@keyframes shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+@keyframes aurora1 {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(8vw, 6vh) scale(1.2);
+  }
+}
+@keyframes aurora2 {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1.1);
+  }
+  50% {
+    transform: translate(-7vw, -5vh) scale(0.9);
+  }
+}
+@keyframes aurora3 {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(5vw, -6vh) scale(1.15);
+  }
+}
+@keyframes gridDrift {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 56px 56px;
+  }
+}
+@keyframes floaty {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+@keyframes scrimIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateX(24px) scale(0.94);
+  }
+  60% {
+    transform: translateX(-3px) scale(1.01);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+@keyframes toastbar {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0;
+  }
+}
+@keyframes iconpop {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes rowFlash {
+  0% {
+    background: color-mix(in srgb, var(--color-success) 26%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+@keyframes rowFlashDanger {
+  0%,
+  30% {
+    background: color-mix(in srgb, var(--color-danger) 24%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+@keyframes shake {
+  10%,
+  90% {
+    transform: translateX(-1px);
+  }
+  20%,
+  80% {
+    transform: translateX(2px);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translateX(-4px);
+  }
+  40%,
+  60% {
+    transform: translateX(4px);
+  }
+}
+@keyframes badgePop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+  60% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  80%,
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes pop {
+  0% {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.anim-fade {
+  animation: fade-in 200ms var(--ease-out) both;
+}
+.anim-rise {
+  animation: fade-in-up 300ms var(--ease-out) both;
+}
+.anim-scale {
+  animation: scale-in 200ms var(--ease-out) both;
+}
+
+/* Route view: replays on navigation (the wrapper is keyed by pathname). */
+.route-view {
+  animation: route-in 260ms var(--ease-out) both;
+}
+@keyframes route-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Staggered children: each child sets --i (its index); delay scales with it. */
+.stagger > * {
+  animation: rise 420ms var(--ease-out) both;
+  animation-delay: calc(var(--stagger-step) * var(--i, 0));
+}
+
+/* ── Interaction FX (ripple/burst/trail are created by fx.ts via WAAPI) ──── */
+/* Buttons clip their ripple */
+.btn,
+.icon-btn,
+.navlink,
+.name-btn {
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── Micro-interactions ─────────────────────────────────────────────────── */
+/* Cards that represent objects lift on hover. */
+.stat,
+.grid-cards > .card {
+  transition: transform var(--transition), box-shadow var(--transition);
+  will-change: transform;
+}
+.stat:hover,
+.grid-cards > .card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+/* Press feedback: a subtle scale on active for buttons and icon buttons. */
+.btn:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
+}
+.icon-btn:active {
+  transform: scale(0.94);
+}
+.name-btn:active {
+  transform: translateY(1px);
+}

@@ -1,0 +1,69 @@
+import { createContext, useCallback, useContext, useState, type ReactNode } from 'react';
+
+// Minimal toast system: a provider holds the active toasts, useToast() pushes
+// them, and the viewport renders them in an aria-live region with auto-dismiss.
+// The default context is a no-op so components work without a provider (tests).
+
+type ToastVariant = 'success' | 'error' | 'info';
+interface Toast {
+  id: number;
+  heading: string;
+  message: string;
+  variant: ToastVariant;
+  leaving?: boolean;
+}
+
+interface ToastApi {
+  toast: (message: string, variant?: ToastVariant, title?: string) => void;
+}
+
+const DEFAULT_HEADING: Record<ToastVariant, string> = { success: 'Success', error: 'Stopped', info: 'Working' };
+
+const ToastContext = createContext<ToastApi>({ toast: () => {} });
+
+export function useToast(): ToastApi {
+  return useContext(ToastContext);
+}
+
+const AUTO_DISMISS_MS = 4000;
+
+export function ToastProvider({ children }: { children: ReactNode }) {
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // Mark the toast as leaving so its exit animation plays, then drop it.
+  const remove = useCallback((id: number) => {
+    setToasts((ts) => ts.map((t) => (t.id === id ? { ...t, leaving: true } : t)));
+    setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== id)), 200);
+  }, []);
+
+  const toast = useCallback(
+    (message: string, variant: ToastVariant = 'info', title?: string) => {
+      const id = Date.now() + Math.random();
+      setToasts((ts) => [...ts, { id, message, variant, heading: title || DEFAULT_HEADING[variant] }]);
+      setTimeout(() => remove(id), AUTO_DISMISS_MS);
+    },
+    [remove]
+  );
+
+  return (
+    <ToastContext.Provider value={{ toast }}>
+      {children}
+      <div className="toast-viewport" role="status" aria-live="polite">
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            className={`toast toast--${t.variant}${t.leaving ? ' toast--leaving' : ''}`}
+            onClick={() => remove(t.id)}
+          >
+            <span className="toast__icon">{t.variant === 'success' ? '✓' : t.variant === 'error' ? '!' : 'i'}</span>
+            <span className="toast__msg">
+              <span className="toast__heading">{t.heading}</span>
+              <span className="toast__text">{t.message}</span>
+            </span>
+            <span className="toast__bar" />
+          </div>
+        ))}
+      </div>
+    </ToastContext.Provider>
+  );
+}

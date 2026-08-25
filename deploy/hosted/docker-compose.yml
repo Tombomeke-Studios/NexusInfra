@@ -1,0 +1,118 @@
+# NexusInfra — Hosted edition
+#
+# The multi-tenant instance: customers sign themselves up, usage is metered and
+# charged against a prepaid credit wallet, and top-ups go through FinVault over
+# the shared event bus.
+#
+#   1. cp .env.example .env   and fill in every required value
+#   2. docker compose up -d
+#
+# **Sharing a broker with FinVault:** drop the `rabbitmq` service below, point
+# RABBITMQ_URL at FinVault's broker, and set FINVAULT_MESSAGE_KEY to the *same*
+# value FinVault uses — that key derives the encryption for event payloads, so
+# the two platforms cannot read each other's events without it.
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: nexusinfra-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    # Not published: only the services on this network need the broker. Publish
+    # it only if you run node agents on other machines, and put TLS in front.
+
+  control-room:
+    image: ghcr.io/tombomeke-studios/nexusinfra-control-room:${NEXUSINFRA_VERSION:-hosted}
+    container_name: nexusinfra-control-room
+    restart: unless-stopped
+    ports: ['9000:9000']
+    environment:
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
+      - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:?must match FinVault, or the two cannot read each other's events}
+    depends_on: [rabbitmq]
+
+  node-agent:
+    image: ghcr.io/tombomeke-studios/nexusinfra-node-agent:${NEXUSINFRA_VERSION:-hosted}
+    container_name: nexusinfra-node-agent
+    restart: unless-stopped
+    environment:
+      - NODE_ID=${NODE_ID:-node-local}
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
+      - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:?must match FinVault, or the two cannot read each other's events}
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?set a strong random value in .env}
+      - AGENT_URL=http://node-agent:9100
+    # The agent drives the host's Docker daemon, so it needs the socket. Its port
+    # is deliberately NOT published: it is an internal API the Orchestrator calls
+    # over this network, and it can start containers.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - agent_backups:/var/lib/nexusinfra/backups
+    depends_on: [rabbitmq]
+
+  orchestrator:
+    image: ghcr.io/tombomeke-studios/nexusinfra-orchestrator:${NEXUSINFRA_VERSION:-hosted}
+    container_name: nexusinfra-orchestrator
+    restart: unless-stopped
+    ports: ['9200:9200']
+    environment:
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
+      - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:?must match FinVault, or the two cannot read each other's events}
+      - DATABASE_URL=file:/data/orchestrator.db
+      - JWT_SECRET=${JWT_SECRET:?set a strong random value in .env}
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?set a strong random value in .env}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@local}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?set a real password in .env}
+      - NODE_AGENT_URL=http://node-agent:9100
+      - CONTROL_ROOM_URL=http://control-room:9000
+      - DATABASE_PUBLIC_HOST=${DATABASE_PUBLIC_HOST:-localhost}
+      - BILLING_BRIDGE_URL=http://billing-bridge:9300
+    volumes:
+      - orchestrator_data:/data
+    depends_on: [rabbitmq]
+
+  gateway:
+    image: ghcr.io/tombomeke-studios/nexusinfra-gateway:${NEXUSINFRA_VERSION:-hosted}
+    container_name: nexusinfra-gateway
+    restart: unless-stopped
+    ports: ['9400:9400']
+    environment:
+      - ORCHESTRATOR_URL=http://orchestrator:9200
+      - JWT_SECRET=${JWT_SECRET:?set a strong random value in .env}
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
+      - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:?must match FinVault, or the two cannot read each other's events}
+    depends_on: [orchestrator]
+
+  # Billing Bridge — hosted only. Meters runtime, holds the credit wallet, runs
+  # the monthly cycle, and drives top-ups through FinVault. There is no community
+  # image of this service because there would be nothing in it.
+  billing-bridge:
+    image: ghcr.io/tombomeke-studios/nexusinfra-billing-bridge:${NEXUSINFRA_VERSION:-hosted}
+    container_name: nexusinfra-billing-bridge
+    restart: unless-stopped
+    environment:
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
+      - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:?must match FinVault}
+      - DATABASE_URL=file:/data/billing.db
+      - BILLING_WALLET_ID=${BILLING_WALLET_ID:-nexusinfra}
+    volumes:
+      - billing_data:/data
+    depends_on: [rabbitmq]
+
+  dashboard:
+    # Built for this edition (#190): the community bundle does not contain the
+    # billing UI at all, rather than hiding it.
+    image: ghcr.io/tombomeke-studios/nexusinfra-dashboard:${NEXUSINFRA_VERSION:-hosted}
+    container_name: nexusinfra-dashboard
+    restart: unless-stopped
+    ports: ['${DASHBOARD_PORT:-8095}:80']
+    depends_on: [orchestrator]
+
+volumes:
+  rabbitmq_data:
+  billing_data:
+  orchestrator_data:
+  agent_backups:
