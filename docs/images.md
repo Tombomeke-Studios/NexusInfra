@@ -8,6 +8,53 @@ reverse proxy in front, or spread agents across several machines. This page is f
 
 ---
 
+## The all-in-one image
+
+If you would rather not assemble anything, there is one image per edition containing the whole stack —
+orchestrator, node agent, control room, gateway, nginx with the dashboard, and a broker — supervised
+inside a single container.
+
+```bash
+docker run -d \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v nexusinfra:/data \
+  -p 8095:80 \
+  ghcr.io/tombomeke-studios/nexusinfra-community
+```
+
+No tag needed, no configuration required. On first start it generates an administrator password and
+the two secrets, prints the credentials once, and keeps them in the volume. Supply any of
+`ADMIN_EMAIL`, `ADMIN_PASSWORD`, `JWT_SECRET` or `INTERNAL_API_TOKEN` and yours are used instead.
+
+Replace `community` with `hosted` for the multi-tenant edition; that one also expects
+`FINVAULT_MESSAGE_KEY`.
+
+| | |
+|---|---|
+| Image | `ghcr.io/tombomeke-studios/nexusinfra-community` · `nexusinfra-hosted` |
+| Volume | `/data` — databases, backups, broker state and the generated secrets |
+| Port | 80 |
+| Needs | the Docker socket |
+
+**Using a broker you already run:** set `RABBITMQ_URL` and the built-in one is not started. The
+hosted edition needs this to share FinVault's broker.
+
+### What it deliberately cannot do
+
+It is one machine. That covers most self-hosting, and it is an honest limit rather than a temporary
+one:
+
+- **A second host runs the standalone `nexusinfra/node-agent` image**, pointed at this container's
+  broker. The all-in-one cannot spread itself across machines.
+- **You cannot restart one service without the others.** Everything shares a container lifecycle.
+- **Logs are interleaved**, prefixed per service but in one stream.
+- **It is larger than any single component image**, because it contains all of them plus a broker.
+
+For multi-node, an existing broker, an existing reverse proxy, or independent restarts, use the
+component images below.
+
+---
+
 ## The six images
 
 ```

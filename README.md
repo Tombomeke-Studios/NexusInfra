@@ -118,6 +118,22 @@ powershell -ExecutionPolicy Bypass -File install.ps1      # Windows
 No checkout of this repository is required. Full detail, including manual setup and upgrades, is in
 [deploy/README.md](deploy/README.md).
 
+**Prefer one image and one command?** There is an all-in-one image per edition containing the whole
+stack — no compose file, no installer:
+
+```bash
+docker run -d -v /var/run/docker.sock:/var/run/docker.sock \
+  -v nexusinfra:/data -p 8095:80 ghcr.io/tombomeke-studios/nexusinfra-community
+```
+
+It generates its own credentials on first start and prints them once. Single machine; see
+[docs/images.md](docs/images.md) for what that rules out.
+
+**Prefer to write your own Compose file?** That is a first-class path, not a fallback.
+[docs/images.md](docs/images.md) documents every image: ports, environment, volumes, what must reach
+what, and which parts run once versus once per Docker host.
+
+
 <details>
 <summary><b>Running from source, for development</b></summary>
 
