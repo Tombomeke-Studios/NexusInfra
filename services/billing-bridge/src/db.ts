@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../generated/prisma/index.js';
 import { DEFAULT_PLAN, type BillingPlan } from './pricing.js';
 import type {
   BillingCycleRecord,

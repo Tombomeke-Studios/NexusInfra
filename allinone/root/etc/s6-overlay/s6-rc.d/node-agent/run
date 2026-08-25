@@ -1,0 +1,6 @@
+#!/command/with-contenv sh
+set -a
+. /run/nexusinfra.env
+set +a
+exec 2>&1
+exec node /app/services/node-agent/dist/index.js

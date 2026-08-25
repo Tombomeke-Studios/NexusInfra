@@ -168,7 +168,11 @@ gateway work" above.)_
 - [x] Per-edition images decide their own edition; mismatch refuses to start (#189)
 - [x] Dashboard built per edition — community ships no billing code, verified against the bundle (#190)
 - [x] One release archive with an installer for POSIX + Windows (#191)
+- [x] Nest the image names under one `nexusinfra` namespace (#200)
+- [x] Document every image for people who assemble their own stack (#201)
+- [x] All-in-one image per edition — `nexusinfra-community` / `nexusinfra-hosted` (#203)
 - [ ] Slim the service images — Prisma CLI + engine targets (orchestrator is 501 MB) (#192) 📋
+- [ ] Slim the all-in-one image — devDependencies ship to users (1.13 GB) (#204) 📋
 
 ### 🐛 Bugs / fixes (open)
 
