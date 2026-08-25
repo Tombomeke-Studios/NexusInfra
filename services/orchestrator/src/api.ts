@@ -6,10 +6,12 @@ import { generateDatabaseCredentials, isDatabaseEngine } from './dbProvision.js'
 import { isValidCron } from './cron.js';
 import { runScheduleAction, type ScheduleActions } from './scheduler.js';
 import { resolveAgentUrl } from './agentUrl.js';
+import { principalOf, requirePlatformAdmin } from './auth.js';
+import { accessGuard, accessOf, requirePermission } from './accessGuard.js';
+import { isGrantableRole, resolveRole } from './access.js';
 import type { DeploymentDetail, NodeRecord, Repository } from './types.js';
 
 const SCHEDULE_ACTIONS = ['restart', 'backup'];
-const SUBUSER_ROLES = ['admin', 'viewer'];
 const isEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 
 // Short id suffix for an auto-generated node id (not security-sensitive).
@@ -44,8 +46,11 @@ export function resolveContainerTarget(detail: DeploymentDetail | null): { statu
 // Deployment REST API — the user-facing entry point that turns a server config
 // into a running container. Creating a deployment picks a node and emits
 // infra.server.start; the Node Agent runs the container and reports back (handled
-// by lifecycle.ts). Auth is layered on separately (see auth.ts): handlers read the
-// user id that middleware puts on the request, defaulting to a dev user locally.
+// by lifecycle.ts).
+//
+// Authentication (who is calling) comes from auth.ts; authorization (what they
+// may do to this server) from accessGuard.ts. Every route under
+// /deployments/:id sits behind the guard and declares the permission it needs.
 
 const KEY_START = 'infra.server.start';
 const KEY_STOP = 'infra.server.stop';
@@ -131,7 +136,7 @@ const defaultRemoveBackup: RemoveBackupFn = async (agentUrl, ref) => {
 };
 
 function userIdOf(req: Request): string {
-  return (req as Request & { userId?: string }).userId ?? 'dev-user';
+  return principalOf(req).id;
 }
 
 export function createApiRouter(deps: ApiDeps): Router {
@@ -210,19 +215,39 @@ export function createApiRouter(deps: ApiDeps): Router {
     return res.status(201).json(detail);
   });
 
-  router.get('/deployments', async (_req: Request, res: Response) => {
-    res.json(await repo.listDeployments());
+  // Scoped to what the caller may see: their own servers plus the ones shared
+  // with them. A platform administrator sees the whole installation.
+  router.get('/deployments', async (req: Request, res: Response) => {
+    const principal = principalOf(req);
+    if (principal.platformRole === 'owner' || principal.platformRole === 'admin') {
+      return res.json((await repo.listDeployments()).map((d) => ({ ...d, role: 'owner' })));
+    }
+    const caller = await repo.getUser(principal.id);
+    if (!caller) return res.json([]);
+    const visible = await repo.listDeploymentsForUser(caller);
+    // Each row carries the caller's role so the panel can offer only the actions
+    // that will actually succeed (#178).
+    return res.json(
+      await Promise.all(
+        visible.map(async (d) => ({
+          ...d,
+          role: resolveRole({ principal, ownerId: d.userId, grant: await repo.getSubuserFor(d.id, caller.email) }),
+        }))
+      )
+    );
   });
 
-  router.get('/deployments/:id', async (req: Request, res: Response) => {
-    const detail = await repo.getDeployment(req.params.id);
-    if (!detail) return res.status(404).json({ error: 'deployment not found' });
-    res.json(detail);
+  // Everything addressing one server passes through the guard, so a route added
+  // below is protected by default; it only has to declare what it needs.
+  router.use('/deployments/:id', accessGuard(repo));
+
+  router.get('/deployments/:id', requirePermission('server.view'), (req: Request, res: Response) => {
+    res.json({ ...accessOf(req).deployment, role: accessOf(req).role });
   });
 
   // Request a running deployment be stopped: command the agent, which reports
   // server.stopped back (lifecycle.ts flips the status).
-  router.post('/deployments/:id/stop', async (req: Request, res: Response) => {
+  router.post('/deployments/:id/stop', requirePermission('control.stop'), async (req: Request, res: Response) => {
     const detail = await repo.getDeployment(req.params.id);
     if (!detail) return res.status(404).json({ error: 'deployment not found' });
     if (!detail.containerId || !detail.nodeId) {
@@ -239,7 +264,7 @@ export function createApiRouter(deps: ApiDeps): Router {
 
   // Start (or re-run) a deployment that isn't currently running: re-place it on a
   // healthy node and command a fresh container from its saved config.
-  router.post('/deployments/:id/start', async (req: Request, res: Response) => {
+  router.post('/deployments/:id/start', requirePermission('control.start'), async (req: Request, res: Response) => {
     const detail = await repo.getDeployment(req.params.id);
     if (!detail) return res.status(404).json({ error: 'deployment not found' });
     if (detail.status === 'running' || detail.status === 'pending') {
@@ -276,7 +301,7 @@ export function createApiRouter(deps: ApiDeps): Router {
 
   // Request a running deployment be restarted — the agent restarts the container
   // and reports server.started back.
-  router.post('/deployments/:id/restart', async (req: Request, res: Response) => {
+  router.post('/deployments/:id/restart', requirePermission('control.restart'), async (req: Request, res: Response) => {
     const detail = await repo.getDeployment(req.params.id);
     if (!detail) return res.status(404).json({ error: 'deployment not found' });
     if (!detail.containerId || !detail.nodeId) {
@@ -293,7 +318,7 @@ export function createApiRouter(deps: ApiDeps): Router {
 
   // Permanently delete a deployment: stop its container if running, deprovision
   // any managed database containers, then drop the deployment and its records.
-  router.delete('/deployments/:id', async (req: Request, res: Response) => {
+  router.delete('/deployments/:id', requirePermission('server.delete'), async (req: Request, res: Response) => {
     const detail = await repo.getDeployment(req.params.id);
     if (!detail) return res.status(404).json({ error: 'deployment not found' });
 
@@ -317,6 +342,8 @@ export function createApiRouter(deps: ApiDeps): Router {
     return res.status(204).end();
   });
 
+  // Node health is what the Overview renders, so it stays readable to any
+  // signed-in user; changing the fleet does not.
   router.get('/nodes', async (_req: Request, res: Response) => {
     const now = Date.now();
     const nodes = await repo.listNodes();
@@ -325,7 +352,7 @@ export function createApiRouter(deps: ApiDeps): Router {
 
   // Register (or relabel) a node's metadata (#113). It reads offline until an agent
   // started with NODE_ID=<id> heartbeats in. Body: { id?, name?, location? }.
-  router.post('/nodes', async (req: Request, res: Response) => {
+  router.post('/nodes', requirePlatformAdmin, async (req: Request, res: Response) => {
     const { id, name, location, agentUrl } = req.body ?? {};
     const nodeId = typeof id === 'string' && id.trim() ? id.trim() : `node-${randomToken()}`;
     const node = await repo.registerNode({
@@ -338,7 +365,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   });
 
   // Deregister a node — refused while it still hosts a running deployment.
-  router.delete('/nodes/:id', async (req: Request, res: Response) => {
+  router.delete('/nodes/:id', requirePlatformAdmin, async (req: Request, res: Response) => {
     const running = (await repo.listDeployments()).some((d) => d.nodeId === req.params.id && (d.status === 'running' || d.status === 'pending'));
     if (running) return res.status(409).json({ error: 'node still hosts a running deployment' });
     await repo.deleteNode(req.params.id);
@@ -379,8 +406,8 @@ export function createApiRouter(deps: ApiDeps): Router {
 
   // Stream a running deployment's logs / resource stats (SSE), proxied from the
   // owning Node Agent.
-  router.get('/deployments/:id/logs', proxyContainerStream('logs'));
-  router.get('/deployments/:id/stats', proxyContainerStream('stats'));
+  router.get('/deployments/:id/logs', requirePermission('server.logs'), proxyContainerStream('logs'));
+  router.get('/deployments/:id/stats', requirePermission('server.stats'), proxyContainerStream('stats'));
 
   // ── File management (#108) — proxy CRUD to the owning Node Agent ─────────────
   // Resolve the running container, forward the file op, and mirror the agent's
@@ -402,26 +429,26 @@ export function createApiRouter(deps: ApiDeps): Router {
   const q = (v: unknown) => encodeURIComponent(String(v ?? ''));
   const asJson = (method: string, body: unknown) => ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) });
 
-  router.get('/deployments/:id/files', (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}?path=${q(req.query.path ?? '/')}`)));
-  router.get('/deployments/:id/files/content', (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}/content?path=${q(req.query.path)}`)));
-  router.put('/deployments/:id/files/content', (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}/content`, asJson('PUT', req.body))));
-  router.post('/deployments/:id/files/dir', (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}/dir`, asJson('POST', req.body))));
-  router.post('/deployments/:id/files/rename', (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}/rename`, asJson('POST', req.body))));
-  router.delete('/deployments/:id/files', (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}?path=${q(req.query.path)}`, { method: 'DELETE' })));
+  router.get('/deployments/:id/files', requirePermission('file.read'), (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}?path=${q(req.query.path ?? '/')}`)));
+  router.get('/deployments/:id/files/content', requirePermission('file.read'), (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}/content?path=${q(req.query.path)}`)));
+  router.put('/deployments/:id/files/content', requirePermission('file.write'), (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}/content`, asJson('PUT', req.body))));
+  router.post('/deployments/:id/files/dir', requirePermission('file.write'), (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}/dir`, asJson('POST', req.body))));
+  router.post('/deployments/:id/files/rename', requirePermission('file.write'), (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}/rename`, asJson('POST', req.body))));
+  router.delete('/deployments/:id/files', requirePermission('file.write'), (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}?path=${q(req.query.path)}`, { method: 'DELETE' })));
 
   // ── Console (#68) — run a one-shot command in the running container ─────────
-  router.post('/deployments/:id/exec', (req, res) => withContainer(req, res, (c, a) => agentFetch(`${a}/exec/${c}`, asJson('POST', req.body))));
+  router.post('/deployments/:id/exec', requirePermission('console.exec'), (req, res) => withContainer(req, res, (c, a) => agentFetch(`${a}/exec/${c}`, asJson('POST', req.body))));
 
   // ── Managed databases (#109) ────────────────────────────────────────────────
   // A database is its own engine container the owning node starts, with generated
   // credentials the Orchestrator records and hands back to the user.
-  router.get('/deployments/:id/databases', async (req: Request, res: Response) => {
+  router.get('/deployments/:id/databases', requirePermission('database.manage'), async (req: Request, res: Response) => {
     const detail = await repo.getDeployment(req.params.id);
     if (!detail) return res.status(404).json({ error: 'deployment not found' });
     res.json(await repo.listDatabases(detail.id));
   });
 
-  router.post('/deployments/:id/databases', async (req: Request, res: Response) => {
+  router.post('/deployments/:id/databases', requirePermission('database.manage'), async (req: Request, res: Response) => {
     const detail = await repo.getDeployment(req.params.id);
     if (!detail) return res.status(404).json({ error: 'deployment not found' });
     if (!detail.nodeId || !detail.containerId) return res.status(409).json({ error: 'deployment is not running' });
@@ -456,7 +483,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     }
   });
 
-  router.delete('/deployments/:id/databases/:dbId', async (req: Request, res: Response) => {
+  router.delete('/deployments/:id/databases/:dbId', requirePermission('database.manage'), async (req: Request, res: Response) => {
     const db = await repo.getDatabase(req.params.dbId);
     if (!db || db.deploymentId !== req.params.id) return res.status(404).json({ error: 'database not found' });
     if (db.containerId) {
@@ -472,13 +499,13 @@ export function createApiRouter(deps: ApiDeps): Router {
   });
 
   // ── Backups (#110) — snapshot / restore a server's data volume ──────────────
-  router.get('/deployments/:id/backups', async (req: Request, res: Response) => {
+  router.get('/deployments/:id/backups', requirePermission('backup.manage'), async (req: Request, res: Response) => {
     const detail = await repo.getDeployment(req.params.id);
     if (!detail) return res.status(404).json({ error: 'deployment not found' });
     res.json(await repo.listBackups(detail.id));
   });
 
-  router.post('/deployments/:id/backups', async (req: Request, res: Response) => {
+  router.post('/deployments/:id/backups', requirePermission('backup.manage'), async (req: Request, res: Response) => {
     const detail = await repo.getDeployment(req.params.id);
     if (!detail) return res.status(404).json({ error: 'deployment not found' });
     if (!detail.containerId) return res.status(409).json({ error: 'deployment is not running' });
@@ -499,7 +526,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     }
   });
 
-  router.post('/deployments/:id/backups/:backupId/restore', async (req: Request, res: Response) => {
+  router.post('/deployments/:id/backups/:backupId/restore', requirePermission('backup.manage'), async (req: Request, res: Response) => {
     const backup = await repo.getBackup(req.params.backupId);
     if (!backup || backup.deploymentId !== req.params.id) return res.status(404).json({ error: 'backup not found' });
     const detail = await repo.getDeployment(req.params.id);
@@ -512,7 +539,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     }
   });
 
-  router.delete('/deployments/:id/backups/:backupId', async (req: Request, res: Response) => {
+  router.delete('/deployments/:id/backups/:backupId', requirePermission('backup.manage'), async (req: Request, res: Response) => {
     const backup = await repo.getBackup(req.params.backupId);
     if (!backup || backup.deploymentId !== req.params.id) return res.status(404).json({ error: 'backup not found' });
     try {
@@ -526,13 +553,13 @@ export function createApiRouter(deps: ApiDeps): Router {
   });
 
   // ── Schedules (#111) — recurring restart/backup on a cron ───────────────────
-  router.get('/deployments/:id/schedules', async (req: Request, res: Response) => {
+  router.get('/deployments/:id/schedules', requirePermission('server.view'), async (req: Request, res: Response) => {
     const detail = await repo.getDeployment(req.params.id);
     if (!detail) return res.status(404).json({ error: 'deployment not found' });
     res.json(await repo.listSchedules(detail.id));
   });
 
-  router.post('/deployments/:id/schedules', async (req: Request, res: Response) => {
+  router.post('/deployments/:id/schedules', requirePermission('schedule.manage'), async (req: Request, res: Response) => {
     const detail = await repo.getDeployment(req.params.id);
     if (!detail) return res.status(404).json({ error: 'deployment not found' });
     const { name, cron, action, enabled } = req.body ?? {};
@@ -543,7 +570,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     return res.status(201).json(schedule);
   });
 
-  router.patch('/deployments/:id/schedules/:sid', async (req: Request, res: Response) => {
+  router.patch('/deployments/:id/schedules/:sid', requirePermission('schedule.manage'), async (req: Request, res: Response) => {
     const s = await repo.getSchedule(req.params.sid);
     if (!s || s.deploymentId !== req.params.id) return res.status(404).json({ error: 'schedule not found' });
     const { name, cron, action, enabled } = req.body ?? {};
@@ -553,7 +580,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     return res.json(updated);
   });
 
-  router.delete('/deployments/:id/schedules/:sid', async (req: Request, res: Response) => {
+  router.delete('/deployments/:id/schedules/:sid', requirePermission('schedule.manage'), async (req: Request, res: Response) => {
     const s = await repo.getSchedule(req.params.sid);
     if (!s || s.deploymentId !== req.params.id) return res.status(404).json({ error: 'schedule not found' });
     await repo.deleteSchedule(s.id);
@@ -561,7 +588,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   });
 
   // Run a schedule immediately ("Run now").
-  router.post('/deployments/:id/schedules/:sid/run', async (req: Request, res: Response) => {
+  router.post('/deployments/:id/schedules/:sid/run', requirePermission('schedule.manage'), async (req: Request, res: Response) => {
     const s = await repo.getSchedule(req.params.sid);
     if (!s || s.deploymentId !== req.params.id) return res.status(404).json({ error: 'schedule not found' });
     try {
@@ -576,31 +603,31 @@ export function createApiRouter(deps: ApiDeps): Router {
   // ── Subusers (#112) — per-server access control ─────────────────────────────
   // Manages who may access a server and their role. Enforcement arrives with the
   // FinVault-JWT gateway (#20); this is the invite/role/revoke management layer.
-  router.get('/deployments/:id/subusers', async (req: Request, res: Response) => {
+  router.get('/deployments/:id/subusers', requirePermission('subuser.manage'), async (req: Request, res: Response) => {
     const detail = await repo.getDeployment(req.params.id);
     if (!detail) return res.status(404).json({ error: 'deployment not found' });
     res.json(await repo.listSubusers(detail.id));
   });
 
-  router.post('/deployments/:id/subusers', async (req: Request, res: Response) => {
+  router.post('/deployments/:id/subusers', requirePermission('subuser.manage'), async (req: Request, res: Response) => {
     const detail = await repo.getDeployment(req.params.id);
     if (!detail) return res.status(404).json({ error: 'deployment not found' });
     const { email, role } = req.body ?? {};
     if (typeof email !== 'string' || !isEmail(email)) return res.status(400).json({ error: 'a valid email is required' });
-    if (!SUBUSER_ROLES.includes(role)) return res.status(400).json({ error: 'role must be admin or viewer' });
+    if (!isGrantableRole(role)) return res.status(400).json({ error: 'role must be admin, operator or viewer' });
     const su = await repo.createSubuser({ deploymentId: detail.id, email: email.trim().toLowerCase(), role });
     return res.status(201).json(su);
   });
 
-  router.patch('/deployments/:id/subusers/:sid', async (req: Request, res: Response) => {
+  router.patch('/deployments/:id/subusers/:sid', requirePermission('subuser.manage'), async (req: Request, res: Response) => {
     const su = await repo.getSubuser(req.params.sid);
     if (!su || su.deploymentId !== req.params.id) return res.status(404).json({ error: 'subuser not found' });
     const { role } = req.body ?? {};
-    if (!SUBUSER_ROLES.includes(role)) return res.status(400).json({ error: 'role must be admin or viewer' });
+    if (!isGrantableRole(role)) return res.status(400).json({ error: 'role must be admin, operator or viewer' });
     return res.json(await repo.updateSubuserRole(su.id, role));
   });
 
-  router.delete('/deployments/:id/subusers/:sid', async (req: Request, res: Response) => {
+  router.delete('/deployments/:id/subusers/:sid', requirePermission('subuser.manage'), async (req: Request, res: Response) => {
     const su = await repo.getSubuser(req.params.sid);
     if (!su || su.deploymentId !== req.params.id) return res.status(404).json({ error: 'subuser not found' });
     await repo.deleteSubuser(su.id);
