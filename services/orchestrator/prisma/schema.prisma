@@ -15,6 +15,23 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// A person who can sign in to the panel (#174). Identity is local: the
+// Orchestrator stores the credential and issues the JWT. `platformRole` is
+// panel-wide standing (who may manage nodes and see every server), distinct from
+// the per-server role a user holds on an individual deployment.
+//
+// `id` is deliberately free-form rather than always a UUID: the backfill
+// migration seeds rows whose ids are the legacy `ServerConfig.userId` strings
+// ("admin", "dev-user") so existing deployments keep a valid owner.
+model User {
+  id           String   @id
+  email        String   @unique
+  displayName  String
+  passwordHash String
+  platformRole String   @default("user")
+  createdAt    DateTime @default(now())
+}
+
 // A Docker host the Orchestrator can place containers on. Rows are maintained
 // from node heartbeats (monitoring.heartbeat.node.#), not created by hand.
 model Node {
