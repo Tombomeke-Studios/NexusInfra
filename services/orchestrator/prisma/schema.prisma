@@ -32,6 +32,32 @@ model User {
   createdAt    DateTime @default(now())
 }
 
+// A group of people who share servers (#177). Per-server invitations cover
+// one-off sharing; a team means "everyone here gets my servers" without
+// re-inviting each person to each one. A server is still owned by an individual
+// and is optionally shared to one team, so ownership never becomes ambiguous.
+model Team {
+  id        String       @id
+  name      String
+  ownerId   String
+  createdAt DateTime     @default(now())
+  members   TeamMember[]
+  servers   ServerConfig[]
+}
+
+// Somebody's standing inside a team, which becomes their role on every server
+// that team is shared with.
+model TeamMember {
+  id        String   @id
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId    String
+  userId    String
+  role      String   @default("viewer")
+  createdAt DateTime @default(now())
+
+  @@unique([teamId, userId])
+}
+
 // A Docker host the Orchestrator can place containers on. Rows are maintained
 // from node heartbeats (monitoring.heartbeat.node.#), not created by hand.
 model Node {
@@ -55,6 +81,9 @@ model Node {
 model ServerConfig {
   id              String       @id
   userId          String
+  // Detaching rather than cascading: deleting a team must never delete servers.
+  team            Team?        @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  teamId          String?
   name            String
   dockerImage     String
   ports           String       @default("{}")

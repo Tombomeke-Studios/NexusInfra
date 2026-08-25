@@ -29,6 +29,7 @@ export function defaultRoutes(orchestrator: string): RouteRule[] {
     { prefix: '/auth', target: orchestrator, public: true },
     { prefix: '/me', target: orchestrator },
     { prefix: '/users', target: orchestrator },
+    { prefix: '/teams', target: orchestrator },
     { prefix: '/deployments', target: orchestrator },
     { prefix: '/nodes', target: orchestrator },
     { prefix: '/monitoring', target: orchestrator },

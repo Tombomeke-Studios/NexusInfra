@@ -107,6 +107,24 @@ person registers or signs in with the address. Two consequences worth being expl
 - Changing someone's role never un-binds an accepted share, and revoking one takes effect on the very
   next request.
 
+### Teams (#177)
+
+A team shares every server attached to it with everyone in it. The rules that keep this from becoming
+a way to lose control of a server:
+
+- **A server is owned by a person, never by a team.** It is only *shared* to one, so ownership is
+  never ambiguous and deleting a team **detaches** its servers rather than deleting them.
+- **Only the team's owner changes membership**; anyone may remove themselves, which is how you leave.
+- **Membership requires an existing account.** Unlike a per-server invitation, joining a team grants
+  access to every server it holds, present and future — that should not sit waiting on an address
+  nobody has claimed.
+- **A server can only be attached to a team the caller belongs to**, so a server cannot be pushed onto
+  strangers, and attaching it needs owner-level permission rather than day-to-day management rights.
+- **A team cannot confer ownership**, exactly as a direct share cannot. Where both a direct share and
+  a team membership apply, the stronger of the two wins.
+- A team the caller doesn't belong to reads as **404**, for the same reason a server does — otherwise
+  team identifiers become a directory of who works with whom.
+
 ## Service-to-service auth (#169)
 
 The Node Agent's HTTP/WS surface drives Docker directly — `POST /exec/:id`, file writes, and a

@@ -26,7 +26,7 @@ checklist; every item carries its issue ref). The order matters and each step is
 1. ~~Edition flag reaches every service (#173)~~ — done.
 2. **Accounts (#174)** — real users, local identity behind an `AuthProvider` seam.
 3. ~~Access control (#175)~~ — done. Every server route declares a permission; no access answers 404.
-4. ~~Subuser invites bound to real accounts (#176)~~ — done. Next: teams (#177) → role-aware UI (#178).
+4. ~~Subuser invites bound to real accounts (#176)~~ · ~~teams (#177)~~ — done. Next: role-aware UI (#178).
 5. Release pipeline: per-edition images + `deploy/{community,hosted}` bundles (#179).
 
 **Vocabulary** — keep these distinct, they are two different things:
@@ -238,6 +238,7 @@ is the migrations directory.
 | `src/auth.ts` | `AuthProvider` seam (`createLocalAuthProvider`; FinVault JWT swaps in at #17) + `signToken`/`verifyToken` → `Principal`, `requireAuth`, `principalOf`, `requirePlatformAdmin`, and the auth/account/admin routers. **No anonymous fallback** — no token means 401 |
 | `src/access.ts` | **Pure** authorization core: `Role`/`Permission`, `ROLE_PERMISSIONS`, `can`, `resolveRole`, `strongestRole`. No Express, no DB — the whole matrix is unit-tested (#175) |
 | `src/accessGuard.ts` | `accessGuard(repo)` (mounted once on `/deployments/:id`; **404 for no access**, never 403) + `requirePermission(p)` per route + `accessOf(req)` |
+| `src/teams.ts` | Teams (#177): `createTeamRouter` (`/teams`, membership) + `createServerTeamRouter` (`PATCH /deployments/:id/team`). Deleting a team **detaches** its servers, never deletes them |
 | `src/config.ts` | `createConfigRouter` — public `GET /config` → `{ edition }` (edition flag, mounted before auth) |
 | `src/api.ts` | Express deployment API: create/list/get deployments, stop/start/restart/**delete**, node health; enforces plan quotas via the Billing Bridge (hosted) |
 | `src/lifecycle.ts` | Consumes `infra.server.started/stopped/crashed`, updates deployment status + audit |

@@ -21,6 +21,9 @@ import type {
   ServerDatabaseRecord,
   ServerScheduleRecord,
   ServerSubuserRecord,
+  TeamMemberRecord,
+  TeamMemberView,
+  TeamRecord,
   UpdateServerScheduleInput,
   UpsertNodeInput,
   UserRecord,
@@ -38,6 +41,8 @@ export function getPrisma(): PrismaClient {
   return prisma;
 }
 
+type PrismaTeam = Awaited<ReturnType<PrismaClient['team']['findFirstOrThrow']>>;
+type PrismaTeamMember = Awaited<ReturnType<PrismaClient['teamMember']['findFirstOrThrow']>>;
 type PrismaUser = Awaited<ReturnType<PrismaClient['user']['findFirstOrThrow']>>;
 type PrismaNode = Awaited<ReturnType<PrismaClient['node']['findFirstOrThrow']>>;
 type PrismaConfig = Awaited<ReturnType<PrismaClient['serverConfig']['findFirstOrThrow']>>;
@@ -66,6 +71,14 @@ function parseLimits(value: string): ResourceLimits {
   } catch {
     return {};
   }
+}
+
+function toTeamRecord(t: PrismaTeam): TeamRecord {
+  return { id: t.id, name: t.name, ownerId: t.ownerId, createdAt: t.createdAt.toISOString() };
+}
+
+function toTeamMemberRecord(m: PrismaTeamMember): TeamMemberRecord {
+  return { id: m.id, teamId: m.teamId, userId: m.userId, role: m.role, createdAt: m.createdAt.toISOString() };
 }
 
 function toUserRecord(u: PrismaUser): UserRecord {
@@ -99,6 +112,7 @@ function toConfigRecord(c: PrismaConfig): ServerConfigRecord {
   return {
     id: c.id,
     userId: c.userId,
+    teamId: c.teamId,
     name: c.name,
     dockerImage: c.dockerImage,
     ports: parseJson(c.ports),
@@ -211,6 +225,65 @@ export class PrismaRepository implements Repository {
     }
   }
 
+  // ── Teams (#177) ────────────────────────────────────────────────────────────
+  async createTeam(input: { id: string; name: string; ownerId: string }): Promise<TeamRecord> {
+    return toTeamRecord(await this.client.team.create({ data: input }));
+  }
+
+  async getTeam(id: string): Promise<TeamRecord | null> {
+    const t = await this.client.team.findUnique({ where: { id } });
+    return t ? toTeamRecord(t) : null;
+  }
+
+  async listTeamsForUser(userId: string): Promise<TeamRecord[]> {
+    const rows = await this.client.team.findMany({
+      where: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map(toTeamRecord);
+  }
+
+  async deleteTeam(id: string): Promise<void> {
+    // Detach the team's servers first so they stay reachable by their owner.
+    await this.client.serverConfig.updateMany({ where: { teamId: id }, data: { teamId: null } });
+    await this.client.team.delete({ where: { id } });
+  }
+
+  async addTeamMember(input: { teamId: string; userId: string; role: string }): Promise<TeamMemberRecord> {
+    const m = await this.client.teamMember.upsert({
+      where: { teamId_userId: { teamId: input.teamId, userId: input.userId } },
+      create: { id: randomUUID(), ...input },
+      update: { role: input.role },
+    });
+    return toTeamMemberRecord(m);
+  }
+
+  async listTeamMembers(teamId: string): Promise<TeamMemberView[]> {
+    const rows = await this.client.teamMember.findMany({ where: { teamId }, orderBy: { createdAt: 'asc' } });
+    // TeamMember has no relation to User (ids are free-form, see the User model),
+    // so the accounts are resolved in one extra query rather than a join.
+    const users = await this.client.user.findMany({ where: { id: { in: rows.map((m) => m.userId) } } });
+    const byId = new Map(users.map((u) => [u.id, u]));
+    return rows.map((m) => ({
+      ...toTeamMemberRecord(m),
+      email: byId.get(m.userId)?.email ?? '',
+      displayName: byId.get(m.userId)?.displayName ?? m.userId,
+    }));
+  }
+
+  async getTeamMember(teamId: string, userId: string): Promise<TeamMemberRecord | null> {
+    const m = await this.client.teamMember.findUnique({ where: { teamId_userId: { teamId, userId } } });
+    return m ? toTeamMemberRecord(m) : null;
+  }
+
+  async removeTeamMember(teamId: string, userId: string): Promise<void> {
+    await this.client.teamMember.deleteMany({ where: { teamId, userId } });
+  }
+
+  async setServerTeam(serverConfigId: string, teamId: string | null): Promise<void> {
+    await this.client.serverConfig.update({ where: { id: serverConfigId }, data: { teamId } });
+  }
+
   async upsertNode(input: UpsertNodeInput): Promise<NodeRecord> {
     // Undefined fields mean "preserve": liveness-only heartbeats (every 1s) omit
     // resources, which arrive only every 5s — so we must not null them out on the
@@ -284,6 +357,7 @@ export class PrismaRepository implements Repository {
       data: {
         id: randomUUID(),
         userId: input.userId,
+        teamId: input.teamId ?? null,
         name: input.name,
         dockerImage: input.dockerImage,
         ports: JSON.stringify(input.ports ?? {}),
@@ -335,6 +409,7 @@ export class PrismaRepository implements Repository {
       name: d.serverConfig.name,
       dockerImage: d.serverConfig.dockerImage,
       userId: d.serverConfig.userId,
+      teamId: d.serverConfig.teamId,
       type: d.serverConfig.type,
     }));
   }
@@ -346,6 +421,8 @@ export class PrismaRepository implements Repository {
           { serverConfig: { userId: user.id } },
           // Only active shares — a pending invitation grants nothing yet (#176).
           { subusers: { some: { userId: user.id, status: 'active' } } },
+          // Plus everything shared with a team they belong to (#177).
+          { serverConfig: { team: { members: { some: { userId: user.id } } } } },
         ],
       },
       include: { serverConfig: true },
@@ -356,6 +433,7 @@ export class PrismaRepository implements Repository {
       name: d.serverConfig.name,
       dockerImage: d.serverConfig.dockerImage,
       userId: d.serverConfig.userId,
+      teamId: d.serverConfig.teamId,
       type: d.serverConfig.type,
     }));
   }
@@ -530,6 +608,7 @@ export class PrismaRepository implements Repository {
       name: d.serverConfig.name,
       dockerImage: d.serverConfig.dockerImage,
       userId: d.serverConfig.userId,
+      teamId: d.serverConfig.teamId,
       type: d.serverConfig.type,
       events: d.events.map((e) => ({
         id: e.id,

@@ -9,6 +9,7 @@ import { resolveAgentUrl } from './agentUrl.js';
 import { principalOf, requirePlatformAdmin } from './auth.js';
 import { accessGuard, accessOf, requirePermission } from './accessGuard.js';
 import { isGrantableRole, resolveRole } from './access.js';
+import { createServerTeamRouter } from './teams.js';
 import type { DeploymentDetail, NodeRecord, Repository } from './types.js';
 
 const SCHEDULE_ACTIONS = ['restart', 'backup'];
@@ -229,10 +230,19 @@ export function createApiRouter(deps: ApiDeps): Router {
     // that will actually succeed (#178).
     return res.json(
       await Promise.all(
-        visible.map(async (d) => ({
-          ...d,
-          role: resolveRole({ principal, ownerId: d.userId, grant: await repo.getSubuserFor(d.id, caller.email) }),
-        }))
+        visible.map(async (d) => {
+          const share = await repo.getSubuserFor(d.id, caller.email);
+          return {
+            ...d,
+            role: resolveRole({
+              principal,
+              ownerId: d.userId,
+              teamId: d.teamId,
+              grant: share?.status === 'active' && share.userId === principal.id ? share : null,
+              membership: d.teamId ? await repo.getTeamMember(d.teamId, principal.id) : null,
+            }),
+          };
+        })
       )
     );
   });
@@ -240,6 +250,8 @@ export function createApiRouter(deps: ApiDeps): Router {
   // Everything addressing one server passes through the guard, so a route added
   // below is protected by default; it only has to declare what it needs.
   router.use('/deployments/:id', accessGuard(repo));
+  // Attaching a server to a team sits behind the same guard (#177).
+  router.use(createServerTeamRouter({ repo }));
 
   router.get('/deployments/:id', requirePermission('server.view'), (req: Request, res: Response) => {
     res.json({ ...accessOf(req).deployment, role: accessOf(req).role });

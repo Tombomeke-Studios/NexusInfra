@@ -38,6 +38,9 @@ import {
   type ServerBackup,
   type ServerSchedule,
   type ScheduleAction,
+  listTeams,
+  setServerTeam,
+  type Team,
   type ServerSubuser,
   type SubuserRole,
 } from '../api';
@@ -154,7 +157,7 @@ export function ServerDetail() {
       {tab === 'schedules' && <SchedulesTab id={d.id} />}
       {tab === 'subusers' && <SubusersTab id={d.id} />}
       {tab === 'startup' && <StartupTab image={d.dockerImage} isGame={isGame} envs={d.events.length} />}
-      {tab === 'settings' && <SettingsTab onDelete={onDelete} />}
+      {tab === 'settings' && <SettingsTab id={d.id} teamId={d.teamId ?? null} onDelete={onDelete} />}
     </div>
   );
 }
@@ -1045,10 +1048,45 @@ function StartupTab({ image, isGame }: { image: string; isGame: boolean; envs: n
   );
 }
 
-function SettingsTab({ onDelete }: { onDelete: () => void }) {
+function SettingsTab({ id, teamId, onDelete }: { id: string; teamId: string | null; onDelete: () => void }) {
   const { toast } = useToast();
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [team, setTeam] = useState<string>(teamId ?? '');
+
+  // Which teams this server can be shared with — only ones the caller is in, so
+  // a server can't be pushed onto strangers (the API enforces the same rule).
+  useEffect(() => {
+    void listTeams().then(setTeams).catch(() => undefined);
+  }, []);
+
+  const share = async (next: string) => {
+    setTeam(next);
+    try {
+      await setServerTeam(id, next || null);
+      toast(next ? 'Server shared with the team' : 'Server no longer shared with a team', 'success', 'Teams');
+    } catch (e) {
+      setTeam(teamId ?? '');
+      toast(e instanceof Error ? e.message : 'Could not change the team', 'error', 'Teams');
+    }
+  };
+
   return (
     <>
+      <div className="card" style={{ padding: '20px 22px', marginBottom: 18 }}>
+        <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6 }}>
+          Share with a team
+          <InfoHint text="Everyone in the team gets their team role on this server, without being invited to it individually. The server stays yours — detaching it, or deleting the team, only removes the sharing." label="Team sharing help" />
+        </strong>
+        <p className="subtle" style={{ margin: '0 0 14px', fontSize: '.84rem' }}>
+          {teams.length ? 'Only teams you belong to are listed.' : 'You are not in any team yet — create one on the Teams page.'}
+        </p>
+        <select className="select" value={team} onChange={(e) => void share(e.target.value)} aria-label="Team for this server" disabled={!teams.length} style={{ width: 'auto', minWidth: 220 }}>
+          <option value="">Not shared with a team</option>
+          {teams.map((t) => (
+            <option key={t.id} value={t.id}>{t.name}</option>
+          ))}
+        </select>
+      </div>
       <div className="card" style={{ padding: '20px 22px', marginBottom: 18 }}>
         <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6 }}>Reinstall server</strong>
         <p className="subtle" style={{ margin: '0 0 14px', fontSize: '.84rem' }}>Re-run the install script. Your data files are preserved.</p>

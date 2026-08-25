@@ -14,6 +14,7 @@ import { createMonitoringRouter } from './monitoring.js';
 import { createConfigRouter } from './config.js';
 import { createAccountRouter, createAuthRouter, createUserAdminRouter, requireAuth } from './auth.js';
 import { createUserService } from './users.js';
+import { createTeamRouter } from './teams.js';
 import { createNodeRegistry } from './nodeRegistry.js';
 import { createLifecycle } from './lifecycle.js';
 import { createSuspendHandler, type SuspendPayload } from './suspend.js';
@@ -79,6 +80,7 @@ app.use(createAuthRouter({ users }));
 app.use(requireAuth);
 app.use(createAccountRouter({ users, repo }));
 app.use(createUserAdminRouter({ users, repo }));
+app.use(createTeamRouter({ repo }));
 app.use(createApiRouter({ repo, scheduleActions }));
 // Authenticated billing proxy → Billing Bridge (hosted edition; injects the JWT user id).
 app.use(createBillingProxyRouter());
@@ -128,8 +130,10 @@ server.on('upgrade', async (req, socket, head) => {
   // valid token is not enough — the caller needs console access on *this*
   // server. Every failure closes the socket without saying why.
   const caller = await repo.getUser(principal.id);
-  const grant = caller ? await repo.getSubuserFor(detail!.id, caller.email) : null;
-  const role = resolveRole({ principal, ownerId: detail!.userId, grant });
+  const share = caller ? await repo.getSubuserFor(detail!.id, caller.email) : null;
+  const grant = share?.status === 'active' && share.userId === principal.id ? share : null;
+  const membership = detail!.teamId ? await repo.getTeamMember(detail!.teamId, principal.id) : null;
+  const role = resolveRole({ principal, ownerId: detail!.userId, teamId: detail!.teamId, grant, membership });
   if (!can(role, 'console.connect')) return socket.destroy();
 
   // Dial the agent that actually owns this deployment (#171).
