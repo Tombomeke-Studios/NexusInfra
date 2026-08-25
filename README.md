@@ -69,11 +69,15 @@ NexusInfra ships as two products chosen by a single runtime flag — no fork, no
 | For | anyone self-hosting the panel on their own machines | a multi-tenant instance |
 | Accounts | an administrator creates them | customers register themselves |
 | Billing, quotas, FinVault | off | on |
-| Get it | [`deploy/community/`](deploy/community/) | [`deploy/hosted/`](deploy/hosted/) |
+| Get it | `install.sh` / `install.ps1`, choose **community** | the same installer, choose **hosted** |
 
-Each release publishes both to GHCR as `nexusinfra-<service>:X.Y.Z-community` and
-`:X.Y.Z-hosted`, plus a ready-to-run compose bundle for each. Neither bundle needs a checkout of
-this repository — see [docs/deployment.md](docs/deployment.md).
+Download the release archive, run the installer, answer one question. It generates the secrets,
+writes the configuration and starts the stack — see [deploy/README.md](deploy/README.md).
+
+The editions are **separate images**, and the community images do not contain the hosted code at
+all: the tag decides what you get, with nothing to configure afterwards. Each release publishes
+`nexusinfra-<service>:X.Y.Z-community` and `:X.Y.Z-hosted` to GHCR alongside the archive — see
+[docs/deployment.md](docs/deployment.md).
 
 ---
 

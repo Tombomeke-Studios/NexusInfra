@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { getCurrentUser, type CurrentUser } from '../api';
 import { logout } from '../session';
 import { useEdition } from '../edition';
+import { BILLING_INCLUDED } from '../buildEdition';
 import { hasSeenIntro, markIntroSeen } from '../prefs';
 import { ThemeToggle } from './ThemeToggle';
 import { IntroTour } from './IntroTour';
@@ -63,7 +64,8 @@ export function Layout() {
           <NavLink to="/preferences" className="navlink" data-ripple>
             Preferences
           </NavLink>
-          {isHosted && (
+          {/* Not in a community build at all (#190), so the bundler drops it. */}
+          {BILLING_INCLUDED && isHosted && (
             <NavLink to="/billing" className="navlink" data-ripple>
               Billing
             </NavLink>

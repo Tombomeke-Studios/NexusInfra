@@ -8,8 +8,9 @@
 #   2. docker compose up -d
 #   3. open http://localhost:8095
 #
-# Pin NEXUSINFRA_VERSION to a released version rather than tracking `community`
-# if you would like upgrades to be a deliberate act.
+# The image tag decides the edition — these are the `community` images, and they
+# do not contain the hosted code. Pin NEXUSINFRA_VERSION to a released version
+# rather than tracking the moving tag if you would like upgrades to be deliberate.
 
 services:
   rabbitmq:
@@ -30,7 +31,6 @@ services:
     restart: unless-stopped
     ports: ['9000:9000']
     environment:
-      - NEXUS_EDITION=community
       - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:-}
     depends_on: [rabbitmq]
@@ -40,7 +40,6 @@ services:
     container_name: nexusinfra-node-agent
     restart: unless-stopped
     environment:
-      - NEXUS_EDITION=community
       - NODE_ID=${NODE_ID:-node-local}
       - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:-}
@@ -60,7 +59,6 @@ services:
     restart: unless-stopped
     ports: ['9200:9200']
     environment:
-      - NEXUS_EDITION=community
       - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:-}
       - DATABASE_URL=file:/data/orchestrator.db
@@ -81,7 +79,6 @@ services:
     restart: unless-stopped
     ports: ['9400:9400']
     environment:
-      - NEXUS_EDITION=community
       - ORCHESTRATOR_URL=http://orchestrator:9200
       - JWT_SECRET=${JWT_SECRET:?set a strong random value in .env}
       - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
@@ -89,9 +86,9 @@ services:
     depends_on: [orchestrator]
 
   dashboard:
-    # One dashboard image serves both editions — it reads the edition at runtime
-    # from the Orchestrator, so there is nothing to bake in.
-    image: ghcr.io/tombomeke-studios/nexusinfra-dashboard:${NEXUSINFRA_VERSION:-latest}
+    # Built for this edition (#190): the community bundle does not contain the
+    # billing UI at all, rather than hiding it.
+    image: ghcr.io/tombomeke-studios/nexusinfra-dashboard:${NEXUSINFRA_VERSION:-community}
     container_name: nexusinfra-dashboard
     restart: unless-stopped
     ports: ['${DASHBOARD_PORT:-8095}:80']

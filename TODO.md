@@ -57,11 +57,16 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > **API Gateway** HTTP core (#20 — CORS, rate limiting, JWT, reverse proxy), **Delete server** wired end
 > to end (#156), Control Room health surfaced in the panel (#157) plus **uptime % / transitions** (#165).
 >
-> **⚠️ Not yet verified live:** the terminal's PTY/WebSocket path and the gateway are unit-tested but
-> have not been exercised against a running stack. Neither has the Phase 6 sharing flow: accounts,
-> roles, invitations and teams are covered by 451 unit tests, but the two-account walkthrough
-> (invite → operator starts the server → viewer is refused) has not been run against a live stack.
-> Do a `docker compose up -d --build` pass for both.
+> **✅ Verified live (community edition, from the release bundle):** the whole stack started from
+> published-image compose, every service reported `edition: community`, and the sharing flow was
+> walked end to end against a real `nginx:alpine` container — a stranger got **404** (not 403), an
+> **operator stopped and started the container for real** while being refused files-write, backups,
+> databases, subusers, delete and node registration, a **viewer** was refused control but could still
+> look, and **revoking access took effect on the next request**. Self-registration was refused in
+> community, and the served dashboard bundle contained **no billing code**.
+>
+>  **⚠️ Still not verified live:** the terminal's PTY/WebSocket path, the gateway proxy, and the
+> hosted edition (needs FinVault on a shared broker).
 >
 > **Phase 6 is complete (#173–#179) — the panel is multi-user and both editions are shippable.**
 > Real accounts replace the single hardcoded login, and **every** server route is now authorized:
@@ -72,10 +77,11 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > The panel splits **My servers** / **Shared with me** and offers only actions the caller's role
 > allows. Model: **[docs/security.md](docs/security.md)**.
 >
-> **Releases.** Tagging `vX.Y.Z` publishes `nexusinfra-<service>:X.Y.Z-{community,hosted}` to GHCR
-> and attaches a self-contained compose bundle for each edition — `deploy/community/` for
-> self-hosters, `deploy/hosted/` for the multi-tenant instance. Neither needs a checkout of this
-> repo. **Verified** by a `workflow_dispatch` dry run: all 11 build-and-push jobs green.
+> **Releases.** Tagging `vX.Y.Z` publishes `nexusinfra-<service>:X.Y.Z-{community,hosted}` to GHCR and
+> attaches **one archive** containing both editions plus an installer (#192). **The image decides its
+> edition** (#189): pulling `:hosted` is enough, and a service asked to run as the edition it was not
+> built for exits rather than half-enabling billing. The community dashboard genuinely **does not
+> contain** the billing code, checked against the built bundle at image-build time (#190).
 > See **[docs/deployment.md](docs/deployment.md)**.
 >
 > **Next up — Phase 5 production hardening.** Remaining work is mostly environment-dependent
@@ -159,6 +165,10 @@ gateway work" above.)_
 - [x] Teams — account-level sharing of servers (#177)
 - [x] Role-aware dashboard — "Shared with me" + actions gated by permission (#178)
 - [x] Release pipeline — per-edition images on GHCR + `deploy/{community,hosted}` bundles (#179)
+- [x] Per-edition images decide their own edition; mismatch refuses to start (#189)
+- [x] Dashboard built per edition — community ships no billing code, verified against the bundle (#190)
+- [x] One release archive with an installer for POSIX + Windows (#192)
+- [ ] Slim the service images — Prisma CLI + engine targets (orchestrator is 501 MB) (#191) 📋
 
 ### 🐛 Bugs / fixes (open)
 

@@ -192,6 +192,7 @@ is the migrations directory.
 | `shared/src/rabbitmq.ts` | Connect/publish/consume helpers targeting the shared `finvault.events` topic exchange + `finvault.events.dlx` |
 | `shared/src/heartbeat.ts` | `startHeartbeat(name)` (service pulse) + `startNodeHeartbeat(nodeId, collectResources, {agentUrl})` (node pulse, resources every 5s, advertises the agent URL for #171); both take an injectable publisher |
 | `shared/src/edition.ts` | Open-core edition flag: `Edition` type + `resolveEdition`/`getEdition`/`isHosted` (reads `NEXUS_EDITION`, defaults `community`) |
+| `shared/src/edition.ts` | The open-core flag. **The image decides**: `getBuildEdition()` reads a stamp baked into the image, which outranks `NEXUS_EDITION`; `assertEditionIsRunnable()` exits on a mismatch. No stamp (running from source) → the env decides (#189) |
 | `shared/src/version.ts` | Build identity: `getVersion()` (reads `APP_VERSION`, baked by the release build) + `buildInfo()` → `{ version, edition }`, spread into every service's `/health` (#173) |
 | `shared/src/outbox.ts` | `PublishOutbox` + `startOutboxFlusher` — holds a failed publish and replays it **in order** when the broker returns; bounded (drop-oldest + `droppedCount`). Wrap publishers whose events carry state (#167) |
 | `shared/src/internalToken.ts` | Service-to-service shared secret: `INTERNAL_TOKEN_HEADER`, `getInternalToken`, `tokensMatch` (constant-time). Guards the Node Agent's internal API (#169) |
@@ -285,6 +286,8 @@ is the migrations directory.
 | `src/api.ts` | Typed Orchestrator client (login, nodes, deployments, create, stop); attaches the JWT; `ApiError` on non-2xx |
 | `src/session.ts` | Token get/set/clear + `isAuthenticated` (single place that touches the token in localStorage) |
 | `src/edition.tsx` | `EditionProvider` + `useEdition()` — reads `GET /config`, exposes `edition`/`isHosted` so billing UI renders only in hosted |
+| `src/buildEdition.ts` | `BILLING_INCLUDED` — a **compile-time** constant (`__BUILD_EDITION__`, set in vite.config.ts). Distinct from `useEdition()`: this answers "is the code in the bundle?", that answers "is the server hosted?" (#190) |
+| `scripts/verify-edition.mjs` | Greps the **built** bundle to prove a community build contains no billing code; run by the image build, so tree-shaking regressions fail the build (#190) |
 | `src/permissions.ts` | The panel's copy of the server permission matrix (#178) — `can`/`permissionsFor`/`ROLE_LABELS`. **Mirrors `orchestrator/src/access.ts`; change both together.** An absent role means full access, so an owner is never locked out of their own server |
 | `src/prefs.ts` | Persisted client preferences (localStorage): first-run intro flag + customisable New Deployment defaults (`getDeploymentDefaults`) |
 | `src/gameSpec.ts` | Pure `buildGameDeployment` — maps the game picker to a real image + startup env/port (Minecraft/Valheim/Rust/CS2) |
@@ -307,6 +310,7 @@ is the migrations directory.
 | `docker-compose.yml` | RabbitMQ + control-room + node-agent + orchestrator + dashboard stack |
 | `vitest.workspace.ts` | Splits tests into `backend` (node) and `dashboard` (jsdom) projects |
 | `.env.example` | Env contract — documents the FinVault-shared vars (`RABBITMQ_URL`, `FINVAULT_MESSAGE_KEY`) |
+| `deploy/install.sh` · `deploy/install.ps1` | Release installer: picks an edition, generates `JWT_SECRET`/`INTERNAL_API_TOKEN`/admin password, writes `.env`, starts the stack. Never overwrites an existing `.env` unasked (#192) |
 | `deploy/community/` · `deploy/hosted/` | Self-contained release bundles: compose pinned to published images + `.env.example` + README. Neither needs a checkout of this repo; both are attached to each GitHub release (#179) |
 | `.github/workflows/release.yml` | On a `v*` tag: re-run CI in both editions, then publish `nexusinfra-<service>:X.Y.Z-{community,hosted}` to GHCR. The dashboard is edition-neutral (one tag); `billing-bridge` builds hosted only (#179) |
 | `.github/workflows/ci.yml` | CI: npm ci → build → lint (if present) → test, on PRs and pushes to dev/staging/main |
@@ -349,6 +353,12 @@ is the migrations directory.
   A caller-supplied id is a caller-chosen identity.
 - **Never return a raw user record over HTTP** — go through `toPublicUser`, which drops the
   credential digest. The same applies to anything embedding a user.
+- **An image's edition is fixed at build time and cannot be changed by `NEXUS_EDITION`** (#189). The
+  variable still works when running from source. If a container exits complaining about the edition,
+  the fix is to pull the other tag, not to set the variable harder.
+- **Anything hosted-only added to the dashboard must be excluded from the community build** — alias
+  it in `vite.config.ts` and add a marker to `verify-edition.mjs`, or the community bundle silently
+  starts shipping code it cannot run.
 - **The dashboard's `permissions.ts` is a mirror, not a second source of truth.** It exists so the
   panel doesn't offer buttons that would 403; change it in the same commit as `access.ts` or the two
   drift. Hiding a control is never a security measure — the API is.

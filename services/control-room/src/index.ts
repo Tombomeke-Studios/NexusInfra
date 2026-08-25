@@ -1,5 +1,6 @@
 import express from 'express';
 import {
+  assertEditionIsRunnable,
   buildInfo,
   consumeRabbitQueue,
   startHeartbeat,
@@ -14,6 +15,16 @@ import { DEGRADED_MS, Monitor, OFFLINE_MS } from './monitor.js';
 // CONCEPTS/infrastructure-platform/architecture.md: healthy → degraded (3s) →
 // offline (10s). The tracking/uptime maths live in monitor.ts (pure + tested);
 // this file is wiring. State is in-memory — persisted history is a later phase.
+
+// Refuse to run this image as an edition it was not built for (#189): the
+// community images do not contain the hosted code, so starting anyway would mean
+// a half-enabled billing system rather than a working one.
+try {
+  assertEditionIsRunnable();
+} catch (err) {
+  console.error(`[Control Room] ${err instanceof Error ? err.message : err}`);
+  process.exit(1);
+}
 
 const PORT = Number(process.env.PORT) || 9000;
 

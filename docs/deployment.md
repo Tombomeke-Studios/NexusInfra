@@ -92,28 +92,44 @@ ghcr.io/tombomeke-studios/nexusinfra-<service>:X.Y.Z-hosted      (+ a moving :ho
 ghcr.io/tombomeke-studios/nexusinfra-dashboard:X.Y.Z             (+ :latest)
 ```
 
-Two things about those tags are deliberate:
+**The tag decides the edition, and nothing else has to.** Each image carries a stamp recording the
+edition it was built for, and that stamp outranks the environment: pulling `:hosted` is enough, with
+nothing to declare afterwards. A service asked to run as the edition it was not built for **exits**
+with a message naming both — the community images do not contain the hosted code, so starting anyway
+would mean a half-enabled billing system rather than a working one. Running from source is
+unaffected: with no stamp, `NEXUS_EDITION` decides as it always has.
 
-- **The edition is baked in as a *default*, not a constraint.** Each service Dockerfile takes
-  `NEXUS_EDITION` as a build arg and sets it as an `ENV`, which the runtime environment can still
-  override. The per-edition tags exist so the intended one is obvious at a glance; the runtime flag
-  remains the mechanism, exactly as [billing.md](billing.md) describes. The two legs differ only by
-  that arg, so the second is almost entirely cache hits.
-- **The dashboard is edition-neutral and published once.** It reads the edition at runtime from the
-  Orchestrator's `/config`, so there is nothing to bake in — forking it would buy nothing.
-- **`billing-bridge` is built only for hosted.** A community build of it would be a build of nothing.
+**The community build genuinely does not contain the hosted code.** This matters most for the
+dashboard, which is served to a browser: the billing page is aliased to a stub at build time and its
+route is compiled out, and the image build runs `verify-edition.mjs` against the built bundle so a
+regression fails the build instead of shipping quietly. `billing-bridge` is built for hosted only —
+a community build of it would be a build of nothing.
+
+*A note on size:* excluding that code saves roughly 5 KB of a 288 KB bundle. It is worth doing for
+open-core integrity — self-hosters receive only code they can run — not for image size. Measured, the
+application is about 0.1% of what ships; the weight is the base images and Prisma (#191).
 
 Services also report their `version` and *resolved* `edition` from `GET /health`, which is the fastest
 way to confirm a running container is what you think it is.
 
-### Deployment bundles
+### The release archive
 
-`deploy/community/` and `deploy/hosted/` are self-contained: a compose file pinned to published
-images, a documented `.env.example`, and a README. Neither needs a checkout of this repository to
-run, and both are attached to the GitHub release as tarballs. They are the artifacts to hand someone
-who wants to run NexusInfra rather than work on it.
+Each release attaches **one** archive, `nexusinfra-X.Y.Z.zip` (and a `.tar.gz`), containing both
+edition bundles and an installer:
 
-They differ from the repo-root `docker-compose.yml`, which **builds from source** and is for
+```
+nexusinfra-X.Y.Z/
+  install.sh · install.ps1   ask which edition, generate secrets, write .env, start
+  README.md                  which edition to choose and why
+  community/                 compose + .env.example + README, pinned to this release
+  hosted/                    the same, plus billing-bridge
+```
+
+Choosing an edition is a question the installer asks, not a download you have to get right
+beforehand. Neither bundle needs a checkout of this repository. Both are pinned to the exact release
+they shipped with, so an old archive keeps installing the same thing.
+
+This differs from the repo-root `docker-compose.yml`, which **builds from source** and is for
 development.
 
 ## CI/CD

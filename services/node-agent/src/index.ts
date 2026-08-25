@@ -2,7 +2,7 @@ import os from 'os';
 import { createServer } from 'http';
 import express from 'express';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { buildInfo, consumeRabbitQueue, isDefaultInternalToken, publishRabbitEvent, PublishOutbox, startNodeHeartbeat, startOutboxFlusher } from 'shared';
+import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, isDefaultInternalToken, publishRabbitEvent, PublishOutbox, startNodeHeartbeat, startOutboxFlusher } from 'shared';
 import { requireInternalToken, upgradeAuthorized } from './internalAuth.js';
 import { DockerodeRuntime } from './runtime.js';
 import { createAgent } from './agent.js';
@@ -17,6 +17,14 @@ import { attachTerminal, type TerminalSocket } from './terminal.js';
 // node and drives the local Docker daemon via dockerode (see runtime.ts).
 
 const NODE_ID = process.env.NODE_ID || `node-${os.hostname()}`;
+// Refuse to run this image as an edition it was not built for (#189).
+try {
+  assertEditionIsRunnable();
+} catch (err) {
+  console.error(`[Node Agent] ${err instanceof Error ? err.message : err}`);
+  process.exit(1);
+}
+
 const PORT = Number(process.env.PORT) || 9100;
 
 // Where the Orchestrator can reach this agent's HTTP/WS API. Advertised on the

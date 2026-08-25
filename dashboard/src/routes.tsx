@@ -11,6 +11,7 @@ import { Teams } from './pages/Teams';
 import { Preferences } from './pages/Preferences';
 import { Billing } from './pages/Billing';
 import { useEdition } from './edition';
+import { BILLING_INCLUDED } from './buildEdition';
 
 // Route table: /login is public; everything else sits behind RequireAuth inside
 // the app shell (Layout). Split from App so tests can mount it in a MemoryRouter.
@@ -31,8 +32,10 @@ export function AppRoutes() {
           <Route path="/nodes/:id" element={<NodeDetail />} />
           <Route path="/teams" element={<Teams />} />
           <Route path="/preferences" element={<Preferences />} />
-          {/* Billing is hosted-edition only (#149). */}
-          {isHosted && <Route path="/billing" element={<Billing />} />}
+          {/* Billing is hosted-edition only (#149) and is not in a community build at
+              all (#190) — BILLING_INCLUDED is a compile-time constant, so this whole
+              branch disappears from the community bundle. */}
+          {BILLING_INCLUDED && isHosted && <Route path="/billing" element={<Billing />} />}
         </Route>
       </Route>
     </Routes>
