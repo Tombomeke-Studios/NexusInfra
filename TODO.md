@@ -138,7 +138,7 @@ gateway work" above.)_
 - [x] Subuser invites bound to real accounts (pending until claimed) + `operator` role (#176)
 - [x] Teams — account-level sharing of servers (#177)
 - [x] Role-aware dashboard — "Shared with me" + actions gated by permission (#178)
-- [ ] Release pipeline — per-edition images on GHCR + `deploy/{community,hosted}` bundles (#179)
+- [x] Release pipeline — per-edition images on GHCR + `deploy/{community,hosted}` bundles (#179)
 
 ### 🐛 Bugs / fixes (open)
 

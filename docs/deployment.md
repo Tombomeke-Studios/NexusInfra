@@ -73,6 +73,49 @@ Run one broker for both platforms: omit NexusInfra's `rabbitmq` service and poin
 FinVault's `finvault-rabbitmq` container (shared Docker network required). Both stacks assert the
 same exchanges idempotently — start order does not matter.
 
+## Releases & editions (#179)
+
+NexusInfra ships as **two products from one codebase**, selected by `NEXUS_EDITION`:
+
+| | **Community** | **Hosted** |
+|---|---|---|
+| For | anyone self-hosting the panel on their own machines | the public/portfolio instance |
+| Sign-up | administrator creates accounts | customers register themselves |
+| Billing, FinVault, quotas | off | on (adds the Billing Bridge) |
+
+Tagging `vX.Y.Z` runs `.github/workflows/release.yml`, which re-runs the full suite in both editions
+and then publishes to GHCR:
+
+```
+ghcr.io/tombomeke-studios/nexusinfra-<service>:X.Y.Z-community   (+ a moving :community)
+ghcr.io/tombomeke-studios/nexusinfra-<service>:X.Y.Z-hosted      (+ a moving :hosted)
+ghcr.io/tombomeke-studios/nexusinfra-dashboard:X.Y.Z             (+ :latest)
+```
+
+Two things about those tags are deliberate:
+
+- **The edition is baked in as a *default*, not a constraint.** Each service Dockerfile takes
+  `NEXUS_EDITION` as a build arg and sets it as an `ENV`, which the runtime environment can still
+  override. The per-edition tags exist so the intended one is obvious at a glance; the runtime flag
+  remains the mechanism, exactly as [billing.md](billing.md) describes. The two legs differ only by
+  that arg, so the second is almost entirely cache hits.
+- **The dashboard is edition-neutral and published once.** It reads the edition at runtime from the
+  Orchestrator's `/config`, so there is nothing to bake in — forking it would buy nothing.
+- **`billing-bridge` is built only for hosted.** A community build of it would be a build of nothing.
+
+Services also report their `version` and *resolved* `edition` from `GET /health`, which is the fastest
+way to confirm a running container is what you think it is.
+
+### Deployment bundles
+
+`deploy/community/` and `deploy/hosted/` are self-contained: a compose file pinned to published
+images, a documented `.env.example`, and a README. Neither needs a checkout of this repository to
+run, and both are attached to the GitHub release as tarballs. They are the artifacts to hand someone
+who wants to run NexusInfra rather than work on it.
+
+They differ from the repo-root `docker-compose.yml`, which **builds from source** and is for
+development.
+
 ## CI/CD
 
 - `.github/workflows/ci.yml`: npm ci → build → lint → test, on PRs and pushes to

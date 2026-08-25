@@ -24,6 +24,14 @@ COPY --from=builder /app/services/orchestrator/prisma ./services/orchestrator/pr
 # prisma (CLI, for migrate deploy) + @prisma/client are runtime deps; the
 # orchestrator postinstall regenerates the client against the copied schema.
 RUN npm install --omit=dev
+# Build identity (#179). These are defaults the release workflow bakes in — the
+# runtime environment can still override NEXUS_EDITION, so one image is never
+# locked to an edition; the per-edition tags exist to make the intended one
+# obvious rather than to enforce it.
+ARG APP_VERSION=0.0.0-dev
+ARG NEXUS_EDITION=community
+ENV APP_VERSION=$APP_VERSION
+ENV NEXUS_EDITION=$NEXUS_EDITION
 ENV PORT=9200
 ENV DATABASE_URL=file:./orchestrator.db
 EXPOSE 9200

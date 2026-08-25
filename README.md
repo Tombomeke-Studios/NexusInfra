@@ -34,6 +34,7 @@ billing wired to **[FinVault](https://github.com/Tombomeke-Studios/FinVault)** o
 ## Contents
 
 - [Highlights](#highlights)
+- [Two editions, one codebase](#two-editions-one-codebase)
 - [Architecture](#architecture)
 - [The deployment loop](#the-deployment-loop)
 - [Quickstart — run the panel](#quickstart--run-the-panel)
@@ -54,7 +55,25 @@ billing wired to **[FinVault](https://github.com/Tombomeke-Studios/FinVault)** o
 - 📡 **Live status** — heartbeats drive `healthy → degraded → offline`; the Servers page polls in real time.
 - 🐳 **Real Docker** — node agents drive the Docker API on each host to start/stop/restart containers.
 - 🔒 **Encrypted events** — payloads are AES-256-GCM encrypted on a shared bus, wire-compatible with FinVault.
+- 👥 **Share your servers** — invite people by email or by team, with roles from read-only to full control.
 - 💳 **Billing-ready** — the `payment.*` contract with FinVault is pre-defined for usage-based billing.
+
+---
+
+## Two editions, one codebase
+
+NexusInfra ships as two products chosen by a single runtime flag — no fork, no divergence.
+
+| | **Community** | **Hosted** |
+|---|---|---|
+| For | anyone self-hosting the panel on their own machines | a multi-tenant instance |
+| Accounts | an administrator creates them | customers register themselves |
+| Billing, quotas, FinVault | off | on |
+| Get it | [`deploy/community/`](deploy/community/) | [`deploy/hosted/`](deploy/hosted/) |
+
+Each release publishes both to GHCR as `nexusinfra-<service>:X.Y.Z-community` and
+`:X.Y.Z-hosted`, plus a ready-to-run compose bundle for each. Neither bundle needs a checkout of
+this repository — see [docs/deployment.md](docs/deployment.md).
 
 ---
 
