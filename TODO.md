@@ -208,6 +208,7 @@ scrolling log lines describing events that never happened.
 - [x] Placement picker is ignored — a pinned node is silently overruled (#254) 🐛
 - [x] The startup command field is never sent anywhere (#255) 🐛 — field removed
 - [x] Feature limit sliders (databases/backups) are never sent or enforced (#256) 🐛 — section removed
+- [ ] Node maintenance mode exists only in the browser tab — servers still land there (#258) 🐛
 - [ ] A server's config cannot be edited after creation — `PATCH /deployments/:id` (#220)
 - [ ] Account settings page — change your own password (`/me` exists, nothing calls it) (#221)
 - [ ] Admin user management page — list/create accounts without curl (#222)
