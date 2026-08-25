@@ -1134,11 +1134,14 @@ function SettingsTab({ id, teamId, onDelete }: { id: string; teamId: string | nu
           ))}
         </select>
       </div>
-      <div className="card" style={{ padding: '20px 22px', marginBottom: 18 }}>
-        <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6 }}>Reinstall server</strong>
-        <p className="subtle" style={{ margin: '0 0 14px', fontSize: '.84rem' }}>Re-run the install script. Your data files are preserved.</p>
-        <button className="btn btn--secondary btn--sm" data-ripple onClick={() => toast('Not wired yet', 'info')}>Reinstall</button>
-      </div>
+      {/*
+        A "Reinstall" card used to sit here, wired to a 'Not wired yet' toast. It
+        was never implementable as written: there is no install script to re-run,
+        and Start already recreates the container from the saved config, so
+        reinstalling would be stop + start under a different name (#219). It comes
+        back when there is something distinct to do — pulling a fresh image (#239)
+        or rebuilding from a template (#231).
+      */}
       <div className="card" style={{ padding: '20px 22px', borderColor: 'var(--color-danger-soft)' }}>
         <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6, color: 'var(--color-danger)' }}>Delete server</strong>
         <p className="subtle" style={{ margin: '0 0 14px', fontSize: '.84rem' }}>Permanently removes this server and all of its files. This cannot be undone.</p>

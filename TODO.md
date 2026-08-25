@@ -195,7 +195,7 @@ gateway work" above.)_
 
 - [x] Network tab is hardcoded — render real port allocations, drop the fake SFTP host (#217) 🐛
 - [x] Startup tab invents environment variables — show the server's own (#218) 🐛
-- [ ] "Reinstall server" is a no-op — implement it or remove the card (#219) 🐛
+- [x] "Reinstall server" is a no-op — removed; Start already recreates from config (#219) 🐛
 - [ ] A server's config cannot be edited after creation — `PATCH /deployments/:id` (#220)
 - [ ] Account settings page — change your own password (`/me` exists, nothing calls it) (#221)
 - [ ] Admin user management page — list/create accounts without curl (#222)

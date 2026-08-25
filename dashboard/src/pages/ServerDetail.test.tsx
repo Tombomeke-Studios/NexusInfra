@@ -136,6 +136,23 @@ describe('ServerDetail Network tab', () => {
   });
 });
 
+describe('ServerDetail Settings tab', () => {
+  beforeEach(() => vi.resetAllMocks());
+  afterEach(() => vi.unstubAllGlobals());
+
+  // The Reinstall button only ever fired a "Not wired yet" toast, and could not
+  // mean anything: Start already recreates the container from the saved config
+  // (#219). Offering no button beats offering one that does nothing.
+  it('offers no Reinstall button', async () => {
+    renderDetail('owner');
+    await userEvent.click(await screen.findByRole('button', { name: 'settings' }));
+
+    expect(screen.queryByRole('button', { name: /reinstall/i })).not.toBeInTheDocument();
+    // The real destructive action is still there.
+    expect(screen.getByRole('button', { name: /delete server/i })).toBeInTheDocument();
+  });
+});
+
 describe('ServerDetail Startup tab', () => {
   beforeEach(() => vi.resetAllMocks());
   afterEach(() => vi.unstubAllGlobals());
