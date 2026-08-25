@@ -89,16 +89,64 @@ jobs:
             APP_VERSION=${{ steps.meta.outputs.version }}
             NEXUS_EDITION=${{ matrix.edition }}
           tags: |
-            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/nexusinfra-${{ matrix.service }}:${{ steps.meta.outputs.version }}-${{ matrix.edition }}
-            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/nexusinfra-${{ matrix.service }}:${{ matrix.edition }}
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/nexusinfra/${{ matrix.service }}:${{ steps.meta.outputs.version }}-${{ matrix.edition }}
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/nexusinfra/${{ matrix.service }}:${{ matrix.edition }}
           # The two editions differ only in a build arg, so the second leg is
           # almost entirely cache hits.
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
+  allinone:
+    # One image, one command, a working panel — for a single machine. Published
+    # as a package per edition so `docker pull …/nexusinfra-community` works with
+    # no tag: the all-in-one *is* the product, the six above are its parts, and
+    # the naming should make that difference visible (#203).
+    name: all-in-one · ${{ matrix.edition }}
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        edition: [community, hosted]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve the version and image namespace
+        id: meta
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then VERSION="${GITHUB_REF_NAME#v}"; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: allinone/Dockerfile
+          push: true
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.version }}
+            NEXUS_EDITION=${{ matrix.edition }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/nexusinfra-${{ matrix.edition }}:${{ steps.meta.outputs.version }}
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/nexusinfra-${{ matrix.edition }}:latest
+          cache-from: type=gha,scope=allinone-${{ matrix.edition }}
+          cache-to: type=gha,mode=max,scope=allinone-${{ matrix.edition }}
   bundles:
     name: Attach the release archive
-    needs: [services]
+    needs: [services, allinone]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:

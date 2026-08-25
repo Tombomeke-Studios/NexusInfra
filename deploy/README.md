@@ -55,6 +55,11 @@ FinVault's own. The installer will ask, and you can fill it in later.
 
 ## Doing it by hand
 
+Nothing here obliges you to run the installer. If you would rather assemble your own stack — pointing
+at a broker you already run, putting your own reverse proxy in front, or spreading agents across
+machines — every image is documented in
+[docs/images.md](https://github.com/Tombomeke-Studios/NexusInfra/blob/main/docs/images.md).
+
 Each edition directory works on its own if you prefer:
 
 ```bash

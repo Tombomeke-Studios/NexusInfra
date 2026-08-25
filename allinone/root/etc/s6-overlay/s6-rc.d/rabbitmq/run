@@ -1,0 +1,11 @@
+#!/command/with-contenv sh
+exec 2>&1
+# An external broker was given, so there is nothing to run here. Sleep rather
+# than exit, so s6 does not treat a deliberate no-op as a crash loop.
+if [ -f "${DATA_DIR:-/data}/.external-broker" ]; then
+  echo "[rabbitmq] external broker configured; not starting the built-in one"
+  exec sleep infinity
+fi
+export RABBITMQ_MNESIA_BASE="${DATA_DIR:-/data}/rabbitmq"
+export RABBITMQ_LOG_BASE="${DATA_DIR:-/data}/rabbitmq/log"
+exec rabbitmq-server

@@ -5,6 +5,10 @@
 
 generator client {
   provider = "prisma-client-js"
+  // Generated into this service rather than the hoisted default. Two schemas in
+  // one workspace otherwise write to the same node_modules/.prisma/client and
+  // whichever runs last wins — invisible until both services share an image.
+  output   = "../generated/prisma"
 }
 
 datasource db {
