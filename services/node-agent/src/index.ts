@@ -2,7 +2,7 @@ import os from 'os';
 import { createServer } from 'http';
 import express from 'express';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { consumeRabbitQueue, isDefaultInternalToken, publishRabbitEvent, PublishOutbox, startNodeHeartbeat, startOutboxFlusher } from 'shared';
+import { buildInfo, consumeRabbitQueue, isDefaultInternalToken, publishRabbitEvent, PublishOutbox, startNodeHeartbeat, startOutboxFlusher } from 'shared';
 import { requireInternalToken, upgradeAuthorized } from './internalAuth.js';
 import { DockerodeRuntime } from './runtime.js';
 import { createAgent } from './agent.js';
@@ -48,6 +48,7 @@ app.get('/health', (_req, res) => {
     service: 'node-agent',
     nodeId: NODE_ID,
     status: 'healthy',
+    ...buildInfo(),
     uptimeSec: Math.round(process.uptime()),
     // Outbox depth (#167): non-zero means reports are queued because the broker is
     // unreachable; `droppedEvents` means real loss and warrants attention.

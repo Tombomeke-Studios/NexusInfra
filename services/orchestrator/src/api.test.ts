@@ -9,12 +9,19 @@ import { createApiRouter } from './api.js';
 // publisher, so no broker or database is needed. The key assertion is that
 // creating a deployment emits infra.server.start for the chosen node.
 
+// Quotas are the Billing Bridge's business and have their own tests below; every
+// other suite stubs them out. Without this the default check makes a real HTTP
+// call to an unreachable bridge whenever NEXUS_EDITION=hosted, so the suite sat
+// waiting on DNS failures for a minute in the hosted CI leg (#173).
+const allowQuota: Parameters<typeof createApiRouter>[0]['checkQuota'] = async () => ({ allowed: true, limit: Infinity });
+
 function buildApp(repo: InMemoryRepository, published: Array<{ key: string; envelope: EventEnvelope }>) {
   const app = express();
   app.use(express.json());
   app.use(
     createApiRouter({
       repo,
+      checkQuota: allowQuota,
       publish: async (key, envelope) => {
         published.push({ key, envelope });
         return true;
@@ -256,6 +263,7 @@ describe('deployment API', () => {
     dbApp.use(
       createApiRouter({
         repo,
+        checkQuota: allowQuota,
         publish: async (key, envelope) => (published.push({ key, envelope }), true),
         provisionDatabase: async (req) => {
           provisioned.push({ engine: req.engine, name: req.name });
@@ -306,6 +314,7 @@ describe('deployment API', () => {
     bkApp.use(
       createApiRouter({
         repo,
+        checkQuota: allowQuota,
         publish: async (key, envelope) => (published.push({ key, envelope }), true),
         snapshotBackup: async (req) => (snapshots.push(req.containerId), { ref: 'bk_x', sizeBytes: 4096, path: '/data' }),
         restoreBackup: async (req) => void restores.push(req.ref),
@@ -389,6 +398,7 @@ describe('deployment API', () => {
     schedApp.use(
       createApiRouter({
         repo,
+        checkQuota: allowQuota,
         publish: async (key, envelope) => (published.push({ key, envelope }), true),
         scheduleActions: { restart: async (id) => void ran.push(`restart:${id}`), backup: async (id) => void ran.push(`backup:${id}`) },
       })
@@ -475,6 +485,7 @@ describe('multi-node agent routing (#171)', () => {
     app.use(
       createApiRouter({
         repo,
+        checkQuota: allowQuota,
         publish: async () => true,
         provisionDatabase: async (req) => (calls.push(req.agentUrl), { containerId: 'db-1', port: 5432 }),
         snapshotBackup: async (req) => (calls.push(req.agentUrl), { ref: 'bk', sizeBytes: 1, path: '/data' }),

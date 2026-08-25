@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { consumeRabbitQueue, getEdition, isHosted, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
+import { buildInfo, consumeRabbitQueue, getEdition, isHosted, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
 import { PrismaRepository } from './db.js';
 import { createBillingService } from './service.js';
 import { createBillingRouter } from './api.js';
@@ -22,7 +22,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.get('/health', (_req, res) => {
-  res.json({ service: 'billing-bridge', status: 'healthy', edition, uptimeSec: Math.round(process.uptime()) });
+  res.json({ service: 'billing-bridge', status: 'healthy', ...buildInfo(), uptimeSec: Math.round(process.uptime()) });
 });
 
 if (isHosted(edition)) {

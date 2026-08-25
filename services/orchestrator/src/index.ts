@@ -2,7 +2,7 @@ import { createServer } from 'http';
 import express from 'express';
 import cors from 'cors';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
-import { buildEnvelope, consumeRabbitQueue, getInternalToken, INTERNAL_TOKEN_HEADER, publishRabbitEvent, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
+import { buildEnvelope, buildInfo, consumeRabbitQueue, getInternalToken, INTERNAL_TOKEN_HEADER, publishRabbitEvent, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
 import { PrismaRepository } from './db.js';
 import { agentFetch, createApiRouter, resolveContainerTarget } from './api.js';
 import { resolveAgentUrl } from './agentUrl.js';
@@ -67,7 +67,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.get('/health', (_req, res) => {
-  res.json({ service: 'orchestrator', status: 'healthy', uptimeSec: Math.round(process.uptime()) });
+  res.json({ service: 'orchestrator', status: 'healthy', ...buildInfo(), uptimeSec: Math.round(process.uptime()) });
 });
 // Public runtime config (edition flag) — read by the dashboard before login.
 app.use(createConfigRouter());

@@ -27,5 +27,13 @@ jobs:
       - name: Lint
         run: npm run lint --if-present
 
-      - name: Test
+      - name: Test (community edition — the default)
         run: npm test
+
+      # Roughly half the edition-gated behaviour (billing routes, quota checks,
+      # signup policy) only runs when NEXUS_EDITION=hosted. Testing the default
+      # alone leaves it uncovered (#173).
+      - name: Test (hosted edition)
+        run: npm test
+        env:
+          NEXUS_EDITION: hosted

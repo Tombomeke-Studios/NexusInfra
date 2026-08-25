@@ -1,5 +1,6 @@
 import express from 'express';
 import {
+  buildInfo,
   consumeRabbitQueue,
   startHeartbeat,
   readPayload,
@@ -22,7 +23,7 @@ const monitor = new Monitor();
 const app = express();
 
 app.get('/health', (_req, res) => {
-  res.json({ service: 'control-room', status: 'healthy', uptimeSec: Math.round(process.uptime()) });
+  res.json({ service: 'control-room', status: 'healthy', ...buildInfo(), uptimeSec: Math.round(process.uptime()) });
 });
 
 // Live snapshot: one entry per heartbeat source with its derived status and

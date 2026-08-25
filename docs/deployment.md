@@ -74,6 +74,8 @@ same exchanges idempotently — start order does not matter.
 ## CI/CD
 
 - `.github/workflows/ci.yml`: npm ci → build → lint → test, on PRs and pushes to
-  `dev` / `staging` / `main`.
+  `dev` / `staging` / `main`. The suite runs **twice** — once as `community` (the default) and once
+  with `NEXUS_EDITION=hosted` — because billing routes, plan quotas and signup policy only execute
+  in the hosted edition and would otherwise ship untested.
 - Releases: merges reach `main` only via `staging`; tag `vX.Y.Z` after each main merge
   (see CLAUDE.md branch strategy).

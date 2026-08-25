@@ -1,5 +1,6 @@
 import express, { type Request, type Response } from 'express';
 import cors from 'cors';
+import { buildInfo } from 'shared';
 import { bearerToken, verifyToken, type VerifiedToken } from './auth.js';
 import { matchRoute, type RouteRule } from './routes.js';
 import { RateLimiter } from './rateLimit.js';
@@ -57,7 +58,7 @@ export function createGatewayApp(deps: GatewayDeps): express.Express {
   app.use(cors());
   // The gateway's own liveness probe (not proxied).
   app.get('/health', (_req, res) => {
-    res.json({ service: 'gateway', status: 'healthy', uptimeSec: Math.round(process.uptime()) });
+    res.json({ service: 'gateway', status: 'healthy', ...buildInfo(), uptimeSec: Math.round(process.uptime()) });
   });
 
   // Capture the raw body as a Buffer so it streams through unmodified (any content type).

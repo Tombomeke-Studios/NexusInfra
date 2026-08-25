@@ -8,11 +8,16 @@ HTTP endpoints and event contracts. Updated with every endpoint or request/respo
 
 ### `GET /health`
 
-Liveness probe.
+Liveness probe. Every service exposes one with the same shape.
 
 ```json
-{ "service": "control-room", "status": "healthy", "uptimeSec": 123 }
+{ "service": "control-room", "status": "healthy", "version": "0.1.0", "edition": "community", "uptimeSec": 123 }
 ```
+
+`version` is baked into the image by the release build (`APP_VERSION`), reading `0.0.0-dev` outside
+one. `edition` is the service's resolved `NEXUS_EDITION` — check it here when billing behaves
+unexpectedly in a hosted stack, since a service that never received the variable silently runs as
+`community` (#173).
 
 ### `GET /status`
 
