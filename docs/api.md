@@ -167,7 +167,9 @@ List all deployments (newest first), each joined with its config name/image and 
 
 ### `GET /deployments/:id`
 
-A single deployment with its full `events` audit trail. `404` if unknown.
+A single deployment with its full `events` audit trail **and the runtime configuration it was created
+with** — `ports`, `env`, `resourceLimits` and `autoRestart` — which the panel's Network and Startup
+tabs render. `404` if unknown (also when the caller has no access, so ids cannot be probed).
 
 ### `POST /deployments/:id/start`
 

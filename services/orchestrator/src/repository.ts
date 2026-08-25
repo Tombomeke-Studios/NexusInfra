@@ -273,11 +273,19 @@ export class InMemoryRepository implements Repository {
     const deployment = this.deployments.get(id);
     if (!deployment) return null;
     const view = this.toView(deployment);
-    if (!view) return null;
+    const config = this.configs.get(deployment.serverConfigId);
+    if (!view || !config) return null;
     const events = this.events
       .filter((e) => e.deploymentId === id)
       .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-    return { ...view, events };
+    return {
+      ...view,
+      events,
+      ports: config.ports,
+      env: config.env,
+      resourceLimits: config.resourceLimits,
+      autoRestart: config.autoRestart,
+    };
   }
 
   async deleteDeployment(id: string): Promise<void> {

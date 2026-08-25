@@ -55,6 +55,12 @@ export interface DeploymentEvent {
 
 export interface DeploymentDetail extends DeploymentView {
   events: DeploymentEvent[];
+  /** Host port → container port, as configured at creation (#217). */
+  ports: Record<string, string>;
+  /** The server's own environment variables (#218). */
+  env: Record<string, string>;
+  resourceLimits: ResourceLimits;
+  autoRestart: boolean;
 }
 
 export interface ResourceLimits {

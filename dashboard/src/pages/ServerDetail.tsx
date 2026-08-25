@@ -188,10 +188,10 @@ export function ServerDetail() {
       {activeTab === 'files' && <FilesTab id={d.id} running={running} />}
       {activeTab === 'databases' && <DatabasesTab id={d.id} running={running} />}
       {activeTab === 'backups' && <BackupsTab id={d.id} running={running} />}
-      {activeTab === 'network' && <NetworkTab />}
+      {activeTab === 'network' && <NetworkTab ports={d.ports ?? {}} />}
       {activeTab === 'schedules' && <SchedulesTab id={d.id} />}
       {activeTab === 'subusers' && <SubusersTab id={d.id} />}
-      {activeTab === 'startup' && <StartupTab image={d.dockerImage} isGame={isGame} envs={d.events.length} />}
+      {activeTab === 'startup' && <StartupTab image={d.dockerImage} env={d.env ?? {}} autoRestart={d.autoRestart ?? false} />}
       {activeTab === 'settings' && <SettingsTab id={d.id} teamId={d.teamId ?? null} onDelete={onDelete} />}
     </div>
   );
@@ -783,31 +783,35 @@ function BackupsTab({ id, running }: { id: string; running: boolean }) {
   );
 }
 
-function NetworkTab() {
-  const allocs = [
-    { ip: '0.0.0.0', port: 8080, primary: true },
-    { ip: '0.0.0.0', port: 8081, primary: false },
-  ];
+// The server's real port mappings, as configured at creation and carried on the
+// detail response (#217). This used to render two invented allocations and an
+// SFTP endpoint nothing in the stack listens on; real SFTP is its own work (#235).
+function NetworkTab({ ports }: { ports: Record<string, string> }) {
+  const allocs = Object.entries(ports);
   return (
     <>
-      <div className="card" style={{ padding: '20px 22px', marginBottom: 18 }}>
-        <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6 }}>SFTP / FTP access</strong>
-        <p className="subtle" style={{ margin: '0 0 16px', fontSize: '.84rem' }}>Connect with any SFTP client. Password is your account password.</p>
-        <dl style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '10px 16px', fontSize: '.88rem', margin: 0 }}>
-          <dt className="muted">Host</dt><dd className="mono" style={{ margin: 0, wordBreak: 'break-all' }}>sftp.nexusinfra.local</dd>
-          <dt className="muted">Port</dt><dd className="mono" style={{ margin: 0 }}>2022</dd>
-          <dt className="muted">Username</dt><dd className="mono" style={{ margin: 0 }}>admin.s1</dd>
-        </dl>
-      </div>
-      <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 12 }}>Port allocations</strong>
-      <div style={listCard}>
-        {allocs.map((a) => (
-          <div key={a.port} style={rowCss}>
-            <span className="mono" style={{ flex: 1, fontSize: '.86rem' }}>{a.ip}:{a.port}</span>
-            {a.primary && <span className="badge badge--info">primary</span>}
-          </div>
-        ))}
-      </div>
+      <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 12 }}>
+        Port allocations
+        <InfoHint text="Each row maps a port on the node to a port inside the container. Reach the server on the node's address and the host port." label="Port allocations help" />
+      </strong>
+      {allocs.length === 0 ? (
+        <div className="card" style={{ padding: '20px 22px' }}>
+          <p className="subtle" style={{ margin: 0, fontSize: '.86rem' }}>
+            This server has no published ports — nothing on the node's network reaches it.
+          </p>
+        </div>
+      ) : (
+        <div style={listCard}>
+          {allocs.map(([hostPort, containerPort]) => (
+            <div key={hostPort} style={rowCss}>
+              <span className="mono" style={{ flex: 'none', minWidth: 90, fontSize: '.86rem', fontWeight: 600 }}>{hostPort}</span>
+              <span className="muted" style={{ fontSize: '.84rem' }}>on the node →</span>
+              <span className="mono" style={{ flex: 1, fontSize: '.86rem' }}>{containerPort}</span>
+              <span className="muted" style={{ fontSize: '.84rem' }}>in the container</span>
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }
@@ -1050,35 +1054,43 @@ function SubusersTab({ id }: { id: string }) {
   );
 }
 
-function StartupTab({ image, isGame }: { image: string; isGame: boolean; envs: number }) {
-  const vars = [
-    { k: 'SERVER_PORT', v: '8080' },
-    { k: 'MAX_MEMORY', v: '2048M' },
-    { k: 'EULA', v: 'true' },
-  ];
+// What this server actually runs (#218): its image, its restart policy and its own
+// environment. It used to render three invented variables (EULA, MAX_MEMORY, …)
+// and a startup command nothing executes. Editing these is #220.
+function StartupTab({ image, env, autoRestart }: { image: string; env: Record<string, string>; autoRestart: boolean }) {
+  const vars = Object.entries(env);
   return (
     <>
       <div className="card" style={{ padding: '20px 22px', marginBottom: 18 }}>
-        <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 12 }}>Startup command</strong>
+        <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 12 }}>Container image</strong>
         <div className="mono" style={{ fontSize: '.84rem', background: '#0a0e16', color: '#c9d1d9', padding: '12px 14px', borderRadius: 'var(--radius)', wordBreak: 'break-all' }}>
-          docker run {image} --port 8080
+          {image}
         </div>
-        {isGame && (
-          <div style={{ marginTop: 14, display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: '.86rem' }}>
-            <span><span className="muted">Software:</span> <strong style={{ textTransform: 'capitalize' }}>paper</strong></span>
-            <span><span className="muted">Version:</span> <strong className="mono">1.20.4</strong></span>
-          </div>
-        )}
+        <p className="subtle" style={{ margin: '12px 0 0', fontSize: '.84rem' }}>
+          The image runs its own entrypoint; the variables below are what NexusInfra passes in.
+          Restart on failure is <strong>{autoRestart ? 'on' : 'off'}</strong>.
+        </p>
       </div>
-      <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 12 }}>Environment variables</strong>
-      <div style={listCard}>
-        {vars.map((e) => (
-          <div key={e.k} style={rowCss}>
-            <span className="mono" style={{ flex: 'none', minWidth: 160, fontSize: '.84rem', fontWeight: 600 }}>{e.k}</span>
-            <span className="mono muted" style={{ fontSize: '.84rem' }}>{e.v}</span>
-          </div>
-        ))}
-      </div>
+      <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 12 }}>
+        Environment variables
+        <InfoHint text="Passed to the container at start. Changing them takes effect the next time the server starts." label="Environment variables help" />
+      </strong>
+      {vars.length === 0 ? (
+        <div className="card" style={{ padding: '20px 22px' }}>
+          <p className="subtle" style={{ margin: 0, fontSize: '.86rem' }}>
+            No environment variables are set for this server.
+          </p>
+        </div>
+      ) : (
+        <div style={listCard}>
+          {vars.map(([key, value]) => (
+            <div key={key} style={rowCss}>
+              <span className="mono" style={{ flex: 'none', minWidth: 160, fontSize: '.84rem', fontWeight: 600 }}>{key}</span>
+              <span className="mono muted" style={{ fontSize: '.84rem', wordBreak: 'break-all' }}>{value}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }
@@ -1122,11 +1134,14 @@ function SettingsTab({ id, teamId, onDelete }: { id: string; teamId: string | nu
           ))}
         </select>
       </div>
-      <div className="card" style={{ padding: '20px 22px', marginBottom: 18 }}>
-        <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6 }}>Reinstall server</strong>
-        <p className="subtle" style={{ margin: '0 0 14px', fontSize: '.84rem' }}>Re-run the install script. Your data files are preserved.</p>
-        <button className="btn btn--secondary btn--sm" data-ripple onClick={() => toast('Not wired yet', 'info')}>Reinstall</button>
-      </div>
+      {/*
+        A "Reinstall" card used to sit here, wired to a 'Not wired yet' toast. It
+        was never implementable as written: there is no install script to re-run,
+        and Start already recreates the container from the saved config, so
+        reinstalling would be stop + start under a different name (#219). It comes
+        back when there is something distinct to do — pulling a fresh image (#239)
+        or rebuilding from a template (#231).
+      */}
       <div className="card" style={{ padding: '20px 22px', borderColor: 'var(--color-danger-soft)' }}>
         <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6, color: 'var(--color-danger)' }}>Delete server</strong>
         <p className="subtle" style={{ margin: '0 0 14px', fontSize: '.84rem' }}>Permanently removes this server and all of its files. This cannot be undone.</p>

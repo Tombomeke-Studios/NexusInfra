@@ -208,8 +208,18 @@ export interface DeploymentEventRecord {
   timestamp: string;
 }
 
+/**
+ * One server, everything the detail page needs: the deployment, its audit trail,
+ * and the runtime configuration it was created with. The config lives here
+ * because the Network and Startup tabs render it — without it they had nothing
+ * true to show and displayed invented values (#217, #218).
+ */
 export interface DeploymentDetail extends DeploymentView {
   events: DeploymentEventRecord[];
+  ports: Record<string, string>;
+  env: Record<string, string>;
+  resourceLimits: ResourceLimits;
+  autoRestart: boolean;
 }
 
 export interface UpsertNodeInput {
