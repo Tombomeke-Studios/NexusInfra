@@ -18,6 +18,7 @@ export function Layout() {
   const { isHosted } = useEdition();
   const [introOpen, setIntroOpen] = useState(() => !hasSeenIntro());
   const [user, setUser] = useState<CurrentUser | null>(null);
+  const isPlatformAdmin = user?.platformRole === 'admin' || user?.platformRole === 'owner';
 
   // Who am I? Shown in the bar so it's never ambiguous which account is acting —
   // that matters once servers are shared between people (#174).
@@ -64,6 +65,13 @@ export function Layout() {
           <NavLink to="/preferences" className="navlink" data-ripple>
             Preferences
           </NavLink>
+          {/* Account administration is admin-only. Hiding the link is convenience,
+              not security — /users answers 403 to anyone else regardless (#222). */}
+          {isPlatformAdmin && (
+            <NavLink to="/users" className="navlink" data-ripple>
+              Accounts
+            </NavLink>
+          )}
           {/* Not in a community build at all (#190), so the bundler drops it. */}
           {BILLING_INCLUDED && isHosted && (
             <NavLink to="/billing" className="navlink" data-ripple>
@@ -76,9 +84,15 @@ export function Layout() {
           Help
         </button>
         {user && (
-          <span className="subtle" style={{ fontSize: '0.82rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`${user.email} · ${user.platformRole}`}>
+          <NavLink
+            to="/account"
+            className="navlink"
+            data-ripple
+            style={{ fontSize: '0.82rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            title={`${user.email} · ${user.platformRole} — open your account`}
+          >
             {user.displayName}
-          </span>
+          </NavLink>
         )}
         <button className="btn btn--ghost btn--sm" onClick={signOut} data-ripple>
           <IconLogout size={16} />

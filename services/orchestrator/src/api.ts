@@ -279,6 +279,24 @@ export function createApiRouter(deps: ApiDeps): Router {
     res.json({ ...accessOf(req).deployment, role: accessOf(req).role });
   });
 
+  // The audit trail, newest first (#223). Every lifecycle change has written a
+  // DeploymentEvent since the beginning and nothing ever read them back, so the
+  // trail was write-only — useless at the moment you actually need it ("who
+  // stopped my server, and when did it crash"). Paginated because a long-lived
+  // server accumulates these indefinitely.
+  router.get('/deployments/:id/events', requirePermission('server.view'), (req: Request, res: Response) => {
+    const clamp = (v: unknown, fallback: number, max: number) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n >= 0 ? Math.min(Math.floor(n), max) : fallback;
+    };
+    const limit = clamp(req.query.limit, 50, 200);
+    const offset = clamp(req.query.offset, 0, Number.MAX_SAFE_INTEGER);
+
+    // The repository stores them oldest-first; reading a trail starts at the end.
+    const events = [...accessOf(req).deployment.events].reverse();
+    return res.json(events.slice(offset, offset + limit));
+  });
+
   // Request a running deployment be stopped: command the agent, which reports
   // server.stopped back (lifecycle.ts flips the status).
   router.post('/deployments/:id/stop', requirePermission('control.stop'), async (req: Request, res: Response) => {

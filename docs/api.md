@@ -192,6 +192,13 @@ A single deployment with its full `events` audit trail **and the runtime configu
 with** — `ports`, `env`, `resourceLimits` and `autoRestart` — which the panel's Network and Startup
 tabs render. `404` if unknown (also when the caller has no access, so ids cannot be probed).
 
+### `GET /deployments/:id/events`
+
+The server's audit trail, **newest first** (#223) — creation, placement, start/stop/kill requests,
+crashes, restores. Written since the beginning and, until now, never readable: `?limit=` (default
+50, max 200) and `?offset=` paginate it, because a long-lived server accumulates these
+indefinitely. Requires `server.view`.
+
 ### `POST /deployments/:id/start`
 
 Start (or re-run) a deployment that is **not** currently running — re-places it on a healthy node and

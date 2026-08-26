@@ -30,10 +30,12 @@ import {
   deleteSchedule,
   runSchedule,
   listSubusers,
+  listDeploymentEvents,
   inviteSubuser,
   updateSubuserRole,
   removeSubuser,
   type DeploymentDetail,
+  type DeploymentEvent,
   type FileEntry,
   type ServerDatabase,
   type DatabaseEngine,
@@ -57,7 +59,7 @@ import { Terminal } from '../components/Terminal';
 // subusers, network and startup all read or drive the real server. Nothing on
 // this page invents a value; where data is unavailable it says so (#217, #218,
 // #250, #251).
-const TABS = ['console', 'terminal', 'files', 'databases', 'backups', 'network', 'schedules', 'subusers', 'startup', 'settings'] as const;
+const TABS = ['console', 'terminal', 'files', 'databases', 'backups', 'network', 'schedules', 'subusers', 'startup', 'activity', 'settings'] as const;
 type Tab = (typeof TABS)[number];
 
 // Which permission each tab needs (#178). A tab the caller cannot use is hidden
@@ -73,6 +75,7 @@ const TAB_PERMISSION: Record<Tab, ServerPermission> = {
   schedules: 'server.view',
   subusers: 'subuser.manage',
   startup: 'server.view',
+  activity: 'server.view',
   settings: 'server.delete',
 };
 
@@ -203,6 +206,7 @@ export function ServerDetail() {
       {activeTab === 'schedules' && <SchedulesTab id={d.id} />}
       {activeTab === 'subusers' && <SubusersTab id={d.id} />}
       {activeTab === 'startup' && <StartupTab image={d.dockerImage} env={d.env ?? {}} autoRestart={d.autoRestart ?? false} />}
+      {activeTab === 'activity' && <ActivityTab id={d.id} />}
       {activeTab === 'settings' && <SettingsTab id={d.id} teamId={d.teamId ?? null} onDelete={onDelete} />}
     </div>
   );
@@ -793,6 +797,73 @@ function NetworkTab({ ports }: { ports: Record<string, string> }) {
             </div>
           ))}
         </div>
+      )}
+    </>
+  );
+}
+
+// ── Activity — the server's audit trail (#223) ──────────────────────────────
+// Every lifecycle change has written a DeploymentEvent since the beginning; this
+// is the first thing that reads them back.
+const PAGE = 50;
+
+function ActivityTab({ id }: { id: string }) {
+  const [events, setEvents] = useState<DeploymentEvent[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const loadMore = useCallback(
+    async (offset: number) => {
+      setBusy(true);
+      try {
+        const page = await listDeploymentEvents(id, { limit: PAGE, offset });
+        setEvents((prev) => (offset === 0 ? page : [...(prev ?? []), ...page]));
+        setDone(page.length < PAGE);
+        setError(null);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to load the activity trail');
+      } finally {
+        setBusy(false);
+      }
+    },
+    [id]
+  );
+
+  useEffect(() => {
+    void loadMore(0);
+  }, [loadMore]);
+
+  return (
+    <>
+      <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 12 }}>
+        Activity
+        <InfoHint text="Everything that has happened to this server, newest first: creation, placement, start and stop requests, crashes and restores. Recorded by the orchestrator, not by the container." label="Activity help" />
+      </strong>
+      {error && <p role="alert" className="alert alert--error" style={{ marginBottom: 12 }}>{error}</p>}
+      {events === null ? (
+        <div className="card" style={{ padding: 22 }}><div className="empty">Loading…</div></div>
+      ) : events.length === 0 ? (
+        <div className="card" style={{ padding: 22 }}><div className="empty">Nothing has happened to this server yet.</div></div>
+      ) : (
+        <>
+          <div style={listCard}>
+            {events.map((e) => (
+              <div key={e.id} style={{ ...rowCss, gap: 12, alignItems: 'flex-start' }}>
+                <span className="badge" style={{ flex: 'none', minWidth: 128 }}>{e.event}</span>
+                <span style={{ flex: 1, minWidth: 0, fontSize: '.86rem', wordBreak: 'break-word' }}>{e.message}</span>
+                <span className="subtle mono" style={{ flex: 'none', fontSize: '.78rem' }} title={e.timestamp}>
+                  {new Date(e.timestamp).toLocaleString()}
+                </span>
+              </div>
+            ))}
+          </div>
+          {!done && (
+            <button className="btn btn--secondary btn--sm" data-ripple disabled={busy} style={{ marginTop: 12 }} onClick={() => void loadMore(events.length)}>
+              {busy ? 'Loading…' : 'Load older'}
+            </button>
+          )}
+        </>
       )}
     </>
   );

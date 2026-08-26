@@ -251,6 +251,47 @@ describe('deployment API', () => {
     });
   });
 
+  // Every lifecycle change writes a DeploymentEvent and nothing ever read them
+  // back — the trail was write-only, useless exactly when you need it (#223).
+  describe('audit trail', () => {
+    it('returns the trail newest first', async () => {
+      await seedHealthyNode(repo);
+      const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+      await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'abc' });
+      await request(app).post(`/deployments/${created.body.id}/stop`);
+
+      const res = await request(app).get(`/deployments/${created.body.id}/events`);
+      expect(res.status).toBe(200);
+      // 'created' happened first, so newest-first puts 'stop-requested' on top.
+      expect(res.body[0].event).toBe('stop-requested');
+      expect(res.body.map((e: { event: string }) => e.event)).toContain('created');
+      expect(res.body[0]).toHaveProperty('timestamp');
+      expect(res.body[0]).toHaveProperty('message');
+    });
+
+    it('paginates so a long-lived server does not return everything', async () => {
+      await seedHealthyNode(repo);
+      const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+      for (let i = 0; i < 10; i++) await repo.appendDeploymentEvent(created.body.id, `e${i}`, `event ${i}`);
+
+      const res = await request(app).get(`/deployments/${created.body.id}/events`).query({ limit: 4 });
+      expect(res.body).toHaveLength(4);
+      expect(res.body[0].event).toBe('e9');
+
+      const next = await request(app).get(`/deployments/${created.body.id}/events`).query({ limit: 4, offset: 4 });
+      expect(next.body[0].event).toBe('e5');
+    });
+
+    it('is refused to someone with no access, as a 404', async () => {
+      await seedHealthyNode(repo);
+      const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+
+      const stranger = buildApp(repo, published, { id: 'user-nobody', platformRole: 'user' });
+      await repo.createUser({ id: 'user-nobody', email: 'nobody@example.com', displayName: 'n', passwordHash: '!', platformRole: 'user' });
+      expect((await request(stranger).get(`/deployments/${created.body.id}/events`)).status).toBe(404);
+    });
+  });
+
   it('stops a running deployment by emitting server.stop', async () => {
     await seedHealthyNode(repo);
     const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });

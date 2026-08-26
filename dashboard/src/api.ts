@@ -289,6 +289,18 @@ export function createDeployment(input: CreateDeploymentInput): Promise<Deployme
   return request('/deployments', { method: 'POST', body: JSON.stringify(input) });
 }
 
+/**
+ * A server's audit trail, newest first (#223). Written since the beginning and
+ * never read back until now, which is why "who stopped this" was unanswerable.
+ */
+export function listDeploymentEvents(id: string, opts: { limit?: number; offset?: number } = {}): Promise<DeploymentEvent[]> {
+  const q = new URLSearchParams();
+  if (opts.limit != null) q.set('limit', String(opts.limit));
+  if (opts.offset != null) q.set('offset', String(opts.offset));
+  const qs = q.toString();
+  return request(`/deployments/${id}/events${qs ? `?${qs}` : ''}`);
+}
+
 export function stopDeployment(id: string): Promise<{ status: string; deploymentId: string }> {
   return request(`/deployments/${id}/stop`, { method: 'POST' });
 }
