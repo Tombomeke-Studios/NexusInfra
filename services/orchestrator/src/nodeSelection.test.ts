@@ -58,3 +58,28 @@ describe('nodeLoad', () => {
     expect(nodeLoad(node('n', { cpuPercent: null, ramUsedMb: null, ramTotalMb: null }))).toBeCloseTo(1.0);
   });
 });
+
+// A node in maintenance is being drained on purpose — it is still healthy and
+// still runs what it has, but must not receive anything new (#258). Before this,
+// maintenance lived only in the browser tab and placement ignored it entirely.
+describe('selectNode and maintenance', () => {
+  const now = t0 + 1000;
+
+  it('never places on a node in maintenance', () => {
+    const draining = node('n-drain', { cpuPercent: 1, ramUsedMb: 100, maintenance: true });
+    const busy = node('n-busy', { cpuPercent: 80, ramUsedMb: 7000 });
+
+    // The draining node is by far the emptiest, and still must not win.
+    expect(selectNode([draining, busy], now)?.id).toBe('n-busy');
+  });
+
+  it('returns null when every healthy node is in maintenance', () => {
+    expect(selectNode([node('n1', { maintenance: true }), node('n2', { maintenance: true })], now)).toBeNull();
+  });
+
+  it('places normally once maintenance is lifted', () => {
+    const back = node('n-drain', { cpuPercent: 1, ramUsedMb: 100, maintenance: false });
+    const busy = node('n-busy', { cpuPercent: 80, ramUsedMb: 7000 });
+    expect(selectNode([back, busy], now)?.id).toBe('n-drain');
+  });
+});

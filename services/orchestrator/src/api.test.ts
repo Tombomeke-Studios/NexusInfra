@@ -187,6 +187,70 @@ describe('deployment API', () => {
     });
   });
 
+  // Maintenance used to live in a browser tab: the panel relabelled the node and
+  // the orchestrator kept scheduling onto it (#258).
+  describe('node maintenance', () => {
+    // Draining the fleet is an administrator's job, like registering a node.
+    let adminApp: express.Express;
+    beforeEach(() => {
+      adminApp = buildApp(repo, published, PLATFORM_ADMIN);
+    });
+
+    it('is refused to a caller who is not a platform administrator', async () => {
+      await seedHealthyNode(repo, 'node-drain');
+      expect((await request(app).patch('/nodes/node-drain/maintenance').send({ maintenance: true })).status).toBe(403);
+    });
+
+    it('drains a node so nothing new is placed on it', async () => {
+      await seedHealthyNode(repo, 'node-drain');
+
+      const patch = await request(adminApp).patch('/nodes/node-drain/maintenance').send({ maintenance: true });
+      expect(patch.status).toBe(200);
+      expect(patch.body.maintenance).toBe(true);
+
+      // It is the only node, and it is draining — nothing can be placed.
+      const res = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+      expect(res.status).toBe(503);
+    });
+
+    it('refuses to pin a server to a draining node', async () => {
+      await seedHealthyNode(repo, 'node-drain');
+      await seedHealthyNode(repo, 'node-free');
+      await request(adminApp).patch('/nodes/node-drain/maintenance').send({ maintenance: true });
+
+      const res = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx', nodeId: 'node-drain' });
+      expect(res.status).toBe(409);
+      expect(res.body.error).toMatch(/maintenance/i);
+    });
+
+    it('survives the heartbeats that keep arriving while the node drains', async () => {
+      await seedHealthyNode(repo, 'node-drain');
+      await request(adminApp).patch('/nodes/node-drain/maintenance').send({ maintenance: true });
+
+      // The agent keeps beating every second; none of that is an instruction to
+      // put the node back in the pool.
+      await repo.upsertNode({ id: 'node-drain', lastHeartbeat: new Date().toISOString(), cpuPercent: 5 });
+
+      const nodes = await request(app).get('/nodes');
+      expect(nodes.body.find((n: { id: string }) => n.id === 'node-drain').maintenance).toBe(true);
+      expect((await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' })).status).toBe(503);
+    });
+
+    it('puts the node back in the pool when maintenance is lifted', async () => {
+      await seedHealthyNode(repo, 'node-drain');
+      await request(adminApp).patch('/nodes/node-drain/maintenance').send({ maintenance: true });
+      await request(adminApp).patch('/nodes/node-drain/maintenance').send({ maintenance: false });
+
+      const res = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+      expect(res.status).toBe(201);
+      expect(res.body.nodeId).toBe('node-drain');
+    });
+
+    it('404s an unknown node', async () => {
+      expect((await request(adminApp).patch('/nodes/nope/maintenance').send({ maintenance: true })).status).toBe(404);
+    });
+  });
+
   it('stops a running deployment by emitting server.stop', async () => {
     await seedHealthyNode(repo);
     const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });

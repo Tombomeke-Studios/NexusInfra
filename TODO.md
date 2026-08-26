@@ -5,7 +5,7 @@
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/next-Phase_5_·_Production-3b82f6?style=flat-square)
 ![Editions](https://img.shields.io/badge/editions-community_·_hosted-8b5cf6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-483_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-496_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -208,7 +208,7 @@ scrolling log lines describing events that never happened.
 - [x] Placement picker is ignored — a pinned node is silently overruled (#254) 🐛
 - [x] The startup command field is never sent anywhere (#255) 🐛 — field removed
 - [x] Feature limit sliders (databases/backups) are never sent or enforced (#256) 🐛 — section removed
-- [ ] Node maintenance mode exists only in the browser tab — servers still land there (#258) 🐛
+- [x] Node maintenance mode exists only in the browser tab — servers still land there (#258) 🐛
 - [ ] A server's config cannot be edited after creation — `PATCH /deployments/:id` (#220)
 - [ ] Account settings page — change your own password (`/me` exists, nothing calls it) (#221)
 - [ ] Admin user management page — list/create accounts without curl (#222)

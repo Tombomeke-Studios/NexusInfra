@@ -53,6 +53,26 @@ describe('InMemoryRepository', () => {
     expect(relabelled.name).toBe('Home box'); // untouched
   });
 
+  // Maintenance is an administrator's decision and heartbeats arrive every second;
+  // if a beat could clear it, the node would rejoin the pool immediately (#258).
+  it('keeps a node draining across the heartbeats that follow', async () => {
+    await repo.registerNode({ id: 'node-1', name: 'rack-1' });
+    const drained = await repo.registerNode({ id: 'node-1', maintenance: true });
+    expect(drained.maintenance).toBe(true);
+    expect(drained.name).toBe('rack-1'); // untouched
+
+    await repo.upsertNode({ id: 'node-1', lastHeartbeat: new Date().toISOString(), cpuPercent: 20 });
+    expect((await repo.listNodes())[0].maintenance).toBe(true);
+
+    const back = await repo.registerNode({ id: 'node-1', maintenance: false });
+    expect(back.maintenance).toBe(false);
+  });
+
+  it('defaults a node to not draining', async () => {
+    const node = await repo.registerNode({ id: 'node-1' });
+    expect(node.maintenance).toBe(false);
+  });
+
   it('deletes a node and detaches it from its deployments', async () => {
     await repo.registerNode({ id: 'node-1' });
     const config = await repo.createServerConfig({ userId: 'u', name: 'svc', dockerImage: 'nginx' });

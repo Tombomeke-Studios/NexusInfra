@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { listNodes, listDeployments, registerNode, deregisterNode, getMonitoring, type NodeView, type DeploymentView, type MonitoringSnapshot } from '../api';
+import { listNodes, listDeployments, registerNode, deregisterNode, setNodeMaintenance, getMonitoring, type NodeView, type DeploymentView, type MonitoringSnapshot } from '../api';
 import { CountUp } from '../components/CountUp';
 import { useToast } from '../components/Toast';
 import { InfoHint } from '../components/InfoHint';
 import { formatRelative } from '../format';
 
 // Overview — ported from the redesign: stat cards, a fleet-utilization card, a
-// grid of rich node cards (+ an add-node form, UI-only for now), and a recent
-// activity feed. Real values come from the API; extras are derived/mock and get
-// wired up later.
+// grid of rich node cards (+ an add-node form) and a recent activity feed. The
+// stats, node health and maintenance state all come from the API; maintenance is
+// a real persisted drain that stops the orchestrator placing here (#258).
 const meterColor = (pct: number) =>
   pct >= 85 ? 'var(--color-danger)' : pct >= 70 ? 'var(--color-warning)' : 'var(--color-primary)';
 
@@ -26,7 +26,6 @@ export function Overview() {
   const [monitoring, setMonitoring] = useState<MonitoringSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [addingNode, setAddingNode] = useState(false);
-  const [maint, setMaint] = useState<string[]>([]);
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -71,7 +70,7 @@ export function Overview() {
   const addNode = async (cfg: { name: string; location: string; maint: boolean }) => {
     try {
       const node = await registerNode({ name: cfg.name.trim() || undefined, location: cfg.location.trim() || undefined });
-      if (cfg.maint) setMaint((m) => [...m, node.id]);
+      if (cfg.maint) await setNodeMaintenance(node.id, true);
       setAddingNode(false);
       toast(`${node.name} registered — start its agent with NODE_ID=${node.id}`, 'success', 'Node');
       await refresh();
@@ -89,10 +88,20 @@ export function Overview() {
       toast(e instanceof Error ? e.message : 'Deregister failed', 'error', 'Node');
     }
   };
-  const toggleMaint = (id: string, name: string) => {
-    const on = !maint.includes(id);
-    setMaint((m) => (on ? [...m, id] : m.filter((x) => x !== id)));
-    toast(on ? `${name} entered maintenance` : `${name} back online`, on ? 'info' : 'success', 'Node');
+  // Maintenance is a real, persisted drain (#258): the orchestrator stops placing
+  // new servers here. It deliberately leaves what already runs alone, so say so.
+  const toggleMaint = async (id: string, name: string, on: boolean) => {
+    try {
+      await setNodeMaintenance(id, on);
+      toast(
+        on ? `${name} is draining — no new servers will be placed here` : `${name} is back in the placement pool`,
+        on ? 'info' : 'success',
+        'Node'
+      );
+      await refresh();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not change maintenance', 'error', 'Node');
+    }
   };
   const running = ds.filter((d) => d.status === 'running').length;
   const healthy = ns.filter((n) => n.health === 'healthy').length;
@@ -183,7 +192,7 @@ export function Overview() {
       <h3 style={{ marginBottom: 16 }}>Nodes</h3>
       <div className="stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(240px,1fr))', gap: 16 }}>
         {ns.map((n, i) => {
-          const inMaint = maint.includes(n.id);
+          const inMaint = Boolean(n.maintenance);
           const hs = inMaint ? { color: 'var(--color-warning)', soft: 'var(--color-warning-soft)' } : healthStyle(n.health);
           const healthLabel = inMaint ? 'maintenance' : n.health;
           const cpu = cpuOf(n);
@@ -245,7 +254,7 @@ export function Overview() {
                     <div className="meter" style={{ flex: 1, height: 5 }}><div className="meter__fill" style={{ width: `${allocRam}%`, background: 'oklch(0.72 0.13 180)' }} /></div>
                   </div>
                 </div>
-                <button className="btn btn--secondary btn--sm" data-ripple style={{ marginTop: 14, width: '100%' }} onClick={() => toggleMaint(n.id, n.name)}>
+                <button className="btn btn--secondary btn--sm" data-ripple style={{ marginTop: 14, width: '100%' }} onClick={() => void toggleMaint(n.id, n.name, !inMaint)}>
                   {inMaint ? 'Exit maintenance' : 'Enter maintenance'}
                 </button>
               </div>

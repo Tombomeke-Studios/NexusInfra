@@ -43,6 +43,11 @@ export interface NodeRecord {
   ramTotalMb: number | null;
   diskUsedGb: number | null;
   diskTotalGb: number | null;
+  /**
+   * Drained on purpose (#258): the node stays healthy and keeps running what it
+   * has, but takes nothing new. Set by an administrator, never by a heartbeat.
+   */
+  maintenance: boolean;
 }
 
 export interface ServerConfigRecord {
@@ -267,6 +272,8 @@ export interface RegisterNodeInput {
   location?: string | null;
   /** Explicitly set the node's agent base URL (#171); otherwise learned from heartbeats. */
   agentUrl?: string | null;
+  /** Drain (or un-drain) the node — no new placements while true (#258). */
+  maintenance?: boolean;
 }
 
 export interface Repository {
