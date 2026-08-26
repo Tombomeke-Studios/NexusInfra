@@ -49,8 +49,12 @@ export interface NodeResources {
   cpuCores?: number;
   ramUsedMb: number;
   ramTotalMb: number;
-  diskUsedGb: number;
-  diskTotalGb: number;
+  /**
+   * Optional on purpose (#276): a node that cannot measure its disk omits these
+   * rather than reporting 0, which the panel used to render as an empty disk.
+   */
+  diskUsedGb?: number;
+  diskTotalGb?: number;
 }
 
 /**
