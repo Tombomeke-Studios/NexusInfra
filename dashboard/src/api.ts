@@ -29,6 +29,25 @@ export interface NodeView {
   health: NodeHealth;
   /** Drained on purpose (#258): still running, but taking nothing new. */
   maintenance?: boolean;
+  /**
+   * What the node has, what it has already promised, and what it is using (#275).
+   * Three different numbers: "how much can I still give away" is answered by
+   * `ramAvailableMb` / `cpuCoresAvailable`, which come from *committed*, never
+   * from live usage.
+   */
+  capacity?: NodeCapacity;
+}
+
+export interface NodeCapacity {
+  ramTotalMb: number | null;
+  ramCommittedMb: number;
+  ramUsedMb: number | null;
+  ramAvailableMb: number | null;
+  cpuCoresTotal: number | null;
+  cpuCoresCommitted: number;
+  cpuUsedPercent: number | null;
+  cpuCoresAvailable: number | null;
+  overCommitted: boolean;
 }
 
 export interface DeploymentView {
@@ -70,6 +89,10 @@ export interface DeploymentDetail extends DeploymentView {
 }
 
 export interface ResourceLimits {
+  /** Absolute memory in MB; preferred over ramPercent and wins when both are set (#275). */
+  ramMb?: number;
+  /** Absolute CPU in cores, fractional allowed. Preferred over cpuPercent. */
+  cpuCores?: number;
   cpuPercent?: number;
   ramPercent?: number;
   diskPercent?: number;

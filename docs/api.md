@@ -160,6 +160,11 @@ Request:
 }
 ```
 
+**Resource limits accept either unit (#275).** `ramMb` and `cpuCores` (fractional allowed) set an
+absolute amount; `ramPercent` and `cpuPercent` set a share of the node. The absolute value wins when
+both are present — it is the more specific instruction, and it keeps meaning the same if the server is
+ever re-placed onto a node of a different size, which a percentage does not.
+
 `name` and `dockerImage` are required; the rest are optional and stored with the server config (#106) so
 a re-start reuses them. The limits ride on `server.start` and the Node Agent enforces them on the
 container — RAM/CPU caps, swap, block-I/O weight, restart policy and the OOM killer (#107).
@@ -201,6 +206,18 @@ Responses: `201` with the deployment (including its event trail), `400` on missi
 node is available. In the hosted edition, `409` when the plan's `maxServers` quota is reached (checked
 against the Billing Bridge; community edition never limits). On success the Orchestrator emits
 `infra.server.start` for the chosen node.
+
+Each node also carries a `capacity` block (#275) with **three distinct numbers**, because they answer
+three different questions:
+
+- `ramTotalMb` / `cpuCoresTotal` — the hardware.
+- `ramCommittedMb` / `cpuCoresCommitted` — the sum of the caps already handed to servers placed here.
+- `ramUsedMb` / `cpuUsedPercent` — what is being consumed right now.
+
+`ramAvailableMb` / `cpuCoresAvailable` derive from **committed**, never from usage: four idle servers
+capped at a quarter of the RAM each leave nothing to give away, and a node running nothing reports
+most of its memory used because Linux spends spare RAM on page cache. `overCommitted` says when a node
+has been promised more than it has, which is possible and worth knowing.
 
 Nodes report `cpuCores` once their agent has beaten in (#261); it is `null` until then, and the
 panel shows nothing rather than a guess. `GET /deployments` rows carry their `resourceLimits`, which

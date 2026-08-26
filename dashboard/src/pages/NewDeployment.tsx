@@ -43,6 +43,12 @@ export function NewDeployment() {
   const [placement, setPlacement] = useState('auto');
   const [cpu, setCpu] = useState(defaults.cpu);
   const [ram, setRam] = useState(defaults.ram);
+  // Set the limits in whichever unit you are actually thinking in (#275). Nobody
+  // decides "37% of the box"; they decide "6 GB" or "2 cores".
+  const [ramUnit, setRamUnit] = useState<'percent' | 'mb'>('percent');
+  const [cpuUnit, setCpuUnit] = useState<'percent' | 'cores'>('percent');
+  const [ramMb, setRamMb] = useState(2048);
+  const [cpuCores, setCpuCores] = useState(2);
   const [disk, setDisk] = useState(defaults.disk);
   const [swap, setSwap] = useState(defaults.swap);
   const [io, setIo] = useState<string>(defaults.io);
@@ -85,8 +91,10 @@ export function NewDeployment() {
         nodeId: placement === 'auto' ? undefined : placement,
         autoRestart: restart !== 'no',
         resourceLimits: {
-          cpuPercent: cpu,
-          ramPercent: ram,
+          // Send whichever unit was chosen; the absolute one wins server-side, so
+          // sending both would only be ambiguous.
+          ...(cpuUnit === 'cores' ? { cpuCores } : { cpuPercent: cpu }),
+          ...(ramUnit === 'mb' ? { ramMb } : { ramPercent: ram }),
           diskPercent: disk,
           swapPercent: swap,
           ioPriority: io as 'low' | 'normal' | 'high',
@@ -111,7 +119,7 @@ export function NewDeployment() {
   // The container's memory cap in MB on the node this will land on (#271).
   // `ramPercent` is a share of that node, so the same 50% is 2 GB on a small box
   // and 32 GB on a large one — showing the percentage alone tells nobody anything.
-  const capMb = target?.ramTotalMb ? Math.round((ram / 100) * target.ramTotalMb) : null;
+  const capMb = ramUnit === 'mb' ? ramMb : target?.ramTotalMb ? Math.round((ram / 100) * target.ramTotalMb) : null;
 
   // Mirrors the orchestrator's rule so the clash is visible while you are setting
   // it, not after the container is killed. The API is still the one that refuses.
@@ -121,9 +129,39 @@ export function NewDeployment() {
       ? `A ${heapMb} MB heap will not fit a ${capMb} MB limit — Java claims the whole heap up front and needs roughly ${jvmOverheadMb(heapMb)} MB more for itself. Raise the RAM limit or lower the heap.`
       : null;
 
-  const cpuFree = target ? Math.max(0, 100 - usedCpu(target)) : 100;
-  const ramFree = target ? Math.max(0, 100 - usedRam(target)) : 100;
-  const overCapacity = cpu > cpuFree || ram > ramFree;
+  // What is genuinely left to hand out, from the orchestrator (#275): total minus
+  // what is already *committed* to other servers. The old figure here was live
+  // usage, which is wrong twice — four idle servers still leave nothing to give,
+  // and a node running nothing reports most of its RAM used as page cache.
+  const capacity = target?.capacity;
+  const ramAvailableMb = capacity?.ramAvailableMb ?? null;
+  const coresAvailable = capacity?.cpuCoresAvailable ?? null;
+
+  // The request in absolute terms, whichever unit it was entered in.
+  const requestedRamMb =
+    ramUnit === 'mb' ? ramMb : capacity?.ramTotalMb != null ? Math.round((ram / 100) * capacity.ramTotalMb) : null;
+  const requestedCores =
+    cpuUnit === 'cores' ? cpuCores : capacity?.cpuCoresTotal != null ? (cpu / 100) * capacity.cpuCoresTotal : null;
+
+  // Switching unit converts what is already set rather than snapping to a
+  // constant: you are changing how the number is expressed, not what you asked
+  // for. Falls back to the current value when the node has not reported totals.
+  const switchRamUnit = (next: 'percent' | 'mb') => {
+    if (next === ramUnit) return;
+    if (next === 'mb' && capacity?.ramTotalMb != null) setRamMb(Math.round((ram / 100) * capacity.ramTotalMb));
+    if (next === 'percent' && capacity?.ramTotalMb) setRam(Math.max(1, Math.round((ramMb / capacity.ramTotalMb) * 100)));
+    setRamUnit(next);
+  };
+  const switchCpuUnit = (next: 'percent' | 'cores') => {
+    if (next === cpuUnit) return;
+    if (next === 'cores' && capacity?.cpuCoresTotal != null) setCpuCores(Math.round((cpu / 100) * capacity.cpuCoresTotal * 10) / 10);
+    if (next === 'percent' && capacity?.cpuCoresTotal) setCpu(Math.max(1, Math.round((cpuCores / capacity.cpuCoresTotal) * 100)));
+    setCpuUnit(next);
+  };
+
+  const overRam = ramAvailableMb != null && requestedRamMb != null && requestedRamMb > ramAvailableMb;
+  const overCpu = coresAvailable != null && requestedCores != null && requestedCores > coresAvailable;
+  const overCapacity = overRam || overCpu;
 
   return (
     <div style={{ maxWidth: 640, margin: '0 auto', padding: '32px 24px', animation: 'rise 320ms var(--ease-out) both' }}>
@@ -274,20 +312,31 @@ export function NewDeployment() {
                 <span style={{ fontSize: '.74rem', color: 'var(--color-text-subtle)' }}>after currently committed limits</span>
               </div>
               <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-                {[{ label: 'CPU free', free: cpuFree, req: cpu }, { label: 'RAM free', free: ramFree, req: ram }].map((m) => (
-                  <div key={m.label} style={{ flex: 1, minWidth: 160 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-                      <span style={{ fontSize: '.78rem', color: 'var(--color-text-muted)' }}>{m.label}</span>
-                      <span className="tnum" style={{ fontSize: '.78rem', fontWeight: 600, color: m.req > m.free ? 'var(--color-danger)' : 'var(--color-success)' }}>{m.free}%</span>
-                    </div>
-                    <div className="meter" style={{ height: 7, background: 'var(--color-surface)' }}>
-                      <div className="meter__fill" style={{ width: `${m.free}%`, background: m.req > m.free ? 'var(--color-danger)' : 'var(--color-success)', transition: 'width 500ms var(--ease-out)' }} />
-                    </div>
-                  </div>
-                ))}
+                <CapacityBar
+                  label="Memory"
+                  total={capacity?.ramTotalMb ?? null}
+                  committed={capacity?.ramCommittedMb ?? 0}
+                  requested={requestedRamMb}
+                  format={(v) => `${v} MB`}
+                />
+                <CapacityBar
+                  label="CPU"
+                  total={capacity?.cpuCoresTotal ?? null}
+                  committed={capacity?.cpuCoresCommitted ?? 0}
+                  requested={requestedCores}
+                  format={(v) => `${Math.round(v * 100) / 100} ${v === 1 ? 'core' : 'cores'}`}
+                />
               </div>
               {overCapacity && (
-                <div style={{ marginTop: 12, fontSize: '.8rem', fontWeight: 550, color: 'var(--color-danger)' }}>⚠ Requested limits exceed free capacity on this node.</div>
+                <div role="alert" style={{ marginTop: 12, fontSize: '.8rem', fontWeight: 550, color: 'var(--color-danger)' }}>
+                  ⚠ More than this node has left. It has {ramAvailableMb != null ? `${ramAvailableMb} MB` : 'an unknown amount of memory'} and{' '}
+                  {coresAvailable != null ? `${coresAvailable} cores` : 'an unknown number of cores'} uncommitted.
+                </div>
+              )}
+              {capacity?.overCommitted && (
+                <div style={{ marginTop: 12, fontSize: '.8rem', color: 'var(--color-warning)' }}>
+                  This node has already been promised more than it has.
+                </div>
               )}
             </div>
           </div>
@@ -298,17 +347,45 @@ export function NewDeployment() {
             <span style={{ display: 'block', marginBottom: 16, fontSize: '.82rem', color: 'var(--color-text-subtle)' }}>
               Hard caps on this server's share of the host node.
             </span>
-            <Slider label="CPU limit" value={cpu} onChange={setCpu} suffix="%" min={5} max={100} step={5} hint="The most host CPU this server may use, as a share of the node's cores. 100% ≈ all cores; the container is throttled above this." />
-            <Slider
+            <LimitField
+              label="CPU limit"
+              unit={cpuUnit}
+              onUnitChange={switchCpuUnit}
+              units={[
+                { value: 'cores', label: 'cores' },
+                { value: 'percent', label: '%' },
+              ]}
+              hint="The most CPU this server may use. The container is throttled above it, so a busy server cannot starve its neighbours."
+              absoluteValue={cpuCores}
+              onAbsoluteChange={setCpuCores}
+              absoluteStep={0.5}
+              absoluteMax={capacity?.cpuCoresTotal ?? undefined}
+              percentValue={cpu}
+              onPercentChange={setCpu}
+              note={coresAvailable != null ? `${coresAvailable} of ${capacity?.cpuCoresTotal} cores uncommitted on ${target?.name ?? 'this node'}` : undefined}
+            />
+            <LimitField
               label="RAM limit"
-              value={ram}
-              onChange={setRam}
-              suffix="%"
-              min={5}
-              max={100}
-              step={5}
-              hint="The most host RAM this server may use, as a share of the node's memory. Exceeding it triggers the OOM policy below."
-              note={capMb != null ? `${capMb} MB on ${target?.name ?? 'the chosen node'}` : undefined}
+              unit={ramUnit}
+              onUnitChange={switchRamUnit}
+              units={[
+                { value: 'mb', label: 'MB' },
+                { value: 'percent', label: '%' },
+              ]}
+              hint="The most memory this server may use. Exceeding it triggers the OOM policy below."
+              absoluteValue={ramMb}
+              onAbsoluteChange={setRamMb}
+              absoluteStep={256}
+              absoluteMax={capacity?.ramTotalMb ?? undefined}
+              percentValue={ram}
+              onPercentChange={setRam}
+              note={
+                ramAvailableMb != null
+                  ? `${ramAvailableMb} MB of ${capacity?.ramTotalMb} MB uncommitted on ${target?.name ?? 'this node'}`
+                  : capMb != null
+                    ? `${capMb} MB on ${target?.name ?? 'the chosen node'}`
+                    : undefined
+              }
             />
             {heapWarning && (
               <p role="alert" className="alert alert--error" style={{ margin: '4px 0 14px', fontSize: '.82rem' }}>
@@ -408,6 +485,142 @@ function Seg({ options, value, onChange }: { options: { value: string; label: st
           {o.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+/**
+ * A capacity bar in the node's own units (#275).
+ *
+ * Shows committed against total, with the pending request stacked on top, so the
+ * question being asked ("does this fit") is the one the picture answers.
+ */
+function CapacityBar({
+  label,
+  total,
+  committed,
+  requested,
+  format,
+}: {
+  label: string;
+  total: number | null;
+  committed: number;
+  requested: number | null;
+  format: (v: number) => string;
+}) {
+  if (total == null) {
+    return (
+      <div style={{ flex: 1, minWidth: 160 }}>
+        <span style={{ fontSize: '.78rem', color: 'var(--color-text-muted)' }}>{label}</span>
+        <span className="subtle" style={{ display: 'block', fontSize: '.76rem' }}>not reported by this node yet</span>
+      </div>
+    );
+  }
+
+  const committedPct = Math.min(100, (committed / total) * 100);
+  const requestedPct = requested != null ? Math.min(100 - committedPct, (requested / total) * 100) : 0;
+  const over = requested != null && committed + requested > total;
+
+  return (
+    <div style={{ flex: 1, minWidth: 180 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+        <span style={{ fontSize: '.78rem', color: 'var(--color-text-muted)' }}>{label}</span>
+        <span className="tnum" style={{ fontSize: '.78rem', fontWeight: 600, color: over ? 'var(--color-danger)' : 'var(--color-success)' }}>
+          {format(Math.max(0, total - committed))} free
+        </span>
+      </div>
+      <div className="meter" style={{ height: 7, background: 'var(--color-surface)', display: 'flex', overflow: 'hidden' }}>
+        <div style={{ width: `${committedPct}%`, background: 'var(--color-text-subtle)', transition: 'width 400ms var(--ease-out)' }} />
+        <div style={{ width: `${requestedPct}%`, background: over ? 'var(--color-danger)' : 'var(--color-primary)', transition: 'width 400ms var(--ease-out)' }} />
+      </div>
+      <span className="subtle" style={{ display: 'block', marginTop: 4, fontSize: '.74rem' }}>
+        {format(committed)} committed of {format(total)}
+      </span>
+    </div>
+  );
+}
+
+/** A limit set either as an absolute amount or as a share of the node (#275). */
+function LimitField<U extends string>({
+  label,
+  unit,
+  onUnitChange,
+  units,
+  hint,
+  absoluteValue,
+  onAbsoluteChange,
+  absoluteStep,
+  absoluteMax,
+  percentValue,
+  onPercentChange,
+  note,
+}: {
+  label: string;
+  unit: U;
+  onUnitChange: (u: U) => void;
+  units: { value: U; label: string }[];
+  hint: string;
+  absoluteValue: number;
+  onAbsoluteChange: (v: number) => void;
+  absoluteStep: number;
+  absoluteMax?: number;
+  percentValue: number;
+  onPercentChange: (v: number) => void;
+  note?: string;
+}) {
+  const isPercent = unit === 'percent';
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 9, gap: 10 }}>
+        <span style={{ fontSize: '.86rem', fontWeight: 550 }}>
+          {label}
+          <InfoHint text={hint} label={`${label} help`} />
+        </span>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {units.map((u) => (
+            <button
+              key={u.value}
+              type="button"
+              data-ripple
+              onClick={() => onUnitChange(u.value)}
+              className={`opt opt--sm${unit === u.value ? ' is-active' : ''}`}
+              aria-pressed={unit === u.value}
+              // Named per field: two of these say "%", and "%" on its own tells a
+              // screen reader nothing about which limit it switches.
+              aria-label={`${label} in ${u.label}`}
+            >
+              {u.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {isPercent ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <input
+            type="range"
+            min={5}
+            max={100}
+            step={5}
+            value={percentValue}
+            onChange={(e) => onPercentChange(Number(e.target.value))}
+            aria-label={`${label} percent`}
+            style={{ flex: 1 }}
+          />
+          <span className="mono tnum" style={{ minWidth: 48, textAlign: 'right', fontSize: '.9rem', fontWeight: 600 }}>{percentValue}%</span>
+        </div>
+      ) : (
+        <input
+          className="input mono"
+          type="number"
+          min={0}
+          step={absoluteStep}
+          max={absoluteMax}
+          value={absoluteValue}
+          onChange={(e) => onAbsoluteChange(Number(e.target.value))}
+          aria-label={label}
+        />
+      )}
+      {note && <span className="subtle" style={{ display: 'block', marginTop: 6, fontSize: '.78rem' }}>{note}</span>}
     </div>
   );
 }

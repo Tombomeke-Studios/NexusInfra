@@ -29,16 +29,22 @@ describe('containerMemoryMb', () => {
   it('resolves the percentage against the node it lands on', () => {
     // The same 50% is 2 GB on a small box and 32 GB on a large one, which is most
     // of why a percentage was the wrong thing to show someone.
-    expect(containerMemoryMb(50, 4096)).toBe(2048);
-    expect(containerMemoryMb(50, 65536)).toBe(32768);
-    expect(containerMemoryMb(25, 8192)).toBe(2048);
+    expect(containerMemoryMb({ ramPercent: 50 }, 4096)).toBe(2048);
+    expect(containerMemoryMb({ ramPercent: 50 }, 65536)).toBe(32768);
+    expect(containerMemoryMb({ ramPercent: 25 }, 8192)).toBe(2048);
+  });
+
+  it('takes an absolute cap without needing the node at all', () => {
+    // Half of why MB is the better unit: it does not depend on which node.
+    expect(containerMemoryMb({ ramMb: 2048 }, null)).toBe(2048);
+    expect(containerMemoryMb({ ramMb: 2048, ramPercent: 90 }, 8192)).toBe(2048);
   });
 
   it('is null when there is no cap or the node has not reported its RAM', () => {
     expect(containerMemoryMb(undefined, 4096)).toBeNull();
-    expect(containerMemoryMb(0, 4096)).toBeNull();
-    expect(containerMemoryMb(50, null)).toBeNull();
-    expect(containerMemoryMb(50, 0)).toBeNull();
+    expect(containerMemoryMb({ ramPercent: 0 }, 4096)).toBeNull();
+    expect(containerMemoryMb({ ramPercent: 50 }, null)).toBeNull();
+    expect(containerMemoryMb({ ramPercent: 50 }, 0)).toBeNull();
   });
 });
 

@@ -38,3 +38,43 @@ describe('resourceLimitsToHostConfig', () => {
     expect(resourceLimitsToHostConfig({}, HOST)).toEqual({});
   });
 });
+
+// Allocating in real units (#275): a percentage means nothing without knowing the
+// node, and stops meaning the same thing the moment a server is moved.
+describe('absolute limits', () => {
+  const host = { totalMemBytes: 8 * 1024 * 1024 * 1024, cpuCount: 8 };
+
+  it('uses an absolute memory value as given', () => {
+    expect(resourceLimitsToHostConfig({ ramMb: 2048 }, host).Memory).toBe(2048 * 1024 * 1024);
+  });
+
+  it('uses an absolute core count as given', () => {
+    expect(resourceLimitsToHostConfig({ cpuCores: 2 }, host).NanoCpus).toBe(2e9);
+    expect(resourceLimitsToHostConfig({ cpuCores: 1.5 }, host).NanoCpus).toBe(1.5e9);
+  });
+
+  it('prefers the absolute value when both are given', () => {
+    // The more specific instruction wins rather than the two fighting.
+    const out = resourceLimitsToHostConfig({ ramMb: 1024, ramPercent: 50, cpuCores: 1, cpuPercent: 100 }, host);
+    expect(out.Memory).toBe(1024 * 1024 * 1024);
+    expect(out.NanoCpus).toBe(1e9);
+  });
+
+  it('still resolves a percentage when no absolute value is set', () => {
+    const out = resourceLimitsToHostConfig({ ramPercent: 25, cpuPercent: 50 }, host);
+    expect(out.Memory).toBe(2 * 1024 * 1024 * 1024);
+    expect(out.NanoCpus).toBe(4e9);
+  });
+
+  it('applies swap and the OOM policy to an absolute memory cap too', () => {
+    const out = resourceLimitsToHostConfig({ ramMb: 1024, swapPercent: 50, oomKill: false }, host);
+    expect(out.MemorySwap).toBe(1024 * 1024 * 1024 * 1.5);
+    expect(out.OomKillDisable).toBe(true);
+  });
+
+  it('sets no cap at all when neither form is given', () => {
+    const out = resourceLimitsToHostConfig({ ioPriority: 'high' }, host);
+    expect(out.Memory).toBeUndefined();
+    expect(out.NanoCpus).toBeUndefined();
+  });
+});
