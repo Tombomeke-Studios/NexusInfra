@@ -13,6 +13,7 @@ import { createServerTeamRouter } from './teams.js';
 import { EGGS, getEgg, buildEggDeployment, EggValidationError } from './eggs.js';
 import { containerMemoryMb, heapBudgetProblem, parseMemoryMb } from './memory.js';
 import { nodeCapacity, availableRamMb, availableCpuCores, isOverCommitted } from './capacity.js';
+import { containerNameFor } from './containerName.js';
 import type { DeploymentDetail, NodeRecord, Repository, ServerConfigRecord, UpdateServerConfigInput } from './types.js';
 import type { ResourceLimits } from 'shared';
 
@@ -331,7 +332,7 @@ export function createApiRouter(deps: ApiDeps): Router {
         deploymentId: deployment.id,
         nodeId: node.id,
         dockerImage: config.dockerImage,
-        containerName: config.name,
+        containerName: containerNameFor(config.name, deployment.id),
         env: config.env,
         ports: config.ports,
         resourceLimits: config.resourceLimits,
@@ -543,7 +544,7 @@ export function createApiRouter(deps: ApiDeps): Router {
         deploymentId: detail.id,
         nodeId: node.id,
         dockerImage: config.dockerImage,
-        containerName: config.name,
+        containerName: containerNameFor(config.name, detail.id),
         env: config.env,
         ports: config.ports,
         resourceLimits: config.resourceLimits,
