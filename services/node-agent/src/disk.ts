@@ -47,9 +47,54 @@ export function diskUsageFrom(stat: StatFsResult): DiskUsage | null {
   };
 }
 
-/** Which filesystem to measure. Defaults to the root of the agent's container. */
-export function diskPath(env: NodeJS.ProcessEnv = process.env): string {
-  return env.DISK_PATH?.trim() || '/';
+/** An explicit override, when the automatic choice is wrong for a setup. */
+export function configuredDiskPath(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return env.DISK_PATH?.trim() || undefined;
+}
+
+export interface DiskPathChoice {
+  path: string;
+  /** Why this path, so the agent can say it once at startup instead of guessing silently. */
+  reason: 'configured' | 'docker-root' | 'container-root';
+}
+
+export interface ResolveDiskPathDeps {
+  /** Docker's own data root, from `docker info`. Undefined when it cannot be asked. */
+  dockerRootDir?: string;
+  /** Probe used to test whether a path is measurable from here. */
+  statfs: (path: string) => Promise<StatFsResult>;
+  env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * Decide which filesystem to measure, without anybody having to configure it.
+ *
+ * Three steps, most specific first:
+ *
+ * 1. `DISK_PATH`, when someone has deliberately said which disk they mean.
+ * 2. Docker's own data root, if it happens to be readable from here. That is the
+ *    exact filesystem images and volumes grow on. It is usually *not* visible,
+ *    because the agent container mounts only the Docker socket — hence step 3.
+ * 3. The agent's own root. Under overlay2 this is not a dead end: statfs on an
+ *    overlay mount reports the filesystem holding the upper layer, and the upper
+ *    layer lives inside the Docker data root. So `/` measures the disk that
+ *    actually fills up, which is why this needs no configuration in the normal
+ *    case.
+ */
+export async function resolveDiskPath(deps: ResolveDiskPathDeps): Promise<DiskPathChoice> {
+  const configured = configuredDiskPath(deps.env ?? process.env);
+  if (configured) return { path: configured, reason: 'configured' };
+
+  if (deps.dockerRootDir) {
+    try {
+      await deps.statfs(deps.dockerRootDir);
+      return { path: deps.dockerRootDir, reason: 'docker-root' };
+    } catch {
+      // Not mounted into this container, which is the default. Fall through.
+    }
+  }
+
+  return { path: '/', reason: 'container-root' };
 }
 
 /**
@@ -60,7 +105,7 @@ export function diskPath(env: NodeJS.ProcessEnv = process.env): string {
  */
 export async function collectDisk(
   statfs: (path: string) => Promise<StatFsResult>,
-  path: string = diskPath()
+  path = '/'
 ): Promise<DiskUsage | null> {
   try {
     return diskUsageFrom(await statfs(path));

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { diskUsageFrom, collectDisk, diskPath } from './disk.js';
+import { diskUsageFrom, collectDisk, resolveDiskPath, configuredDiskPath } from './disk.js';
 
 // The agent reported diskUsedGb: 0, diskTotalGb: 0 and the panel rendered that as
 // 0% beside real CPU and RAM meters, so a full disk looked like an empty one
@@ -53,10 +53,48 @@ describe('collectDisk', () => {
   });
 });
 
-describe('diskPath', () => {
-  it('defaults to the container root and is overridable', () => {
-    expect(diskPath({})).toBe('/');
-    expect(diskPath({ DISK_PATH: '  ' })).toBe('/');
-    expect(diskPath({ DISK_PATH: '/var/lib/docker' })).toBe('/var/lib/docker');
+// Nobody should have to configure which disk to measure. The agent works it out,
+// and DISK_PATH is an override for the setups where the guess is wrong.
+describe('resolveDiskPath', () => {
+  const ok = async () => ({ bsize: 4096, blocks: 100, bavail: 50 });
+  const missing = async () => {
+    throw new Error('ENOENT');
+  };
+
+  it('honours an explicit DISK_PATH above everything else', async () => {
+    const choice = await resolveDiskPath({ dockerRootDir: '/var/lib/docker', statfs: ok, env: { DISK_PATH: '/mnt/big' } });
+    expect(choice).toEqual({ path: '/mnt/big', reason: 'configured' });
+  });
+
+  it("prefers Docker's data root when it is readable from here", async () => {
+    // True when the agent runs natively, or when someone mounted it in.
+    const choice = await resolveDiskPath({ dockerRootDir: '/var/lib/docker', statfs: ok, env: {} });
+    expect(choice).toEqual({ path: '/var/lib/docker', reason: 'docker-root' });
+  });
+
+  it('falls back to the container root when the data root is not mounted in', async () => {
+    // The default: the agent mounts only the Docker socket. Under overlay2 the
+    // container root reports the filesystem holding the upper layer, which lives
+    // inside the Docker data root — so this measures the disk that fills up.
+    const choice = await resolveDiskPath({ dockerRootDir: '/var/lib/docker', statfs: missing, env: {} });
+    expect(choice).toEqual({ path: '/', reason: 'container-root' });
+  });
+
+  it('falls back when Docker cannot be asked at all', async () => {
+    const choice = await resolveDiskPath({ statfs: ok, env: {} });
+    expect(choice).toEqual({ path: '/', reason: 'container-root' });
+  });
+
+  it('treats a blank DISK_PATH as unset rather than as the empty path', async () => {
+    const choice = await resolveDiskPath({ statfs: missing, env: { DISK_PATH: '   ' } });
+    expect(choice.path).toBe('/');
+  });
+});
+
+describe('configuredDiskPath', () => {
+  it('is undefined unless deliberately set', () => {
+    expect(configuredDiskPath({})).toBeUndefined();
+    expect(configuredDiskPath({ DISK_PATH: '  ' })).toBeUndefined();
+    expect(configuredDiskPath({ DISK_PATH: '/mnt/big' })).toBe('/mnt/big');
   });
 });
