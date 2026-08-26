@@ -360,6 +360,61 @@ describe('deployment API', () => {
       expect((await request(app).patch(`/deployments/${id}`).send({ dockerImage: '' })).status).toBe(400);
     });
 
+    // A server created from an egg was edited as raw JSON: no labels, no
+    // validation, and nothing stopping you deleting EULA (#272).
+    describe('an egg server', () => {
+      async function makeMinecraft() {
+        await repo.upsertNode({ id: 'node-big', name: 'node-big', lastHeartbeat: new Date().toISOString(), cpuPercent: 5, ramUsedMb: 1000, ramTotalMb: 32768 });
+        const created = await request(app)
+          .post('/deployments')
+          .send({ name: 'mc', eggId: 'minecraft-java', eggValues: { MAX_PLAYERS: '20' } });
+        return created.body.id as string;
+      }
+
+      it('is edited through the egg, with the egg applying its rules', async () => {
+        const id = await makeMinecraft();
+        const res = await request(app).patch(`/deployments/${id}`).send({ eggValues: { MAX_PLAYERS: '40', TYPE: 'PAPER' } });
+
+        expect(res.status).toBe(200);
+        const config = await repo.getDeploymentConfig(id);
+        expect(config?.env.MAX_PLAYERS).toBe('40');
+        expect(config?.env.TYPE).toBe('PAPER');
+        // Untouched variables keep their value rather than reverting to default.
+        expect(config?.env.MOTD).toBe('A NexusInfra server');
+      });
+
+      it('refuses an invalid answer by the name the person saw', async () => {
+        const id = await makeMinecraft();
+        const res = await request(app).patch(`/deployments/${id}`).send({ eggValues: { MAX_PLAYERS: 'lots' } });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/Player slots/);
+      });
+
+      it('keeps the fixed environment no matter what is sent', async () => {
+        const id = await makeMinecraft();
+        await request(app).patch(`/deployments/${id}`).send({ eggValues: { EULA: 'FALSE' } });
+        expect((await repo.getDeploymentConfig(id))?.env.EULA).toBe('TRUE');
+      });
+
+      it('drops keys the egg does not define', async () => {
+        const id = await makeMinecraft();
+        await request(app).patch(`/deployments/${id}`).send({ eggValues: { LD_PRELOAD: '/tmp/x.so' } });
+        expect((await repo.getDeploymentConfig(id))?.env).not.toHaveProperty('LD_PRELOAD');
+      });
+
+      it('checks the heap against the cap on edit too', async () => {
+        // 4 GB node, 50% cap, and an edit that raises the heap past it (#271).
+        await repo.upsertNode({ id: 'node-small', name: 'node-small', lastHeartbeat: new Date().toISOString(), cpuPercent: 5, ramUsedMb: 500, ramTotalMb: 4096 });
+        const created = await request(app)
+          .post('/deployments')
+          .send({ name: 'mc', eggId: 'minecraft-java', eggValues: { MEMORY: '1G' }, resourceLimits: { ramPercent: 50 }, nodeId: 'node-small' });
+
+        const res = await request(app).patch(`/deployments/${created.body.id}`).send({ eggValues: { MEMORY: '4G' } });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/MB/);
+      });
+    });
+
     it('is refused to an operator, who may run the server but not redefine it', async () => {
       const id = await makeServer();
       await repo.createUser({ id: 'user-op', email: 'op@example.com', displayName: 'op', passwordHash: '!', platformRole: 'user' });

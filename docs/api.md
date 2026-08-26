@@ -235,6 +235,12 @@ Change an existing server's configuration (#220). Body may carry any of `name`, 
 edit never blanks the rest. Requires `server.edit` (server admin and up — an operator may run a
 server but not redefine it).
 
+A server created from an egg is edited **through that egg** (#272): send `eggValues` instead of
+`env`, and the same rules apply as at creation — unknown keys dropped, values validated by the name
+the person saw, `fixedEnv` untouchable. Answers are merged over what is stored, so an untouched
+variable keeps its value rather than reverting to the egg's default. The heap check (#271) runs on
+edit as well, since raising the heap is exactly how someone would break it later.
+
 The change is stored and **nothing is restarted**: it applies the next time the server starts. A
 settings form that silently bounced a running server would be a worse surprise than one that waits.
 Recorded in the audit trail as `config-updated`. `200` with the updated deployment, `400` on an
