@@ -250,6 +250,10 @@ scrolling log lines describing events that never happened.
 - [x] Node Agent internal API was unauthenticated + host-published — token-guard it (#169)
 - [x] Control Room not surfaced/up in the running stack — verify it starts + show its health in the panel (#157)
 - [x] A server name with a space never starts — derive a Docker-safe container name (#286)
+- [x] One failing async route kills the whole Orchestrator process — add an error boundary (#294)
+- [ ] Deleting a running server races its own stop event and violates a foreign key (#293)
+- [ ] Release bundles cannot start: `container_name` contains a slash (#291)
+- [ ] The hosted billing-bridge image contradicts its own edition stamp (#292)
 - [x] IO priority makes every container start fail on hosts without `io.weight` — detect and skip it (#288)
 
 ### Small cleanups / follow-ups
