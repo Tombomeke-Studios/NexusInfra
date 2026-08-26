@@ -12,7 +12,7 @@ import { pipeSockets, toWsUrl, type DuplexSocket } from './wsProxy.js';
 import { createBillingProxyRouter } from './billingProxy.js';
 import { createMonitoringRouter } from './monitoring.js';
 import { createConfigRouter } from './config.js';
-import { createAccountRouter, createAuthRouter, createUserAdminRouter, requireAuth } from './auth.js';
+import { createAccountRouter, createAuthRouter, createRequireAuth, createUserAdminRouter } from './auth.js';
 import { createUserService } from './users.js';
 import { createTeamRouter } from './teams.js';
 import { createNodeRegistry } from './nodeRegistry.js';
@@ -86,8 +86,10 @@ app.get('/health', (_req, res) => {
 // Public runtime config (edition flag) — read by the dashboard before login.
 app.use(createConfigRouter());
 // Public login/registration, then everything below requires a valid Bearer token.
-app.use(createAuthRouter({ users }));
-app.use(requireAuth);
+app.use(createAuthRouter({ users, repo }));
+// Session-aware (#227): a valid signature is not enough, the session it names
+// must still exist — which is what makes signing out actually sign you out.
+app.use(createRequireAuth({ repo }));
 app.use(createAccountRouter({ users, repo }));
 app.use(createUserAdminRouter({ users, repo }));
 app.use(createTeamRouter({ repo }));

@@ -5,7 +5,7 @@
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/next-Phase_5_·_Production-3b82f6?style=flat-square)
 ![Editions](https://img.shields.io/badge/editions-community_·_hosted-8b5cf6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-639_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-670_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -223,9 +223,9 @@ scrolling log lines describing events that never happened.
 > factors, and the machine-to-machine path. The panel hands out root shells; today a single
 > password with no rate limit is the whole defence.
 
-- [ ] Login is not rate limited on the orchestrator — nginx proxies past the gateway (#225) 🐛
+- [x] Login is not rate limited on the orchestrator — nginx proxies past the gateway (#225) 🐛
 - [ ] Password reset flow — admin-driven in community, email-driven in hosted (#226)
-- [ ] Sessions cannot be revoked — a deleted user's token stays valid (#227)
+- [x] Sessions cannot be revoked — a deleted user's token stays valid (#227)
 - [ ] API tokens for scripted/CI access, scoped and revocable (#228)
 - [ ] Two-factor authentication (TOTP) + recovery codes (#229)
 - [ ] Transfer server ownership — an owner who leaves orphans their servers (#230)

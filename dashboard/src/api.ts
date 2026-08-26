@@ -230,6 +230,36 @@ export function getCurrentUser(): Promise<CurrentUser> {
   return request('/me');
 }
 
+// ── Sessions (#227) — where you are signed in, and ending it ─────────────────
+export interface SessionView {
+  id: string;
+  createdAt: string;
+  lastSeenAt: string;
+  userAgent: string | null;
+  ipAddress: string | null;
+  /** The session making this request. Never offered for removal as "another". */
+  current: boolean;
+}
+
+export function listSessions(): Promise<SessionView[]> {
+  return request('/me/sessions');
+}
+
+/** End one other session — the "that wasn't me" button. */
+export function endSession(id: string): Promise<void> {
+  return request(`/me/sessions/${id}`, { method: 'DELETE' });
+}
+
+/** End every session but this one. */
+export function endOtherSessions(): Promise<void> {
+  return request('/me/sessions', { method: 'DELETE' });
+}
+
+/** End this session server-side, so the token stops working immediately. */
+export function logoutSession(): Promise<void> {
+  return request('/auth/logout', { method: 'POST' });
+}
+
 export function changePassword(currentPassword: string, newPassword: string): Promise<void> {
   return request('/me/password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) });
 }

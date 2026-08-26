@@ -14,6 +14,8 @@ import type {
   CreateUserInput,
   NodeRecord,
   RegisterNodeInput,
+  SessionRecord,
+  CreateSessionInput,
   UpdateServerConfigInput,
   Repository,
   ResourceLimits,
@@ -90,6 +92,24 @@ function toUserRecord(u: PrismaUser): UserRecord {
     passwordHash: u.passwordHash,
     platformRole: u.platformRole,
     createdAt: u.createdAt.toISOString(),
+  };
+}
+
+function toSessionRecord(s: {
+  id: string;
+  userId: string;
+  createdAt: Date;
+  lastSeenAt: Date;
+  userAgent: string | null;
+  ipAddress: string | null;
+}): SessionRecord {
+  return {
+    id: s.id,
+    userId: s.userId,
+    createdAt: s.createdAt.toISOString(),
+    lastSeenAt: s.lastSeenAt.toISOString(),
+    userAgent: s.userAgent,
+    ipAddress: s.ipAddress,
   };
 }
 
@@ -329,6 +349,38 @@ export class PrismaRepository implements Repository {
   async listNodes(): Promise<NodeRecord[]> {
     const nodes = await this.client.node.findMany({ orderBy: { id: 'asc' } });
     return nodes.map(toNodeRecord);
+  }
+
+  // ── Sessions (#227) ────────────────────────────────────────────────────────
+  async createSession(input: CreateSessionInput): Promise<SessionRecord> {
+    const row = await this.client.session.create({
+      data: { id: randomUUID(), userId: input.userId, userAgent: input.userAgent ?? null, ipAddress: input.ipAddress ?? null },
+    });
+    return toSessionRecord(row);
+  }
+
+  async getSession(id: string): Promise<SessionRecord | null> {
+    const row = await this.client.session.findUnique({ where: { id } });
+    return row ? toSessionRecord(row) : null;
+  }
+
+  async listSessions(userId: string): Promise<SessionRecord[]> {
+    const rows = await this.client.session.findMany({ where: { userId }, orderBy: { lastSeenAt: 'desc' } });
+    return rows.map(toSessionRecord);
+  }
+
+  async deleteSession(id: string): Promise<void> {
+    await this.client.session.deleteMany({ where: { id } });
+  }
+
+  async deleteSessionsForUser(userId: string, exceptId?: string): Promise<void> {
+    await this.client.session.deleteMany({
+      where: { userId, ...(exceptId ? { id: { not: exceptId } } : {}) },
+    });
+  }
+
+  async touchSession(id: string, at: string): Promise<void> {
+    await this.client.session.updateMany({ where: { id }, data: { lastSeenAt: new Date(at) } });
   }
 
   async registerNode(input: RegisterNodeInput): Promise<NodeRecord> {
