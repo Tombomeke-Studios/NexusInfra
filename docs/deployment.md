@@ -67,6 +67,102 @@ alongside FinVault) while agents run anywhere. Practical caveats for a real mult
   reach a deployed server at that node's IP:port. A unifying reverse proxy / gateway is a later phase.
 - Multi-node placement is tracked as roadmap item #21.
 
+## Putting it behind TLS (#245)
+
+**Everything the stack speaks is plain HTTP.** The login that carries a password, the JWT on every
+request afterwards, the WebSocket that opens a root shell inside a container — all of it, in the
+clear. On a LAN you control that is a considered risk. The moment any of it crosses a network you do
+not control, it is somebody else's session.
+
+Nothing in the stack terminates TLS itself, deliberately: certificate renewal, HSTS and cipher choice
+are a reverse proxy's job, and every host already has one it prefers. Put the panel behind one and
+publish nothing else.
+
+### What to expose, and what not to
+
+| Service | Expose? |
+|---|---|
+| dashboard `8095` | Yes — behind the proxy, as the only public entry point |
+| orchestrator `9200` | No. The dashboard's nginx reaches it on the internal network |
+| gateway `9400` | Only if you use it as the entry point instead of the dashboard |
+| node-agent `9100` | **Never.** It starts containers and opens shells; see [images.md](images.md) |
+| control-room `9000`, billing-bridge `9300` | No |
+| RabbitMQ `5672` / `15672` | No. Management UI least of all — it ships with `guest/guest` |
+
+The compose files publish ports on the host so a local install works out of the box. For an exposed
+host, bind the ones you are not proxying to localhost (`127.0.0.1:9200:9200`) so a stray firewall rule
+cannot turn them into an entry point.
+
+### Caddy
+
+Caddy is the shortest path: it obtains and renews a certificate on its own, provided the domain
+resolves to the host and ports 80 and 443 reach it.
+
+```caddyfile
+panel.example.com {
+    reverse_proxy localhost:8095
+}
+```
+
+That is the whole file. The WebSocket used by the terminal is upgraded automatically — no extra
+configuration, which is the usual reason a panel's console works everywhere except behind a proxy.
+
+### nginx
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name panel.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/panel.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/panel.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8095;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # The terminal (#71) is a WebSocket. Without these two the console fails
+        # to connect while every other page works, which is a confusing way to
+        # discover the proxy is misconfigured.
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # A shell session is idle whenever nobody is typing. The default 60s read
+        # timeout closes it mid-use.
+        proxy_read_timeout 3600s;
+    }
+}
+
+server {
+    listen 80;
+    server_name panel.example.com;
+    return 301 https://$host$request_uri;
+}
+```
+
+### Getting the client's real address
+
+Rate limiting (#225) keys on the caller's IP, and behind a proxy every request appears to come from
+the proxy — so one address would carry everyone's budget and lock the whole installation out
+together. Set `TRUST_PROXY=1` on the orchestrator so it reads `X-Forwarded-For`, and make sure the
+proxy sets that header.
+
+Only do this behind a proxy you control. `X-Forwarded-For` is a request header like any other: if the
+orchestrator is reachable directly, a caller can set it themselves and choose which bucket to spend.
+
+### Before you expose anything
+
+- Set `ADMIN_PASSWORD` to something generated, not the one in the example file.
+- Confirm `JWT_SECRET` and `INTERNAL_API_TOKEN` are not the defaults — the installer generates both
+  (#191); a hand-assembled stack may not have.
+- Check that only the proxy's ports answer from outside: `ss -tlnp` on the host, then try one of the
+  service ports from another machine.
+- Community edition refuses self-registration, so the only accounts are the ones you create. Hosted
+  does not — that is the point of it, but it means the registration form is public.
+
 ## Combined deployment with FinVault
 
 Run one broker for both platforms: omit NexusInfra's `rabbitmq` service and point `RABBITMQ_URL` at

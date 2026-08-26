@@ -266,7 +266,7 @@ scrolling log lines describing events that never happened.
 - [ ] Integration tests: RabbitMQ / DB-backed end to end (Docker Compose test target) (#242)
 - [ ] Nothing watches the dead-letter queue — surface DLQ depth + oldest message (#243)
 - [ ] Node Agent does not reconcile containers after its own crash (#244)
-- [ ] Document TLS termination / reverse proxy — the installer ships plain HTTP (#245) 📋
+- [x] Document TLS termination / reverse proxy — the installer ships plain HTTP (#245)
 - [ ] Accessibility + small-screen audit of the panel (keyboard, focus, reduced motion) (#247)
 
 ### Small cleanups / follow-ups (open)

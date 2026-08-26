@@ -78,6 +78,25 @@ const scheduleActions: ScheduleActions = {
 
 // ── HTTP: API + health probe ──────────────────────────────────────────────────
 const app = express();
+/**
+ * Trust the proxy in front of us for the caller's address (#245).
+ *
+ * Rate limiting (#225) keys on `req.ip`, and behind a proxy every request appears
+ * to come from the proxy — one address carrying everyone's budget, so a handful of
+ * failures would lock out the whole installation together.
+ *
+ * Off by default, and it has to be: `X-Forwarded-For` is an ordinary request
+ * header. If the orchestrator is reachable directly, trusting it lets a caller
+ * pick which bucket to spend and defeats the limiter entirely. Turn it on only
+ * when nothing but the proxy can reach this process.
+ */
+if (process.env.TRUST_PROXY && process.env.TRUST_PROXY !== '0') {
+  // A number counts hops back from this process; the docs' single reverse proxy
+  // is 1. Anything else is passed to Express as-is (an IP, a subnet, 'loopback').
+  const value = process.env.TRUST_PROXY.trim();
+  app.set('trust proxy', /^\d+$/.test(value) ? Number(value) : value);
+}
+
 app.use(cors());
 app.use(express.json());
 app.get('/health', (_req, res) => {

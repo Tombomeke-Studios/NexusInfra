@@ -440,8 +440,12 @@ the full sharing flow including roles, invitations and teams.
 
 Known limitations, stated plainly rather than left to be discovered:
 
-- **Not yet hardened for the public internet.** There is no TLS termination in the shipped bundles,
-  and the default broker credentials need replacing. Treat the bundles as a starting point.
+- **The stack speaks plain HTTP and terminates no TLS itself.** Passwords, tokens and the WebSocket
+  that opens a root shell in a container all travel in the clear, so it must sit behind a reverse
+  proxy before it is reachable from anywhere you do not control.
+  [docs/deployment.md](docs/deployment.md#putting-it-behind-tls-245) has working Caddy and nginx
+  configurations, which ports to publish and which never to. The default broker credentials need
+  replacing too.
 - **SQLite, not PostgreSQL.** Fine for a single control plane; a migration path is on the roadmap.
 - **The hosted edition has not been verified against a live FinVault instance** — the event contract
   is test-guarded on this side, but the two have not yet been run together.
