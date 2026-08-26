@@ -229,6 +229,7 @@ is the migrations directory.
 | `src/runtime.ts` | `ContainerRuntime` interface + `DockerodeRuntime` (real Docker via dockerode) + host resource collection + per-container log/stats streams |
 | `src/stats.ts` | `parseDockerStats` — pure derivation of `ContainerStats` (CPU%, mem, network) from a Docker stats sample |
 | `src/limits.ts` | `resourceLimitsToHostConfig` — pure translation of a server's `ResourceLimits` (%) into Docker HostConfig caps (Memory, NanoCpus, RestartPolicy, …) enforced at start |
+| `src/cgroupSupport.ts` | What this host's cgroups actually accept (#288): pure `withCgroupSupport` drops HostConfig fields the kernel would reject, `detectCgroupSupport` probes for them. Setting `BlkioWeight` on a host with no `io.weight` fails **container init**, and the form defaults `ioPriority: normal` — so every server on Docker Desktop refused to start. `io` in `cgroup.controllers` is not the signal; the file's existence is |
 | `src/files.ts` | Pure file helpers: `normalizeContainerPath` (traversal guard), `parseLsOutput`, `buildTarball` |
 | `src/fileRoutes.ts` | `createFileRouter` — internal container-file CRUD HTTP (list/read/write/mkdir/rename/delete) over the runtime |
 | `src/databases.ts` | `buildDatabaseSpec` (engine→image/env/port) + `pickDatabasePort` — pure, for provisioning a managed DB container |
