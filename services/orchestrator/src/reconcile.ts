@@ -1,4 +1,5 @@
 import { buildEnvelope, readPayload, type EventEnvelope, type NexusInfraEvent } from 'shared';
+import { containerNameFor } from './containerName.js';
 import type { DeploymentView, Repository } from './types.js';
 
 // Reconciling what a node actually runs with what we think it runs (#244).
@@ -144,7 +145,7 @@ export function createReconcileHandler(deps: ReconcileDeps) {
               deploymentId: action.deploymentId,
               nodeId: inventory.nodeId,
               dockerImage: config.dockerImage,
-              containerName: config.name,
+              containerName: containerNameFor(config.name, action.deploymentId),
               env: config.env,
               ports: config.ports,
               resourceLimits: config.resourceLimits,
