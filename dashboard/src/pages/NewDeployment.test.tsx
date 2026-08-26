@@ -13,7 +13,9 @@ const MINECRAFT_EGG = {
   dockerImage: 'itzg/minecraft-server',
   ports: { '25565': '25565' },
   dataPath: '/data',
+  memoryVariable: 'MEMORY',
   variables: [
+    { key: 'MEMORY', label: 'Java heap size', description: 'How much memory the server may actually use.', kind: 'string', default: '2G' },
     { key: 'TYPE', label: 'Server software', description: 'Which server software to run.', kind: 'choice', default: 'VANILLA', options: ['VANILLA', 'PAPER'] },
     { key: 'MAX_PLAYERS', label: 'Player slots', description: 'How many people may connect at once.', kind: 'integer', default: '20', min: 1, max: 200 },
     { key: 'ONLINE_MODE', label: 'Verify accounts with Mojang', description: 'Whether joining requires a paid account.', kind: 'boolean', default: 'true' },
@@ -172,6 +174,51 @@ describe('NewDeployment', () => {
     // Both were written to state and read by nothing (#255, #256).
     expect(screen.queryByText(/startup command/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/feature limits/i)).not.toBeInTheDocument();
+  });
+
+  // The container cap and the heap control the same physical RAM (#271); the form
+  // warns while you are setting it, and the API still refuses.
+  it('warns when the heap cannot fit the memory limit on the chosen node', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/nodes'))
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          // 4 GB node: the default 50% limit is a 2048 MB cap, and the egg's
+          // default heap is 2G — the collision the defaults used to produce.
+          json: async () => [{ id: 'n1', name: 'small-box', health: 'healthy', cpuPercent: 10, ramUsedMb: 1000, ramTotalMb: 4096, diskUsedGb: null, diskTotalGb: null, lastHeartbeat: new Date().toISOString() }],
+        } as Response);
+      if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [MINECRAFT_EGG] } as Response);
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
+    });
+    renderForm();
+
+    await userEvent.click(screen.getByRole('button', { name: /Game server/ }));
+    await screen.findByRole('button', { name: /Java Edition/ });
+
+    const warning = await screen.findByRole('alert');
+    expect(warning).toHaveTextContent(/2048 MB heap will not fit a 2048 MB limit/);
+    // The number people can act on, not the percentage the setting is stored in.
+    expect(warning).toHaveTextContent(/Java claims the whole heap up front/);
+  });
+
+  it('shows the memory limit in MB for the chosen node', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/nodes'))
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 'n1', name: 'big-box', health: 'healthy', cpuPercent: 10, ramUsedMb: 1000, ramTotalMb: 32768, diskUsedGb: null, diskTotalGb: null, lastHeartbeat: new Date().toISOString() }],
+        } as Response);
+      if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [MINECRAFT_EGG] } as Response);
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
+    });
+    renderForm();
+
+    // 50% of 32 GB — meaningless as "50%", actionable as "16384 MB".
+    expect(await screen.findByText(/16384 MB on big-box/)).toBeInTheDocument();
   });
 
   it('surfaces an API error and stays on the form', async () => {

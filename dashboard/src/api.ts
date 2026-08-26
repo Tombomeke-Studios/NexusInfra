@@ -101,6 +101,8 @@ export interface Egg {
   ports: Record<string, string>;
   dataPath: string;
   variables: EggVariable[];
+  /** Which variable is the JVM heap, when this server has one (#271). */
+  memoryVariable?: string;
 }
 
 /**
