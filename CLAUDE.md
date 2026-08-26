@@ -252,6 +252,7 @@ is the migrations directory.
 | `src/nodeSelection.ts` | Pure least-loaded `selectNode` (healthy nodes, ranked by CPU+RAM load) |
 | `src/agentUrl.ts` | Pure `resolveAgentUrl`/`normalizeAgentUrl` — which node's agent to call, falling back to `NODE_AGENT_URL` for single-node (#171) |
 | `src/dbProvision.ts` | Pure managed-DB helpers: `isDatabaseEngine` guard + `generateDatabaseCredentials` (safe name/user/password) |
+| `src/eggs.ts` | Egg catalogue (#231) — the recipes a server is created from (image, ports, dataPath, typed variables with defaults/validation) + `buildEggDeployment`. **Pure.** Lives here, not in the browser: the recipe validates server-side, so a caller that skips the form cannot skip `EULA=TRUE` or inject arbitrary container env. Replaced `dashboard/src/gameSpec.ts` |
 | `src/cron.ts` | Pure 5-field cron matcher (`cronMatches`, `isValidCron`) for the schedule runner |
 | `src/scheduler.ts` | Schedule runner: pure `selectDue`/`tickSchedules` + `startScheduler` (1-min poll); actions injected |
 | `src/users.ts` | Account domain: bcrypt hashing, email normalisation, password rules, edition-derived signup policy, and `createUserService` (register / authenticate / change password / first-run bootstrap) (#174) |
@@ -307,7 +308,6 @@ is the migrations directory.
 | `scripts/verify-edition.mjs` | Greps the **built** bundle to prove a community build contains no billing code; run by the image build, so tree-shaking regressions fail the build (#190) |
 | `src/permissions.ts` | The panel's copy of the server permission matrix (#178) — `can`/`permissionsFor`/`ROLE_LABELS`. **Mirrors `orchestrator/src/access.ts`; change both together.** An absent role means full access, so an owner is never locked out of their own server |
 | `src/prefs.ts` | Persisted client preferences (localStorage): first-run intro flag + customisable New Deployment defaults (`getDeploymentDefaults`) |
-| `src/gameSpec.ts` | Pure `buildGameDeployment` — maps the game picker to a real image + startup env/port (Minecraft/Valheim/Rust/CS2) |
 | `src/pages/Preferences.tsx` | Preferences page — edit/save/reset the New Deployment defaults |
 | `src/pages/Account.tsx` | Account page (#221) — who you are signed in as + change your own password. Platform role is read-only: your own standing is not yours to raise |
 | `src/pages/Users.tsx` | Accounts page (#222) — platform admins list and create accounts. The only way in for the community edition, where nobody self-registers. Nav link hidden for non-admins; `/users` answers 403 regardless |

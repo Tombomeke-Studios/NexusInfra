@@ -79,9 +79,49 @@ export interface ResourceLimits {
   oomKill?: boolean;
 }
 
-export interface CreateDeploymentInput {
+// ── Eggs (#231) — the recipes a server can be created from ────────────────────
+export type EggVariableKind = 'string' | 'integer' | 'boolean' | 'choice';
+
+export interface EggVariable {
+  key: string;
+  label: string;
+  description: string;
+  kind: EggVariableKind;
+  default: string;
+  options?: string[];
+  min?: number;
+  max?: number;
+}
+
+export interface Egg {
+  id: string;
   name: string;
+  description: string;
   dockerImage: string;
+  ports: Record<string, string>;
+  dataPath: string;
+  variables: EggVariable[];
+}
+
+/**
+ * The egg catalogue. Fetched rather than bundled: the orchestrator owns the
+ * recipes and validates against them, so the panel renders whatever it is told
+ * about instead of keeping a copy that could drift.
+ */
+export function listEggs(): Promise<Egg[]> {
+  return request('/eggs');
+}
+
+/**
+ * Creating a server is one of two things, and the types say so: an egg decides
+ * its own image (#231), or you name an image yourself. Requiring both would let
+ * a caller send an image that is then ignored.
+ */
+export type CreateDeploymentInput = CreateDeploymentBase &
+  ({ eggId: string; eggValues?: Record<string, string>; dockerImage?: never } | { dockerImage: string; eggId?: never });
+
+interface CreateDeploymentBase {
+  name: string;
   ports?: Record<string, string>;
   env?: Record<string, string>;
   resourceLimits?: ResourceLimits;
