@@ -219,6 +219,7 @@ is the migrations directory.
 | Path | Contents |
 |---|---|
 | `src/monitor.ts` | Pure monitor core: `statusFor`, `healthyOverlapMs` (exact threshold splitting) + `Monitor` — per-source liveness, status transitions (capped ring buffer) and uptime % ; every method takes an explicit `now` |
+| `src/dlq.ts` | Dead-letter watch (#243): pure `readDlq`/`describeDlq` over an injected queue probe. Reports `unknown` rather than `0` when the broker cannot be asked — not knowing is not the same as knowing nothing failed |
 | `src/index.ts` | Wiring: HTTP `/health` · `/status` (+ `uptimePercent`) · `/uptime` (transitions + cumulative), consumes `monitoring.heartbeat.#`, healthy→degraded(3s)→offline(10s) |
 | `Dockerfile` | Multi-stage workspace build (pattern shared by all services) |
 

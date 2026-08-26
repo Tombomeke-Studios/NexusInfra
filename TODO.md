@@ -5,7 +5,7 @@
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/next-Phase_5_·_Production-3b82f6?style=flat-square)
 ![Editions](https://img.shields.io/badge/editions-community_·_hosted-8b5cf6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-700_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-711_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -264,7 +264,7 @@ scrolling log lines describing events that never happened.
 - [~] Security: service-to-service auth (#169 — **done**, token-guarded agent API) + rate limiting (done in the gateway, #20); secrets-at-rest, token rotation, mTLS/HTTPS still to do
 - [ ] Production docker-compose + deployment docs; migrate SQLite → PostgreSQL via Prisma (#241)
 - [ ] Integration tests: RabbitMQ / DB-backed end to end (Docker Compose test target) (#242)
-- [ ] Nothing watches the dead-letter queue — surface DLQ depth + oldest message (#243)
+- [x] Nothing watches the dead-letter queue — surfaces DLQ depth in the panel (#243)
 - [x] Node Agent does not reconcile containers after its own crash (#244)
 - [x] Document TLS termination / reverse proxy — the installer ships plain HTTP (#245)
 - [ ] Accessibility + small-screen audit of the panel (keyboard, focus, reduced motion) (#247)

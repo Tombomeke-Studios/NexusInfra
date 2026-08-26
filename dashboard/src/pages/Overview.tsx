@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { listNodes, listDeployments, registerNode, deregisterNode, setNodeMaintenance, getMonitoring, type NodeView, type DeploymentView, type MonitoringSnapshot } from '../api';
+import { listNodes, listDeployments, registerNode, deregisterNode, setNodeMaintenance, getMonitoring, type NodeView, type DeploymentView, type MonitoringSnapshot, type DeadLetterSnapshot } from '../api';
 import { CountUp } from '../components/CountUp';
 import { useToast } from '../components/Toast';
 import { InfoHint } from '../components/InfoHint';
@@ -344,6 +344,41 @@ function ServicesStrip({ monitoring }: { monitoring: MonitoringSnapshot | null }
             </span>
           ))}
         </div>
+      )}
+      <DeadLetters snapshot={monitoring?.deadLetters} />
+    </div>
+  );
+}
+
+/**
+ * Whether any event failed to process (#243).
+ *
+ * Consumers dead-letter on error and nothing read that queue, so events could
+ * pile up unnoticed indefinitely. Shown only when there is something to say:
+ * a healthy queue does not need a line of its own, but a stuck one is the kind
+ * of quiet failure that otherwise goes unfound for weeks.
+ */
+function DeadLetters({ snapshot }: { snapshot?: DeadLetterSnapshot }) {
+  if (!snapshot || snapshot.status === 'empty') return null;
+
+  const unknown = snapshot.status === 'unknown';
+  return (
+    <div
+      style={{
+        marginTop: 12,
+        paddingTop: 12,
+        borderTop: '1px solid var(--color-border)',
+        fontSize: '.84rem',
+        color: unknown ? 'var(--color-text-subtle)' : 'var(--color-warning)',
+      }}
+    >
+      {unknown ? (
+        <>Could not read the dead-letter queue, so whether any event failed is unknown.</>
+      ) : (
+        <>
+          <strong>{snapshot.depth}</strong> {snapshot.depth === 1 ? 'event' : 'events'} could not be processed and{' '}
+          {snapshot.depth === 1 ? 'is' : 'are'} waiting in the dead-letter queue.
+        </>
       )}
     </div>
   );

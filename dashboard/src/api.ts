@@ -361,6 +361,14 @@ export interface MonitoredService {
 export interface MonitoringSnapshot {
   monitored: MonitoredService[];
   reachable: boolean;
+  /** Whether any event failed to process and is sitting in the DLQ (#243). */
+  deadLetters?: DeadLetterSnapshot;
+}
+
+export interface DeadLetterSnapshot {
+  status: 'empty' | 'messages-waiting' | 'unknown';
+  depth: number | null;
+  error?: string;
 }
 
 /** The Control Room's live view of every service/node heartbeat on the bus. */
