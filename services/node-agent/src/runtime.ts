@@ -7,7 +7,7 @@ import { lineSplitter } from './logs.js';
 import { parseDockerStats, type ContainerStats } from './stats.js';
 import { resourceLimitsToHostConfig } from './limits.js';
 import { buildTarball, normalizeContainerPath, parseLsOutput, type FileEntry } from './files.js';
-import { collectDisk } from './disk.js';
+import { collectDisk, resolveDiskPath, type DiskPathChoice } from './disk.js';
 import type { TerminalSession } from './terminal.js';
 
 // NodeResources is the shared event-payload type (shared/src/events.ts) — the
@@ -372,8 +372,36 @@ export class DockerodeRuntime implements ContainerRuntime {
       ramTotalMb: Math.round(totalMem / 1024 / 1024),
       // Real figures, or none at all (#276). Reporting 0 made a full disk look
       // identical to an empty one, beside meters that were genuine.
-      ...((await collectDisk((p) => statfs(p))) ?? {}),
+      ...((await collectDisk((p) => statfs(p), (await this.diskTarget()).path)) ?? {}),
     };
+  }
+
+  /**
+   * Which filesystem this node reports, worked out once (#276).
+   *
+   * Nobody should have to configure this, so it is derived rather than asked for:
+   * an explicit DISK_PATH wins, else Docker's own data root when it is readable
+   * from here, else the agent's root — which under overlay2 already reports the
+   * filesystem the Docker data lives on. Resolved lazily because it needs a call
+   * to the daemon, and cached because the answer cannot change while we run.
+   */
+  private diskChoice: Promise<DiskPathChoice> | null = null;
+
+  private diskTarget(): Promise<DiskPathChoice> {
+    this.diskChoice ??= (async () => {
+      let dockerRootDir: string | undefined;
+      try {
+        dockerRootDir = ((await this.docker.info()) as { DockerRootDir?: string }).DockerRootDir;
+      } catch {
+        // An old daemon or a restricted socket; the fallback still works.
+      }
+      const choice = await resolveDiskPath({ dockerRootDir, statfs: (p) => statfs(p) });
+      // Said once, so "why does the panel show that disk" has an answer that does
+      // not require reading this file.
+      console.log(`[node-agent] reporting disk usage for ${choice.path} (${choice.reason})`);
+      return choice;
+    })();
+    return this.diskChoice;
   }
 
   // Remove any container whose name exactly matches (Docker prefixes names with

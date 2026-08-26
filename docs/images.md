@@ -121,7 +121,7 @@ Volume: `/data` — the database. Back this up.
 | `INTERNAL_API_TOKEN` | yes | Must match the orchestrator's. |
 | `AGENT_URL` | no | How the orchestrator reaches this agent, advertised on its heartbeat. Defaults to `http://<hostname>:<PORT>`, which works on a Compose network; set it explicitly for anything else. |
 | `BACKUP_DIR` | no | Where backup tarballs live. Point at a volume so they survive restarts. |
-| `DISK_PATH` | no | Which filesystem to report disk usage for (#276). Defaults to `/`, the agent container's root; set it to the Docker data root or a mounted host path to report the disk that actually fills up. A node that cannot measure it reports nothing rather than zero. |
+| `DISK_PATH` | no | **Rarely needed.** Which filesystem to report disk usage for (#276). The agent works this out by itself: it asks Docker for its data root and measures that when it is readable, and otherwise measures its own root — which under overlay2 already reports the filesystem the Docker data sits on, because that is where the container's writable layer lives. Set this only when the disk you care about is somewhere else, e.g. volumes on a second drive mounted into the agent. A node that cannot measure at all reports nothing rather than zero. |
 | `IMPORT_ROOT` | no | Enables importing existing server directories (#268). A path a person may point a new server at, so it runs against files already on this host. **Unset means the feature is off, which is the default.** Only a platform administrator may use it, and the agent refuses anything that does not resolve inside this root. Mount the same path into the agent container so it can see it. |
 
 Requires the Docker socket: `-v /var/run/docker.sock:/var/run/docker.sock`.
