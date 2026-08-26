@@ -228,10 +228,6 @@ export function getUsage(): Promise<BillingUsage> {
   return request('/billing/usage');
 }
 
-export function getBillingPlan(): Promise<BillingPlan> {
-  return request('/billing/plan');
-}
-
 export function getLedger(): Promise<LedgerEntry[]> {
   return request('/billing/ledger');
 }
