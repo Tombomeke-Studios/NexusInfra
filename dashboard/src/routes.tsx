@@ -9,6 +9,8 @@ import { ServerDetail } from './pages/ServerDetail';
 import { NodeDetail } from './pages/NodeDetail';
 import { Teams } from './pages/Teams';
 import { Preferences } from './pages/Preferences';
+import { Account } from './pages/Account';
+import { Users } from './pages/Users';
 import { Billing } from './pages/Billing';
 import { useEdition } from './edition';
 import { BILLING_INCLUDED } from './buildEdition';
@@ -32,6 +34,9 @@ export function AppRoutes() {
           <Route path="/nodes/:id" element={<NodeDetail />} />
           <Route path="/teams" element={<Teams />} />
           <Route path="/preferences" element={<Preferences />} />
+          <Route path="/account" element={<Account />} />
+          {/* The API answers 403 for non-administrators; the nav just doesn't offer it. */}
+          <Route path="/users" element={<Users />} />
           {/* Billing is hosted-edition only (#149) and is not in a community build at
               all (#190) — BILLING_INCLUDED is a compile-time constant, so this whole
               branch disappears from the community bundle. */}

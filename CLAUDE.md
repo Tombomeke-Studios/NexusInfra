@@ -309,6 +309,8 @@ is the migrations directory.
 | `src/prefs.ts` | Persisted client preferences (localStorage): first-run intro flag + customisable New Deployment defaults (`getDeploymentDefaults`) |
 | `src/gameSpec.ts` | Pure `buildGameDeployment` — maps the game picker to a real image + startup env/port (Minecraft/Valheim/Rust/CS2) |
 | `src/pages/Preferences.tsx` | Preferences page — edit/save/reset the New Deployment defaults |
+| `src/pages/Account.tsx` | Account page (#221) — who you are signed in as + change your own password. Platform role is read-only: your own standing is not yours to raise |
+| `src/pages/Users.tsx` | Accounts page (#222) — platform admins list and create accounts. The only way in for the community edition, where nobody self-registers. Nav link hidden for non-admins; `/users` answers 403 regardless |
 | `src/pages/NodeDetail.tsx` | Per-node view (`/nodes/:id`): live CPU/RAM meters + session sparkline, hosted deployments, deregister |
 | `src/routes.tsx` · `src/App.tsx` | Route table (public `/login`; the rest behind `RequireAuth` + `Layout`) wrapped in the router |
 | `src/components/{Layout,RequireAuth}.tsx` | Nav shell + auth-guard route wrapper |

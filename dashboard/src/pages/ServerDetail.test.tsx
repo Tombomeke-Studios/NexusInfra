@@ -177,6 +177,47 @@ describe('ServerDetail telemetry when the stream fails', () => {
   });
 });
 
+// The trail has been written since the beginning and nothing ever read it back,
+// so "who stopped my server" was unanswerable from the panel (#223).
+describe('ServerDetail Activity tab', () => {
+  beforeEach(() => vi.resetAllMocks());
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('renders the audit trail', async () => {
+    const events = [
+      { id: 'e2', event: 'stop-requested', message: 'stop requested by user', timestamp: '2026-08-26T10:00:00.000Z' },
+      { id: 'e1', event: 'created', message: 'placed on node node-local', timestamp: '2026-08-26T09:00:00.000Z' },
+    ];
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      const path = String(url);
+      const body = path.includes('/deployments/dep-1/events') ? events : path.includes('/deployments/dep-1/') ? [] : { ...BASE, role: 'owner' };
+      return Promise.resolve({ ok: true, status: 200, json: async () => body } as Response);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <MemoryRouter initialEntries={['/servers/dep-1']}>
+        <ToastProvider>
+          <Routes>
+            <Route path="/servers/:id" element={<ServerDetail />} />
+          </Routes>
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await userEvent.click(await screen.findByRole('button', { name: 'activity' }));
+
+    expect(await screen.findByText('stop-requested')).toBeInTheDocument();
+    expect(screen.getByText('placed on node node-local')).toBeInTheDocument();
+  });
+
+  it('says so when nothing has happened yet', async () => {
+    renderDetail('owner');
+    await userEvent.click(await screen.findByRole('button', { name: 'activity' }));
+    expect(await screen.findByText(/nothing has happened/i)).toBeInTheDocument();
+  });
+});
+
 describe('ServerDetail Settings tab', () => {
   beforeEach(() => vi.resetAllMocks());
   afterEach(() => vi.unstubAllGlobals());
