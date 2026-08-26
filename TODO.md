@@ -250,6 +250,7 @@ scrolling log lines describing events that never happened.
 - [x] Node Agent internal API was unauthenticated + host-published — token-guard it (#169)
 - [x] Control Room not surfaced/up in the running stack — verify it starts + show its health in the panel (#157)
 - [x] A server name with a space never starts — derive a Docker-safe container name (#286)
+- [x] IO priority makes every container start fail on hosts without `io.weight` — detect and skip it (#288)
 
 ### Small cleanups / follow-ups
 

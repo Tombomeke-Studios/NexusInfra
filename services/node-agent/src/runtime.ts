@@ -1,11 +1,12 @@
 import os from 'os';
-import { statfs } from 'fs/promises';
+import { access, statfs } from 'fs/promises';
 import Docker from 'dockerode';
 import { Writable } from 'stream';
 import type { NodeResources, ResourceLimits } from 'shared';
 import { lineSplitter } from './logs.js';
 import { parseDockerStats, type ContainerStats } from './stats.js';
 import { resourceLimitsToHostConfig } from './limits.js';
+import { detectCgroupSupport, withCgroupSupport, type CgroupSupport } from './cgroupSupport.js';
 import { buildTarball, normalizeContainerPath, parseLsOutput, type FileEntry } from './files.js';
 import { collectDisk, resolveDiskPath, type DiskPathChoice } from './disk.js';
 import type { TerminalSession } from './terminal.js';
@@ -89,9 +90,30 @@ export interface ContainerRuntime {
  */
 export class DockerodeRuntime implements ContainerRuntime {
   private docker: Docker;
+  /** Probed once on first start and reused; the kernel does not change under us. */
+  private cgroupSupport?: CgroupSupport;
 
   constructor(docker?: Docker) {
     this.docker = docker ?? new Docker();
+  }
+
+  private async support(): Promise<CgroupSupport> {
+    if (!this.cgroupSupport) {
+      this.cgroupSupport = await detectCgroupSupport(async (p) => {
+        try {
+          await access(p);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      if (!this.cgroupSupport.ioWeight) {
+        // Said out loud: the server starts, but not with the IO priority asked
+        // for, and a silently ignored setting is worse than a missing one.
+        console.warn('[node-agent] this host has no cgroup io.weight — IO priority will be ignored (#288)');
+      }
+    }
+    return this.cgroupSupport;
   }
 
   async start(spec: StartSpec): Promise<string> {
@@ -115,10 +137,13 @@ export class DockerodeRuntime implements ContainerRuntime {
 
     // Enforce the server's resource caps / restart policy at start (#107),
     // converting the host-relative percentages against this node's capacity.
-    const limits = resourceLimitsToHostConfig(spec.resourceLimits, {
-      totalMemBytes: os.totalmem(),
-      cpuCount: os.cpus().length,
-    });
+    const limits = withCgroupSupport(
+      resourceLimitsToHostConfig(spec.resourceLimits, {
+        totalMemBytes: os.totalmem(),
+        cpuCount: os.cpus().length,
+      }),
+      await this.support()
+    );
 
     const container = await this.docker.createContainer({
       Image: spec.dockerImage,
