@@ -192,6 +192,18 @@ A single deployment with its full `events` audit trail **and the runtime configu
 with** — `ports`, `env`, `resourceLimits` and `autoRestart` — which the panel's Network and Startup
 tabs render. `404` if unknown (also when the caller has no access, so ids cannot be probed).
 
+### `PATCH /deployments/:id`
+
+Change an existing server's configuration (#220). Body may carry any of `name`, `dockerImage`,
+`ports`, `env`, `resourceLimits`, `autoRestart`; **an omitted field is left alone**, so a partial
+edit never blanks the rest. Requires `server.edit` (server admin and up — an operator may run a
+server but not redefine it).
+
+The change is stored and **nothing is restarted**: it applies the next time the server starts. A
+settings form that silently bounced a running server would be a worse surprise than one that waits.
+Recorded in the audit trail as `config-updated`. `200` with the updated deployment, `400` on an
+empty name/image or a non-object `ports`/`env`/`resourceLimits`, `403` without the permission.
+
 ### `GET /deployments/:id/events`
 
 The server's audit trail, **newest first** (#223) — creation, placement, start/stop/kill requests,

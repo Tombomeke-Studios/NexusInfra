@@ -301,6 +301,23 @@ export function listDeploymentEvents(id: string, opts: { limit?: number; offset?
   return request(`/deployments/${id}/events${qs ? `?${qs}` : ''}`);
 }
 
+export interface UpdateDeploymentInput {
+  name?: string;
+  dockerImage?: string;
+  ports?: Record<string, string>;
+  env?: Record<string, string>;
+  resourceLimits?: ResourceLimits;
+  autoRestart?: boolean;
+}
+
+/**
+ * Change an existing server's configuration (#220). Omitted fields are left
+ * alone, and nothing restarts — the change lands on the server's next start.
+ */
+export function updateDeployment(id: string, patch: UpdateDeploymentInput): Promise<DeploymentDetail> {
+  return request(`/deployments/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+}
+
 export function stopDeployment(id: string): Promise<{ status: string; deploymentId: string }> {
   return request(`/deployments/${id}/stop`, { method: 'POST' });
 }

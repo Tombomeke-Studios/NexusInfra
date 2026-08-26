@@ -42,6 +42,7 @@ export type Permission =
   | 'backup.manage'
   | 'schedule.manage'
   | 'subuser.manage'
+  | 'server.edit'
   | 'server.delete';
 
 // Each tier adds to the one below it, so a role can never accidentally be
@@ -67,6 +68,10 @@ const ADMIN: readonly Permission[] = [
   'backup.manage',
   'schedule.manage',
   'subuser.manage',
+  // Changing image, ports, environment or limits is a configuration change, not a
+  // destructive one — it sits with the server admin, next to the other management
+  // permissions (#220). Deleting still does not.
+  'server.edit',
 ];
 
 // Deleting a server destroys its data and its backups, so it stays with the

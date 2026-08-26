@@ -225,6 +225,45 @@ describe('ServerDetail Settings tab', () => {
   // The Reinstall button only ever fired a "Not wired yet" toast, and could not
   // mean anything: Start already recreates the container from the saved config
   // (#219). Offering no button beats offering one that does nothing.
+  // A server's configuration was frozen at creation: fixing a typo in a name meant
+  // deleting the server, and its databases and backups went with it (#220).
+  it('saves a configuration change without restarting anything', async () => {
+    renderDetail('owner', { name: 'old-name', env: { A: '1' } });
+    await userEvent.click(await screen.findByRole('button', { name: 'settings' }));
+
+    const nameInput = await screen.findByLabelText('Name');
+    await userEvent.clear(nameInput);
+    await userEvent.type(nameInput, 'new-name');
+    await userEvent.click(screen.getByRole('button', { name: /save configuration/i }));
+
+    const patch = (globalThis.fetch as unknown as { mock: { calls: [string, { method?: string; body?: string }][] } }).mock.calls.find(
+      ([u, o]) => String(u).includes('/deployments/dep-1') && o?.method === 'PATCH'
+    );
+    expect(patch).toBeDefined();
+    expect(JSON.parse(patch![1].body as string)).toMatchObject({ name: 'new-name', env: { A: '1' } });
+  });
+
+  it('refuses malformed JSON without calling the API', async () => {
+    renderDetail('owner');
+    await userEvent.click(await screen.findByRole('button', { name: 'settings' }));
+
+    const envInput = await screen.findByLabelText(/environment/i);
+    await userEvent.clear(envInput);
+    await userEvent.type(envInput, '{{not json');
+    await userEvent.click(screen.getByRole('button', { name: /save configuration/i }));
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    const calls = (globalThis.fetch as unknown as { mock: { calls: [string, { method?: string }][] } }).mock.calls;
+    expect(calls.some(([, o]) => o?.method === 'PATCH')).toBe(false);
+  });
+
+  it('does not offer the editor to an operator', async () => {
+    // An operator may run the server; redefining it is an admin's business.
+    renderDetail('operator');
+    await screen.findByText('Your role: Operator');
+    expect(screen.queryByRole('button', { name: 'settings' })).not.toBeInTheDocument();
+  });
+
   it('offers no Reinstall button', async () => {
     renderDetail('owner');
     await userEvent.click(await screen.findByRole('button', { name: 'settings' }));
