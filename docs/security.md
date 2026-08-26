@@ -217,10 +217,23 @@ plaintext on the private network. mTLS and rotation belong with the production h
 
 ## Subusers (#112)
 
-- The subuser API manages **who may access a server** (by email) and their role (`admin`/`viewer`), but
-  **does not yet enforce it** — the panel still authenticates as the single stub user. Enforcement (mapping
-  a logged-in identity to its allowed servers/roles) lands with real multi-user login via the FinVault-JWT
-  gateway (#20). Until then this is intentionally a management/record layer, not an access boundary.
+- The subuser API manages **who may access a server** (by email) and their role, and **enforces it**
+  since #175: every `/deployments/:id/*` route resolves the caller's role on that specific server and
+  answers `404` when they have none. (This paragraph previously said enforcement was still to come; it
+  was left behind by #175 and is corrected here.)
+
+## Transport security (#245)
+
+**The stack speaks plain HTTP and terminates no TLS itself.** The login carrying a password, every
+JWT after it, and the WebSocket that opens a root shell in a container all travel in the clear.
+
+That is a deliberate division of labour rather than an oversight — certificate renewal, HSTS and
+cipher selection belong to a reverse proxy, and every host already has one it prefers — but it makes
+one rule absolute: **do not expose this stack without a proxy in front of it.** On a LAN you control
+the risk is yours to take; across any network you do not, an observer has the session.
+[deployment.md](deployment.md#putting-it-behind-tls-245) has working Caddy and nginx configurations,
+which ports to publish and which never to, and the `TRUST_PROXY` setting that keeps per-IP rate
+limiting meaningful once every request arrives from the proxy's address.
 
 ## Known gaps (foundation phase)
 
