@@ -166,6 +166,10 @@ node is available. In the hosted edition, `409` when the plan's `maxServers` quo
 against the Billing Bridge; community edition never limits). On success the Orchestrator emits
 `infra.server.start` for the chosen node.
 
+Nodes report `cpuCores` once their agent has beaten in (#261); it is `null` until then, and the
+panel shows nothing rather than a guess. `GET /deployments` rows carry their `resourceLimits`, which
+the Overview sums per node to show what is genuinely committed there.
+
 ### `PATCH /nodes/:id/maintenance`  *(platform administrators)*
 
 Drain a node, or return it to the placement pool (#258). Body `{ "maintenance": true | false }` →

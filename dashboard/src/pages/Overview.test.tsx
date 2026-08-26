@@ -38,6 +38,35 @@ describe('Overview', () => {
     expect(screen.getByText('node-local')).toBeInTheDocument();
   });
 
+  // The card used to derive a vCPU count from RAM and a "committed" figure from
+  // the server count times an arbitrary constant (#261).
+  it('shows the reported core count and the real committed caps', async () => {
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () =>
+          String(url).includes('/nodes')
+            ? [{ id: 'node-local', name: 'node-local', health: 'healthy', cpuPercent: 12, cpuCores: 6, ramUsedMb: 2000, ramTotalMb: 8000, lastHeartbeat: '', diskUsedGb: null, diskTotalGb: null }]
+            : [
+                { id: 'd1', name: 'a', dockerImage: 'nginx', nodeId: 'node-local', containerId: 'c', status: 'running', startedAt: '', stoppedAt: null, createdAt: '', resourceLimits: { cpuPercent: 30, ramPercent: 25 } },
+                { id: 'd2', name: 'b', dockerImage: 'nginx', nodeId: 'node-local', containerId: 'c', status: 'running', startedAt: '', stoppedAt: null, createdAt: '', resourceLimits: { cpuPercent: 10, ramPercent: 5 } },
+              ],
+      } as Response)
+    );
+    render(<Overview />, { wrapper: MemoryRouter });
+
+    expect(await screen.findByText('6 vCPU')).toBeInTheDocument();
+    // 30+10 and 25+5 — not 2 servers x 22 / x 18.
+    expect(screen.getByText('cpu 40% · ram 30%')).toBeInTheDocument();
+  });
+
+  it('shows no core count for a node that has not reported one', async () => {
+    render(<Overview />, { wrapper: MemoryRouter });
+    await screen.findByText('node-local');
+    expect(screen.queryByText(/vCPU/)).not.toBeInTheDocument();
+  });
+
   // Maintenance used to be a useState in this component: the node was relabelled,
   // a toast claimed success, and the orchestrator kept placing servers there (#258).
   it('sends a real drain request when a node enters maintenance', async () => {

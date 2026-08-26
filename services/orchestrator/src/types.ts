@@ -39,6 +39,8 @@ export interface NodeRecord {
   agentUrl: string | null;
   lastHeartbeat: string; // ISO-8601 UTC
   cpuPercent: number | null;
+  /** Physical/virtual CPUs the node reports; null until an agent says (#261). */
+  cpuCores: number | null;
   ramUsedMb: number | null;
   ramTotalMb: number | null;
   diskUsedGb: number | null;
@@ -83,6 +85,12 @@ export interface DeploymentView extends DeploymentRecord {
   userId: string;
   teamId: string | null;
   type: string;
+  /**
+   * The caps this server was given (#106). On the list view because the Overview
+   * sums them per node to show what is actually committed there — it used to
+   * invent that figure from the server count (#261).
+   */
+  resourceLimits: ResourceLimits;
 }
 
 export type DatabaseEngine = 'mysql' | 'mariadb' | 'postgres';
@@ -235,6 +243,7 @@ export interface UpsertNodeInput {
   agentUrl?: string | null;
   lastHeartbeat: string;
   cpuPercent?: number | null;
+  cpuCores?: number | null;
   ramUsedMb?: number | null;
   ramTotalMb?: number | null;
   diskUsedGb?: number | null;

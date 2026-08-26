@@ -95,6 +95,7 @@ function toUserRecord(u: PrismaUser): UserRecord {
 function toNodeRecord(n: PrismaNode): NodeRecord {
   return {
     maintenance: n.maintenance,
+    cpuCores: n.cpuCores,
     id: n.id,
     name: n.name,
     location: n.location,
@@ -297,6 +298,7 @@ export class PrismaRepository implements Repository {
       ...(provided(input.ipAddress) ? { ipAddress: input.ipAddress } : {}),
       ...(provided(input.agentUrl) ? { agentUrl: input.agentUrl } : {}),
       ...(provided(input.cpuPercent) ? { cpuPercent: input.cpuPercent } : {}),
+      ...(provided(input.cpuCores) ? { cpuCores: input.cpuCores } : {}),
       ...(provided(input.ramUsedMb) ? { ramUsedMb: input.ramUsedMb } : {}),
       ...(provided(input.ramTotalMb) ? { ramTotalMb: input.ramTotalMb } : {}),
       ...(provided(input.diskUsedGb) ? { diskUsedGb: input.diskUsedGb } : {}),
@@ -414,6 +416,7 @@ export class PrismaRepository implements Repository {
       userId: d.serverConfig.userId,
       teamId: d.serverConfig.teamId,
       type: d.serverConfig.type,
+      resourceLimits: parseLimits(d.serverConfig.resourceLimits),
     }));
   }
 
@@ -438,6 +441,7 @@ export class PrismaRepository implements Repository {
       userId: d.serverConfig.userId,
       teamId: d.serverConfig.teamId,
       type: d.serverConfig.type,
+      resourceLimits: parseLimits(d.serverConfig.resourceLimits),
     }));
   }
 
