@@ -42,6 +42,15 @@ export interface Egg {
   dataPath: string;
   variables: EggVariable[];
   /**
+   * Which variable is the JVM heap, when the server has one (#271).
+   *
+   * Named rather than inferred, because the heap is the one setting that must be
+   * reconciled with the container's memory cap: the JVM commits it, so a heap
+   * that does not fit is a container the kernel kills rather than a server that
+   * runs slowly.
+   */
+  memoryVariable?: string;
+  /**
    * Environment the egg always sets and the creator cannot change. Kept apart from
    * `variables` so something like a licence acceptance cannot be dropped by a
    * caller that skips the form.
@@ -57,6 +66,7 @@ const MINECRAFT: Egg = {
   dockerImage: 'itzg/minecraft-server',
   ports: { '25565': '25565' },
   dataPath: '/data',
+  memoryVariable: 'MEMORY',
   // Accepting the EULA is a condition of running the server at all, so it is not a
   // question the form asks — creating a Minecraft server is the acceptance.
   fixedEnv: { EULA: 'TRUE' },
@@ -112,7 +122,8 @@ const MINECRAFT: Egg = {
     {
       key: 'MEMORY',
       label: 'Java heap size',
-      description: 'How much memory the JVM may use, e.g. 2G. Keep it under the server’s RAM limit — Java needs headroom on top of the heap.',
+      description:
+        'How much memory the server may actually use, e.g. 2G. Java claims all of this up front, so it is taken whether the server needs it or not — and it has to fit inside the memory limit set below, with room to spare for Java itself.',
       kind: 'string',
       default: '2G',
     },

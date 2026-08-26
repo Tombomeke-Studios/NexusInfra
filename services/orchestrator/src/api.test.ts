@@ -504,6 +504,62 @@ describe('deployment API', () => {
     });
   });
 
+  // The container cap and the JVM heap control the same physical RAM, and nothing
+  // used to relate them — so the defaults produced a 2G heap inside a 2048 MB cap
+  // and the kernel killed it mid-save (#271).
+  describe('memory budgeting', () => {
+    // 4 GB node: ramPercent 50 = a 2048 MB cap.
+    async function seed4gbNode() {
+      await repo.upsertNode({ id: 'node-small', name: 'node-small', lastHeartbeat: new Date().toISOString(), cpuPercent: 5, ramUsedMb: 1000, ramTotalMb: 4096 });
+    }
+
+    it('refuses a heap that cannot fit the cap, in MB', async () => {
+      await seed4gbNode();
+      const res = await request(app)
+        .post('/deployments')
+        .send({ name: 'mc', eggId: 'minecraft-java', eggValues: { MEMORY: '2G' }, resourceLimits: { ramPercent: 50 } });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/2048 MB/);
+      // Telling someone "50% is not enough" leaves them to work out 50% of what.
+      expect(res.body.error).not.toMatch(/%/);
+      expect(await repo.listDeployments()).toHaveLength(0);
+    });
+
+    it('accepts a heap with room for the JVM on top', async () => {
+      await seed4gbNode();
+      const res = await request(app)
+        .post('/deployments')
+        .send({ name: 'mc', eggId: 'minecraft-java', eggValues: { MEMORY: '1G' }, resourceLimits: { ramPercent: 50 } });
+
+      expect(res.status).toBe(201);
+      expect((await repo.getDeploymentConfig(res.body.id))?.env.MEMORY).toBe('1G');
+    });
+
+    it('lets the same heap through on a node with the RAM for it', async () => {
+      // The identical 2G heap and 50% limit are fine on a 32 GB machine — which is
+      // exactly why the check needs the node and not just the percentage.
+      await repo.upsertNode({ id: 'node-big', name: 'node-big', lastHeartbeat: new Date().toISOString(), cpuPercent: 5, ramUsedMb: 1000, ramTotalMb: 32768 });
+      const res = await request(app)
+        .post('/deployments')
+        .send({ name: 'mc', eggId: 'minecraft-java', eggValues: { MEMORY: '2G' }, resourceLimits: { ramPercent: 50 } });
+
+      expect(res.status).toBe(201);
+    });
+
+    it('does not object when there is no memory cap at all', async () => {
+      await seed4gbNode();
+      const res = await request(app).post('/deployments').send({ name: 'mc', eggId: 'minecraft-java', eggValues: { MEMORY: '2G' } });
+      expect(res.status).toBe(201);
+    });
+
+    it('ignores an egg with no heap variable', async () => {
+      await seed4gbNode();
+      const res = await request(app).post('/deployments').send({ name: 'v', eggId: 'valheim', resourceLimits: { ramPercent: 50 } });
+      expect(res.status).toBe(201);
+    });
+  });
+
   it('stops a running deployment by emitting server.stop', async () => {
     await seedHealthyNode(repo);
     const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });

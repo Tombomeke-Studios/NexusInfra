@@ -185,6 +185,14 @@ the **resolved real path** after symlinks, and the agent re-checks at start rath
 event. `403` for a non-administrator, `400` when the node refuses the path or when no egg says where
 to mount it.
 
+**Memory (#271):** an egg may name the variable that is its JVM heap. The container's `Memory` cap is
+`ramPercent%` of the node's total RAM and the kernel enforces it absolutely, while the JVM *commits*
+its heap — so a heap that does not fit is a container killed mid-save, not a slow server. A create or
+edit whose heap plus the JVM's own overhead (a quarter of the heap, floor 512 MB) exceeds the cap is
+refused with `400`, and the message is in MB: a percentage of a node you have not measured is not a
+number anyone can act on. The check is silent when anything is unknown — no cap, a node that has not
+reported its RAM, or a value that is not a memory size.
+
 `nodeId` pins the server to a specific node (#254); omit it to let the Orchestrator place it on the
 least-loaded healthy node. A pin is honoured or refused, never silently reassigned — `400` for an
 unknown node, `409` for one that is not healthy.

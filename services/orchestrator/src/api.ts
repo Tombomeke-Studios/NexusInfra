@@ -11,7 +11,9 @@ import { accessGuard, accessOf, requirePermission } from './accessGuard.js';
 import { isGrantableRole, resolveRole } from './access.js';
 import { createServerTeamRouter } from './teams.js';
 import { EGGS, getEgg, buildEggDeployment, EggValidationError } from './eggs.js';
+import { containerMemoryMb, heapBudgetProblem, parseMemoryMb } from './memory.js';
 import type { DeploymentDetail, NodeRecord, Repository, ServerConfigRecord, UpdateServerConfigInput } from './types.js';
+import type { ResourceLimits } from 'shared';
 
 const SCHEDULE_ACTIONS = ['restart', 'backup'];
 
@@ -148,6 +150,30 @@ const defaultRemoveBackup: RemoveBackupFn = async (agentUrl, ref) => {
  * Where it mounts comes from the egg rather than a stored copy, so a server always
  * follows the catalogue rather than a value frozen when it was created.
  */
+/**
+ * Why this server's heap will not fit its memory cap, or null when it does (#271).
+ *
+ * Silent when anything is unknown: no cap set, a node that has not reported its
+ * RAM, an egg with no heap variable, or a value that is not a memory size. A
+ * guess would refuse valid configurations, and this is a hard failure path.
+ */
+function heapProblemFor(
+  spec: { type: string; env: Record<string, string> },
+  limits: ResourceLimits | undefined,
+  node: NodeRecord
+): string | null {
+  const egg = getEgg(spec.type);
+  if (!egg?.memoryVariable) return null;
+
+  const heapMb = parseMemoryMb(spec.env[egg.memoryVariable] ?? '');
+  if (heapMb == null) return null;
+
+  const capMb = containerMemoryMb(limits?.ramPercent, node.ramTotalMb);
+  if (capMb == null) return null;
+
+  return heapBudgetProblem({ heapMb, capMb });
+}
+
 function dataMountFor(config: ServerConfigRecord): { dataMount?: { hostPath: string; containerPath: string } } {
   if (!config.dataPath) return {};
   const containerPath = getEgg(config.type)?.dataPath;
@@ -274,6 +300,15 @@ export function createApiRouter(deps: ApiDeps): Router {
       }
     }
 
+    // The container cap and the JVM heap are two settings for the same physical
+    // RAM (#271). The kernel enforces the cap absolutely and the JVM commits its
+    // heap, so a heap that does not fit is not a slow server — it is a container
+    // killed mid-save, reported only as "crashed". Checked here because the cap is
+    // a percentage of *this* node, so the answer needs the node.
+    const limits: ResourceLimits = resourceLimits && typeof resourceLimits === 'object' ? resourceLimits : {};
+    const heapProblem = heapProblemFor(spec, limits, node);
+    if (heapProblem) return res.status(400).json({ error: heapProblem });
+
     const config = await repo.createServerConfig({
       userId,
       name,
@@ -281,7 +316,7 @@ export function createApiRouter(deps: ApiDeps): Router {
       dockerImage: spec.dockerImage,
       ports: spec.ports,
       env: spec.env,
-      resourceLimits: resourceLimits && typeof resourceLimits === 'object' ? resourceLimits : {},
+      resourceLimits: limits,
       autoRestart: Boolean(autoRestart),
       type: spec.type,
     });

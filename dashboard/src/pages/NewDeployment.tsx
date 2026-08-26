@@ -5,6 +5,7 @@ import { IconPlus } from '../components/Icons';
 import { useToast } from '../components/Toast';
 import { InfoHint } from '../components/InfoHint';
 import { getDeploymentDefaults } from '../prefs';
+import { parseMemoryMb, jvmOverheadMb } from '../memory';
 
 // New Deployment — ported from the redesign. The deploy sends name, image, ports,
 // env, the resource limits + restart policy, the kind and the chosen placement,
@@ -106,6 +107,20 @@ export function NewDeployment() {
   const usedCpu = (n: NodeView) => Math.round(n.cpuPercent ?? 0);
   const usedRam = (n: NodeView) => (n.ramUsedMb != null && n.ramTotalMb ? Math.round((n.ramUsedMb / n.ramTotalMb) * 100) : 0);
   const target = placement === 'auto' ? [...nodes].sort((a, b) => usedCpu(a) + usedRam(a) - (usedCpu(b) + usedRam(b)))[0] : nodes.find((n) => n.id === placement);
+
+  // The container's memory cap in MB on the node this will land on (#271).
+  // `ramPercent` is a share of that node, so the same 50% is 2 GB on a small box
+  // and 32 GB on a large one — showing the percentage alone tells nobody anything.
+  const capMb = target?.ramTotalMb ? Math.round((ram / 100) * target.ramTotalMb) : null;
+
+  // Mirrors the orchestrator's rule so the clash is visible while you are setting
+  // it, not after the container is killed. The API is still the one that refuses.
+  const heapMb = egg?.memoryVariable ? parseMemoryMb(eggValues[egg.memoryVariable] ?? egg.variables.find((v) => v.key === egg.memoryVariable)?.default ?? '') : null;
+  const heapWarning =
+    kind === 'game' && heapMb != null && capMb != null && heapMb + jvmOverheadMb(heapMb) > capMb
+      ? `A ${heapMb} MB heap will not fit a ${capMb} MB limit — Java claims the whole heap up front and needs roughly ${jvmOverheadMb(heapMb)} MB more for itself. Raise the RAM limit or lower the heap.`
+      : null;
+
   const cpuFree = target ? Math.max(0, 100 - usedCpu(target)) : 100;
   const ramFree = target ? Math.max(0, 100 - usedRam(target)) : 100;
   const overCapacity = cpu > cpuFree || ram > ramFree;
@@ -284,7 +299,22 @@ export function NewDeployment() {
               Hard caps on this server's share of the host node.
             </span>
             <Slider label="CPU limit" value={cpu} onChange={setCpu} suffix="%" min={5} max={100} step={5} hint="The most host CPU this server may use, as a share of the node's cores. 100% ≈ all cores; the container is throttled above this." />
-            <Slider label="RAM limit" value={ram} onChange={setRam} suffix="%" min={5} max={100} step={5} hint="The most host RAM this server may use, as a share of the node's memory. Exceeding it triggers the OOM policy below." />
+            <Slider
+              label="RAM limit"
+              value={ram}
+              onChange={setRam}
+              suffix="%"
+              min={5}
+              max={100}
+              step={5}
+              hint="The most host RAM this server may use, as a share of the node's memory. Exceeding it triggers the OOM policy below."
+              note={capMb != null ? `${capMb} MB on ${target?.name ?? 'the chosen node'}` : undefined}
+            />
+            {heapWarning && (
+              <p role="alert" className="alert alert--error" style={{ margin: '4px 0 14px', fontSize: '.82rem' }}>
+                {heapWarning}
+              </p>
+            )}
             <Slider label="Disk limit" value={disk} onChange={setDisk} suffix="%" min={5} max={100} step={5} hint="The share of the node's disk this server's files may occupy." />
             <Slider label="Swap (of RAM limit)" value={swap} onChange={setSwap} suffix="%" min={0} max={100} step={25} neutral hint="Extra swap space as a percentage of the RAM limit. 0% disables swap for this server; swap is slower disk-backed memory used when RAM is full." />
           </div>
@@ -382,7 +412,7 @@ function Seg({ options, value, onChange }: { options: { value: string; label: st
   );
 }
 
-function Slider({ label, value, onChange, suffix, min, max, step, neutral, hint }: { label: string; value: number; onChange: (v: number) => void; suffix: string; min: number; max: number; step: number; neutral?: boolean; hint?: string }) {
+function Slider({ label, value, onChange, suffix, min, max, step, neutral, hint, note }: { label: string; value: number; onChange: (v: number) => void; suffix: string; min: number; max: number; step: number; neutral?: boolean; hint?: string; note?: string }) {
   return (
     <div style={{ marginBottom: 18 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 9 }}>
@@ -393,6 +423,9 @@ function Slider({ label, value, onChange, suffix, min, max, step, neutral, hint 
         </span>
       </div>
       <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} aria-label={`${label} percent`} />
+      {/* Shown rather than tucked into the tooltip: a percentage of a node you
+          have not measured is not a number anyone can act on (#271). */}
+      {note && <span className="subtle" style={{ display: 'block', marginTop: 6, fontSize: '.78rem' }}>{note}</span>}
     </div>
   );
 }
