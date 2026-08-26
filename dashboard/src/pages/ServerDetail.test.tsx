@@ -243,6 +243,97 @@ describe('ServerDetail Settings tab', () => {
     expect(JSON.parse(patch![1].body as string)).toMatchObject({ name: 'new-name', env: { A: '1' } });
   });
 
+  // An egg server was created with a proper form and then edited as raw JSON, with
+  // no labels, no validation and nothing stopping you deleting EULA (#272).
+  describe('an egg server', () => {
+    const EGG = {
+      id: 'minecraft-java',
+      name: 'Minecraft (Java Edition)',
+      description: 'A Java Edition server.',
+      dockerImage: 'itzg/minecraft-server',
+      ports: { '25565': '25565' },
+      dataPath: '/data',
+      variables: [
+        { key: 'MAX_PLAYERS', label: 'Player slots', description: 'How many people may connect at once.', kind: 'integer', default: '20', min: 1, max: 200 },
+        { key: 'MOTD', label: 'Server description', description: 'Shown in the multiplayer list.', kind: 'string', default: 'A NexusInfra server' },
+      ],
+    };
+
+    function renderEggServer() {
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        const path = String(url);
+        if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [EGG] } as Response);
+        const body =
+          path.includes('/deployments/dep-1') && !path.includes('/deployments/dep-1/')
+            ? { ...BASE, role: 'owner', type: 'minecraft-java', ports: { '25565': '25565' }, env: { MAX_PLAYERS: '20', MOTD: 'hello' } }
+            : [];
+        return Promise.resolve({ ok: true, status: 200, json: async () => body } as Response);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      render(
+        <MemoryRouter initialEntries={['/servers/dep-1']}>
+          <ToastProvider>
+            <Routes>
+              <Route path="/servers/:id" element={<ServerDetail />} />
+            </Routes>
+          </ToastProvider>
+        </MemoryRouter>
+      );
+      return fetchMock;
+    }
+
+    it('is edited through the egg fields, not a JSON textarea', async () => {
+      renderEggServer();
+      await userEvent.click(await screen.findByRole('button', { name: 'settings' }));
+
+      // Labelled and described, exactly as at creation.
+      expect(await screen.findByRole('spinbutton', { name: /player slots/i })).toBeInTheDocument();
+      expect(screen.getByRole('textbox', { name: /server description/i })).toBeInTheDocument();
+      expect(screen.queryByLabelText(/Environment \(as JSON\)/)).not.toBeInTheDocument();
+    });
+
+    it('offers the public port as its own field', async () => {
+      renderEggServer();
+      await userEvent.click(await screen.findByRole('button', { name: 'settings' }));
+
+      // The one field someone forwarding a port on their router needs.
+      const port = await screen.findByRole('textbox', { name: /public port/i });
+      expect(port).toHaveValue('25565');
+    });
+
+    it('sends the answers as eggValues so the egg validates them', async () => {
+      const fetchMock = renderEggServer();
+      await userEvent.click(await screen.findByRole('button', { name: 'settings' }));
+
+      const slots = await screen.findByRole('spinbutton', { name: /player slots/i });
+      await userEvent.clear(slots);
+      await userEvent.type(slots, '40');
+      await userEvent.click(screen.getByRole('button', { name: /save configuration/i }));
+
+      const patch = fetchMock.mock.calls.find(([u, o]) => String(u).includes('/deployments/dep-1') && o?.method === 'PATCH');
+      expect(patch).toBeDefined();
+      const body = JSON.parse(patch![1].body as string);
+      expect(body.eggValues).toMatchObject({ MAX_PLAYERS: '40' });
+      // The egg owns the image and environment; sending them would be ignored.
+      expect(body.dockerImage).toBeUndefined();
+      expect(body.env).toBeUndefined();
+    });
+
+    it('sends a changed public port as the host side of the mapping', async () => {
+      const fetchMock = renderEggServer();
+      await userEvent.click(await screen.findByRole('button', { name: 'settings' }));
+
+      const port = await screen.findByRole('textbox', { name: /public port/i });
+      await userEvent.clear(port);
+      await userEvent.type(port, '25570');
+      await userEvent.click(screen.getByRole('button', { name: /save configuration/i }));
+
+      const patch = fetchMock.mock.calls.find(([u, o]) => String(u).includes('/deployments/dep-1') && o?.method === 'PATCH');
+      expect(JSON.parse(patch![1].body as string).ports).toEqual({ '25570': '25565' });
+    });
+  });
+
   it('refuses malformed JSON without calling the API', async () => {
     renderDetail('owner');
     await userEvent.click(await screen.findByRole('button', { name: 'settings' }));

@@ -347,6 +347,8 @@ export function listDeploymentEvents(id: string, opts: { limit?: number; offset?
 
 export interface UpdateDeploymentInput {
   name?: string;
+  /** Edit an egg server through its own variables (#272), validated server-side. */
+  eggValues?: Record<string, string>;
   dockerImage?: string;
   ports?: Record<string, string>;
   env?: Record<string, string>;

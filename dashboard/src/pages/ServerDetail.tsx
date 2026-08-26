@@ -7,6 +7,7 @@ import {
   restartDeployment,
   deleteDeployment,
   updateDeployment,
+  listEggs,
   killDeployment,
   streamLogs,
   streamStats,
@@ -37,6 +38,8 @@ import {
   removeSubuser,
   type DeploymentDetail,
   type DeploymentEvent,
+  type Egg,
+  type EggVariable,
   type FileEntry,
   type ServerDatabase,
   type DatabaseEngine,
@@ -1168,6 +1171,24 @@ function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; o
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // A server created from an egg is edited through that egg's own fields (#272):
+  // the same labels, descriptions and validation as when it was created, rather
+  // than a textarea of raw JSON with nothing to stop you deleting EULA.
+  const [egg, setEgg] = useState<Egg | null>(null);
+  const [eggValues, setEggValues] = useState<Record<string, string>>({});
+  useEffect(() => {
+    void listEggs()
+      .then((list) => setEgg(list.find((e) => e.id === deployment.type) ?? null))
+      .catch(() => undefined);
+  }, [deployment.type]);
+
+  // The published host port is what someone about to forward a port on their
+  // router actually needs, so it gets its own control instead of living inside
+  // the JSON blob.
+  const firstPort = Object.entries(deployment.ports ?? {})[0];
+  const [hostPort, setHostPort] = useState(firstPort?.[0] ?? '');
+  const containerPort = firstPort?.[1] ?? '';
+
   const parseMap = (text: string, label: string): Record<string, string> => {
     const value: unknown = JSON.parse(text || '{}');
     if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be a JSON object`);
@@ -1191,9 +1212,10 @@ function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; o
     try {
       await updateDeployment(deployment.id, {
         name: name.trim(),
-        dockerImage: image.trim(),
-        ports: parsedPorts,
-        env: parsedEnv,
+        // An egg owns its image and environment; sending them would be ignored
+        // anyway, and offering them would suggest otherwise.
+        ...(egg ? { eggValues } : { dockerImage: image.trim(), env: parsedEnv }),
+        ports: egg && hostPort.trim() && containerPort ? { [hostPort.trim()]: containerPort } : parsedPorts,
         autoRestart,
       });
       toast('Configuration saved — it applies the next time this server starts', 'success', 'Settings');
@@ -1219,18 +1241,43 @@ function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; o
         <label className="field__label" htmlFor="cfg-name">Name</label>
         <input id="cfg-name" className="input" value={name} onChange={(e) => setName(e.target.value)} />
       </div>
-      <div className="field">
-        <label className="field__label" htmlFor="cfg-image">Docker image</label>
-        <input id="cfg-image" className="input mono" value={image} onChange={(e) => setImage(e.target.value)} />
-      </div>
-      <div className="field">
-        <label className="field__label" htmlFor="cfg-ports">Ports <span className="subtle" style={{ fontWeight: 400 }}>(host : container, as JSON)</span></label>
-        <textarea id="cfg-ports" className="input mono" rows={3} value={ports} onChange={(e) => setPorts(e.target.value)} style={{ resize: 'vertical' }} />
-      </div>
-      <div className="field">
-        <label className="field__label" htmlFor="cfg-env">Environment <span className="subtle" style={{ fontWeight: 400 }}>(as JSON)</span></label>
-        <textarea id="cfg-env" className="input mono" rows={4} value={env} onChange={(e) => setEnv(e.target.value)} style={{ resize: 'vertical' }} />
-      </div>
+      {egg ? (
+        <>
+          <div className="field">
+            <label className="field__label" htmlFor="cfg-port">
+              Public port
+              <InfoHint text="The port on the node this server is reachable on, and the one to forward on your router. Inside the container it stays the port the game expects." label="Public port help" />
+            </label>
+            <input id="cfg-port" className="input mono" value={hostPort} onChange={(e) => setHostPort(e.target.value)} />
+            <span className="field__hint">
+              Reaches {containerPort} inside the container. Changing it takes effect on the next start.
+            </span>
+          </div>
+          {egg.variables.map((v) => (
+            <EggConfigField
+              key={v.key}
+              variable={v}
+              value={eggValues[v.key] ?? deployment.env?.[v.key] ?? v.default}
+              onChange={(val) => setEggValues((prev) => ({ ...prev, [v.key]: val }))}
+            />
+          ))}
+        </>
+      ) : (
+        <>
+          <div className="field">
+            <label className="field__label" htmlFor="cfg-image">Docker image</label>
+            <input id="cfg-image" className="input mono" value={image} onChange={(e) => setImage(e.target.value)} />
+          </div>
+          <div className="field">
+            <label className="field__label" htmlFor="cfg-ports">Ports <span className="subtle" style={{ fontWeight: 400 }}>(host : container, as JSON)</span></label>
+            <textarea id="cfg-ports" className="input mono" rows={3} value={ports} onChange={(e) => setPorts(e.target.value)} style={{ resize: 'vertical' }} />
+          </div>
+          <div className="field">
+            <label className="field__label" htmlFor="cfg-env">Environment <span className="subtle" style={{ fontWeight: 400 }}>(as JSON)</span></label>
+            <textarea id="cfg-env" className="input mono" rows={4} value={env} onChange={(e) => setEnv(e.target.value)} style={{ resize: 'vertical' }} />
+          </div>
+        </>
+      )}
       <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, fontSize: '.86rem' }}>
         <input type="checkbox" checked={autoRestart} onChange={(e) => setAutoRestart(e.target.checked)} />
         Restart automatically if it stops unexpectedly
@@ -1241,6 +1288,42 @@ function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; o
       <button className="btn btn--primary btn--sm" data-ripple data-burst="success" disabled={busy} onClick={() => void save()}>
         {busy ? 'Saving…' : 'Save configuration'}
       </button>
+    </div>
+  );
+}
+
+/** One egg variable on the edit form - the same shape the creation form uses. */
+function EggConfigField({ variable, value, onChange }: { variable: EggVariable; value: string; onChange: (v: string) => void }) {
+  const id = `cfg-egg-${variable.key}`;
+  return (
+    <div className="field">
+      <label className="field__label" htmlFor={id}>
+        {variable.label}
+        <InfoHint text={variable.description} label={`${variable.label} help`} />
+      </label>
+      {variable.kind === 'choice' ? (
+        <select id={id} className="select" value={value} onChange={(e) => onChange(e.target.value)}>
+          {(variable.options ?? []).map((o) => (
+            <option key={o} value={o}>{o}</option>
+          ))}
+        </select>
+      ) : variable.kind === 'boolean' ? (
+        <select id={id} className="select" value={value} onChange={(e) => onChange(e.target.value)}>
+          <option value="true">On</option>
+          <option value="false">Off</option>
+        </select>
+      ) : (
+        <input
+          id={id}
+          className={variable.kind === 'integer' ? 'input mono' : 'input'}
+          type={variable.kind === 'integer' ? 'number' : 'text'}
+          min={variable.min}
+          max={variable.max}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
+      <span className="field__hint">{variable.description}</span>
     </div>
   );
 }

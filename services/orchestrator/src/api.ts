@@ -391,8 +391,29 @@ export function createApiRouter(deps: ApiDeps): Router {
   // silently restarted someone's server would be a worse surprise than one that
   // waits; the panel says the change lands on the next start.
   router.patch('/deployments/:id', requirePermission('server.edit'), async (req: Request, res: Response) => {
-    const { name, dockerImage, ports, env, resourceLimits, autoRestart } = req.body ?? {};
+    const { name, dockerImage, ports, env, resourceLimits, autoRestart, eggValues } = req.body ?? {};
     const patch: UpdateServerConfigInput = {};
+
+    const existing = await repo.getDeploymentConfig(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'deployment not found' });
+    const egg = getEgg(existing.type);
+
+    // A server created from an egg is edited through that egg (#272), so the same
+    // rules apply as at creation: unknown keys dropped, values validated by the
+    // name the person saw, fixedEnv untouchable. Editing it as a free-form env
+    // object made the egg advisory the moment the server existed.
+    if (eggValues !== undefined) {
+      if (!egg) return res.status(400).json({ error: 'this server was not created from an egg' });
+      try {
+        // Merge over what is stored, so an untouched variable keeps its value
+        // rather than silently reverting to the egg's default.
+        const merged = { ...existing.env, ...((eggValues ?? {}) as Record<string, string>) };
+        patch.env = buildEggDeployment(egg, merged, existing.ports).env;
+      } catch (err) {
+        if (err instanceof EggValidationError) return res.status(400).json({ error: err.message });
+        throw err;
+      }
+    }
 
     if (name !== undefined) {
       if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'name cannot be empty' });
@@ -416,6 +437,17 @@ export function createApiRouter(deps: ApiDeps): Router {
       patch.resourceLimits = resourceLimits as ServerConfigRecord['resourceLimits'];
     }
     if (autoRestart !== undefined) patch.autoRestart = Boolean(autoRestart);
+
+    // The heap has to keep fitting the cap after an edit, not only at creation
+    // (#271) — raising the heap is exactly how someone would break it later.
+    const deployment = await repo.getDeployment(req.params.id);
+    const node = deployment?.nodeId ? (await repo.listNodes()).find((n) => n.id === deployment.nodeId) : undefined;
+    if (node) {
+      const nextEnv = patch.env ?? existing.env;
+      const nextLimits = patch.resourceLimits ?? existing.resourceLimits;
+      const problem = heapProblemFor({ type: existing.type, env: nextEnv }, nextLimits, node);
+      if (problem) return res.status(400).json({ error: problem });
+    }
 
     const updated = await repo.updateDeploymentConfig(req.params.id, patch);
     if (!updated) return res.status(404).json({ error: 'deployment not found' });
