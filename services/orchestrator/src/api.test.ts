@@ -755,6 +755,29 @@ describe('deployment API', () => {
     expect((await request(app).get('/deployments')).body).toHaveLength(0);
   });
 
+  // #293: deleting a running server emits server.stop, and the agent's
+  // server.stopped comes back while the delete is still running. The lifecycle
+  // consumer then appends an event for the deployment being deleted. Against
+  // SQLite that reopened a foreign key the delete had just closed and took the
+  // process with it, so the delete must survive an event landing mid-flight.
+  it('survives a lifecycle event arriving while the delete is in progress', async () => {
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    const id = created.body.id as string;
+    await repo.updateDeploymentStatus(id, { status: 'running', containerId: 'abc123' });
+
+    const original = repo.deleteDeployment.bind(repo);
+    repo.deleteDeployment = async (target: string) => {
+      // The stopped report, racing the delete it caused.
+      await repo.appendDeploymentEvent(target, 'stopped', 'container stopped');
+      await original(target);
+    };
+
+    const res = await request(app).delete(`/deployments/${id}`);
+    expect(res.status).toBe(204);
+    expect(await repo.getDeployment(id)).toBeNull();
+  });
+
   it('deletes a not-running deployment without a stop command', async () => {
     await seedHealthyNode(repo);
     const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
