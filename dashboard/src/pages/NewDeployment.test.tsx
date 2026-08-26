@@ -221,6 +221,124 @@ describe('NewDeployment', () => {
     expect(await screen.findByText(/16384 MB on big-box/)).toBeInTheDocument();
   });
 
+  // Setting limits in the unit you are actually thinking in (#275), against
+  // capacity that reflects what is committed rather than what is momentarily used.
+  describe('resource units and capacity', () => {
+    // 8 GB / 8 cores, mostly "used" by page cache, with 2 GB committed elsewhere.
+    const NODE_WITH_CAPACITY = {
+      id: 'n1',
+      name: 'home-box',
+      health: 'healthy',
+      cpuPercent: 4,
+      cpuCores: 8,
+      ramUsedMb: 7000,
+      ramTotalMb: 8192,
+      diskUsedGb: null,
+      diskTotalGb: null,
+      lastHeartbeat: new Date().toISOString(),
+      capacity: {
+        ramTotalMb: 8192,
+        ramCommittedMb: 2048,
+        ramUsedMb: 7000,
+        ramAvailableMb: 6144,
+        cpuCoresTotal: 8,
+        cpuCoresCommitted: 2,
+        cpuUsedPercent: 4,
+        cpuCoresAvailable: 6,
+        overCommitted: false,
+      },
+    };
+
+    function renderWithCapacity() {
+      fetchMock.mockImplementation((url: string) => {
+        const path = String(url);
+        if (path.includes('/nodes')) return Promise.resolve({ ok: true, status: 200, json: async () => [NODE_WITH_CAPACITY] } as Response);
+        if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [MINECRAFT_EGG] } as Response);
+        return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
+      });
+      renderForm();
+    }
+
+    it('reports what is uncommitted, not what is unused', async () => {
+      renderWithCapacity();
+      // 7000 of 8192 MB reads as used, and 6144 MB is genuinely available.
+      expect(await screen.findByText(/6144 MB of 8192 MB uncommitted on home-box/)).toBeInTheDocument();
+      expect(screen.getByText(/6 of 8 cores uncommitted on home-box/)).toBeInTheDocument();
+    });
+
+    it('shows committed against total rather than a bare percentage', async () => {
+      renderWithCapacity();
+      expect(await screen.findByText('2048 MB committed of 8192 MB')).toBeInTheDocument();
+      expect(screen.getByText('2 cores committed of 8 cores')).toBeInTheDocument();
+    });
+
+    it('sends an absolute memory limit when MB is chosen', async () => {
+      renderWithCapacity();
+      await screen.findByText(/MB uncommitted on home-box/);
+
+      await userEvent.type(screen.getByLabelText('Name'), 'svc');
+      await userEvent.type(screen.getByLabelText('Docker image'), 'nginx');
+      await userEvent.click(screen.getByRole('button', { name: 'RAM limit in MB' }));
+
+      const field = screen.getByLabelText('RAM limit');
+      await userEvent.clear(field);
+      await userEvent.type(field, '6144');
+      await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+
+      expect(await screen.findByText('Servers page')).toBeInTheDocument();
+      const call = fetchMock.mock.calls.find(([u, o]) => typeof u === 'string' && u.includes('/deployments') && o?.method === 'POST');
+      const limits = JSON.parse(call![1].body as string).resourceLimits;
+      expect(limits.ramMb).toBe(6144);
+      // Only one unit is sent; sending both would be ambiguous.
+      expect(limits.ramPercent).toBeUndefined();
+    });
+
+    it('sends an absolute core count when cores is chosen', async () => {
+      renderWithCapacity();
+      await screen.findByText(/MB uncommitted on home-box/);
+
+      await userEvent.type(screen.getByLabelText('Name'), 'svc');
+      await userEvent.type(screen.getByLabelText('Docker image'), 'nginx');
+      await userEvent.click(screen.getByRole('button', { name: 'CPU limit in cores' }));
+
+      const field = screen.getByLabelText('CPU limit');
+      await userEvent.clear(field);
+      await userEvent.type(field, '4');
+      await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+
+      expect(await screen.findByText('Servers page')).toBeInTheDocument();
+      const call = fetchMock.mock.calls.find(([u, o]) => typeof u === 'string' && u.includes('/deployments') && o?.method === 'POST');
+      const limits = JSON.parse(call![1].body as string).resourceLimits;
+      expect(limits.cpuCores).toBe(4);
+      expect(limits.cpuPercent).toBeUndefined();
+    });
+
+    it('converts the value when the unit is switched rather than resetting it', async () => {
+      renderWithCapacity();
+      await screen.findByText(/MB uncommitted on home-box/);
+
+      // The form starts at 50% of an 8192 MB node.
+      await userEvent.click(screen.getByRole('button', { name: 'RAM limit in MB' }));
+      expect(screen.getByLabelText('RAM limit')).toHaveValue(4096);
+
+      // And back again, unchanged.
+      await userEvent.click(screen.getByRole('button', { name: 'RAM limit in %' }));
+      expect(screen.getByLabelText('RAM limit percent')).toHaveValue('50');
+    });
+
+    it('warns when the request exceeds what the node has left', async () => {
+      renderWithCapacity();
+      await screen.findByText(/MB uncommitted on home-box/);
+
+      await userEvent.click(screen.getByRole('button', { name: 'RAM limit in MB' }));
+      const field = screen.getByLabelText('RAM limit');
+      await userEvent.clear(field);
+      await userEvent.type(field, '8000'); // more than the 6144 uncommitted
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(/More than this node has left/);
+    });
+  });
+
   it('surfaces an API error and stays on the form', async () => {
     fetchMock.mockResolvedValue({
       ok: false,

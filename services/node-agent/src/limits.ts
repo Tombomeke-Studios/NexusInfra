@@ -29,8 +29,17 @@ export function resourceLimitsToHostConfig(limits: ResourceLimits | undefined, h
   const out: HostConfigLimits = {};
   if (!limits) return out;
 
-  if (limits.ramPercent && limits.ramPercent > 0 && host.totalMemBytes > 0) {
-    const mem = Math.round((limits.ramPercent / 100) * host.totalMemBytes);
+  // An absolute value is used as given; a percentage is resolved against this
+  // host (#275). Absolute wins, because it is the more specific instruction and
+  // it keeps meaning the same if the server is ever moved to a different node.
+  const mem =
+    limits.ramMb && limits.ramMb > 0
+      ? Math.round(limits.ramMb * 1024 * 1024)
+      : limits.ramPercent && limits.ramPercent > 0 && host.totalMemBytes > 0
+        ? Math.round((limits.ramPercent / 100) * host.totalMemBytes)
+        : 0;
+
+  if (mem > 0) {
     out.Memory = mem;
     // Swap is a share of the RAM limit; MemorySwap is the combined total, so
     // swapPercent 0 pins MemorySwap to Memory (no swap for the container).
@@ -40,8 +49,10 @@ export function resourceLimitsToHostConfig(limits: ResourceLimits | undefined, h
     if (limits.oomKill === false) out.OomKillDisable = true;
   }
 
-  if (limits.cpuPercent && limits.cpuPercent > 0 && host.cpuCount > 0) {
-    // 1e9 NanoCpus == 1 core; cap at the chosen share of all host cores.
+  // 1e9 NanoCpus == 1 core.
+  if (limits.cpuCores && limits.cpuCores > 0) {
+    out.NanoCpus = Math.round(limits.cpuCores * 1e9);
+  } else if (limits.cpuPercent && limits.cpuPercent > 0 && host.cpuCount > 0) {
     out.NanoCpus = Math.round((limits.cpuPercent / 100) * host.cpuCount * 1e9);
   }
 

@@ -48,10 +48,16 @@ export function parseMemoryMb(value: string): number | null {
  * and telling somebody "50%" when they wanted to know "how many gigabytes" is
  * most of why the two settings drifted apart.
  */
-export function containerMemoryMb(ramPercent: number | undefined, nodeTotalMb: number | null | undefined): number | null {
-  if (!ramPercent || ramPercent <= 0) return null;
+export function containerMemoryMb(
+  limits: { ramMb?: number; ramPercent?: number } | undefined,
+  nodeTotalMb: number | null | undefined
+): number | null {
+  // An absolute cap needs no node at all, which is half of why it is the better
+  // unit to set (#275).
+  if (limits?.ramMb && limits.ramMb > 0) return Math.round(limits.ramMb);
+  if (!limits?.ramPercent || limits.ramPercent <= 0) return null;
   if (!nodeTotalMb || nodeTotalMb <= 0) return null;
-  return Math.round((ramPercent / 100) * nodeTotalMb);
+  return Math.round((limits.ramPercent / 100) * nodeTotalMb);
 }
 
 /**

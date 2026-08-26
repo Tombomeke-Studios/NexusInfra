@@ -12,6 +12,7 @@ import { isGrantableRole, resolveRole } from './access.js';
 import { createServerTeamRouter } from './teams.js';
 import { EGGS, getEgg, buildEggDeployment, EggValidationError } from './eggs.js';
 import { containerMemoryMb, heapBudgetProblem, parseMemoryMb } from './memory.js';
+import { nodeCapacity, availableRamMb, availableCpuCores, isOverCommitted } from './capacity.js';
 import type { DeploymentDetail, NodeRecord, Repository, ServerConfigRecord, UpdateServerConfigInput } from './types.js';
 import type { ResourceLimits } from 'shared';
 
@@ -168,7 +169,7 @@ function heapProblemFor(
   const heapMb = parseMemoryMb(spec.env[egg.memoryVariable] ?? '');
   if (heapMb == null) return null;
 
-  const capMb = containerMemoryMb(limits?.ramPercent, node.ramTotalMb);
+  const capMb = containerMemoryMb(limits, node.ramTotalMb);
   if (capMb == null) return null;
 
   return heapBudgetProblem({ heapMb, capMb });
@@ -607,7 +608,26 @@ export function createApiRouter(deps: ApiDeps): Router {
   router.get('/nodes', async (_req: Request, res: Response) => {
     const now = Date.now();
     const nodes = await repo.listNodes();
-    res.json(nodes.map((n) => ({ ...n, health: nodeHealth(n, now) })));
+    // Each node carries what it has, what it has already promised, and what it is
+    // using — three different numbers (#275). "How much can I still give a new
+    // server" is answered by committed; the form used to answer it with live
+    // usage, which is wrong in both directions.
+    const deployments = await repo.listDeployments();
+    res.json(
+      nodes.map((n) => {
+        const capacity = nodeCapacity(n, deployments);
+        return {
+          ...n,
+          health: nodeHealth(n, now),
+          capacity: {
+            ...capacity,
+            ramAvailableMb: availableRamMb(capacity),
+            cpuCoresAvailable: availableCpuCores(capacity),
+            overCommitted: isOverCommitted(capacity),
+          },
+        };
+      })
+    );
   });
 
   // Register (or relabel) a node's metadata (#113). It reads offline until an agent

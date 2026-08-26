@@ -615,6 +615,66 @@ describe('deployment API', () => {
     });
   });
 
+  // Total, committed and used are three different numbers (#275).
+  describe('node capacity', () => {
+    async function seedNode() {
+      await repo.upsertNode({
+        id: 'node-1',
+        name: 'node-1',
+        lastHeartbeat: new Date().toISOString(),
+        // Running nothing, yet most of the RAM reads "used" — Linux spends spare
+        // memory on page cache. All of it is still available to give away.
+        cpuPercent: 3,
+        cpuCores: 8,
+        ramUsedMb: 7000,
+        ramTotalMb: 8192,
+      });
+    }
+
+    it('reports total, committed and used separately', async () => {
+      await seedNode();
+      await request(app).post('/deployments').send({ name: 'a', dockerImage: 'nginx', resourceLimits: { ramMb: 2048, cpuCores: 2 } });
+
+      const node = (await request(app).get('/nodes')).body[0];
+      expect(node.capacity.ramTotalMb).toBe(8192);
+      expect(node.capacity.ramCommittedMb).toBe(2048);
+      expect(node.capacity.ramUsedMb).toBe(7000);
+      expect(node.capacity.cpuCoresTotal).toBe(8);
+      expect(node.capacity.cpuCoresCommitted).toBe(2);
+    });
+
+    it('reports what is available from committed, not from live usage', async () => {
+      await seedNode();
+      // 7000 MB of 8192 reads as used, and none of it is committed.
+      const node = (await request(app).get('/nodes')).body[0];
+      expect(node.capacity.ramAvailableMb).toBe(8192);
+      expect(node.capacity.cpuCoresAvailable).toBe(8);
+    });
+
+    it('counts idle servers against what is left', async () => {
+      await seedNode();
+      for (const n of ['a', 'b', 'c', 'd']) {
+        await request(app).post('/deployments').send({ name: n, dockerImage: 'nginx', resourceLimits: { ramMb: 2048 } });
+      }
+      const node = (await request(app).get('/nodes')).body[0];
+      expect(node.capacity.ramAvailableMb).toBe(0);
+    });
+
+    it('resolves a percentage limit into the same committed figure', async () => {
+      await seedNode();
+      await request(app).post('/deployments').send({ name: 'a', dockerImage: 'nginx', resourceLimits: { ramPercent: 25 } });
+      expect((await request(app).get('/nodes')).body[0].capacity.ramCommittedMb).toBe(2048);
+    });
+
+    it('says when a node has been promised more than it has', async () => {
+      await seedNode();
+      await request(app).post('/deployments').send({ name: 'a', dockerImage: 'nginx', resourceLimits: { ramMb: 16384 } });
+      const node = (await request(app).get('/nodes')).body[0];
+      expect(node.capacity.overCommitted).toBe(true);
+      expect(node.capacity.ramAvailableMb).toBe(0);
+    });
+  });
+
   it('stops a running deployment by emitting server.stop', async () => {
     await seedHealthyNode(repo);
     const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });

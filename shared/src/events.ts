@@ -59,7 +59,21 @@ export interface NodeResources {
  * start (#107). Percentages are of the host node; every field is optional.
  */
 export interface ResourceLimits {
+  /**
+   * Absolute memory for this server, in MB (#275).
+   *
+   * Preferred over `ramPercent` and wins when both are set. Nobody decides "give
+   * it 37% of the box"; they decide "give it 6 GB", and an absolute value also
+   * survives being moved to a node of a different size, which a percentage does
+   * not — 50% means something else the moment the server is re-placed.
+   */
+  ramMb?: number;
+  /** Absolute CPU for this server, in cores. Fractional allowed (1.5 = one and a half). */
+  cpuCores?: number;
+
+  /** Share of the node's CPU. Used only when `cpuCores` is absent. */
   cpuPercent?: number;
+  /** Share of the node's memory. Used only when `ramMb` is absent. */
   ramPercent?: number;
   diskPercent?: number;
   swapPercent?: number;
