@@ -26,6 +26,11 @@ export type NexusInfraEvent =
   // gracefully. Distinct from server.stop so the audit trail records which it was (#253).
   | { type: 'server.kill'; payload: { deploymentId: string; nodeId: string; containerId: string } }
   | { type: 'server.restart'; payload: { deploymentId: string; nodeId: string; containerId: string } }
+  // Sent by an agent when it starts: what this node is actually running (#244).
+  // The outbox protects reports from a broker outage; nothing protected them from
+  // the agent process itself dying, after which our records described a machine
+  // that no longer matched.
+  | { type: 'node.inventory'; payload: { nodeId: string; containers: { containerId: string; running: boolean }[] } }
   // ── Server lifecycle — reports (Node Agent → Orchestrator) ───────────
   | { type: 'server.started'; payload: { deploymentId: string; containerId: string; nodeId: string } }
   | { type: 'server.stopped'; payload: { deploymentId: string; containerId: string } }

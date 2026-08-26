@@ -18,6 +18,11 @@ class FakeRuntime implements ContainerRuntime {
     return this.nextContainerId;
   }
   lastSpec: unknown = null;
+  managed: { containerId: string; running: boolean }[] = [];
+  async listManaged(): Promise<{ containerId: string; running: boolean }[]> {
+    this.calls.push('listManaged');
+    return this.managed;
+  }
   async stop(containerId: string): Promise<void> {
     this.calls.push(`stop:${containerId}`);
     if (this.failOn === 'stop') throw new Error('no such container');
@@ -194,6 +199,44 @@ describe('Node Agent command handling', () => {
         cmd({ type: 'server.start', payload: { deploymentId: 'd-1', nodeId: NODE_ID, dockerImage: 'nginx' } })
       );
       expect((runtime.lastSpec as { dataMount?: unknown }).dataMount).toBeUndefined();
+    });
+  });
+
+  // A crashed agent comes back with no memory of what it was doing, so it says
+  // what Docker can see and lets the orchestrator reconcile it (#244).
+  describe('reporting an inventory at startup', () => {
+    it('publishes what this node is actually running', async () => {
+      const { runtime, published, agent } = makeAgent();
+      runtime.managed = [
+        { containerId: 'c1', running: true },
+        { containerId: 'c2', running: false },
+      ];
+
+      await agent.reportInventory();
+
+      expect(published[0].key).toBe('infra.node.inventory');
+      const payload = published[0].envelope.event.payload as any;
+      expect(payload.nodeId).toBe(NODE_ID);
+      expect(payload.containers).toEqual(runtime.managed);
+    });
+
+    it('reports an empty node rather than staying silent', async () => {
+      // Silence and "nothing is running" mean very different things to the
+      // orchestrator; only one of them resolves a server stuck at 'running'.
+      const { published, agent } = makeAgent();
+      await agent.reportInventory();
+      expect((published[0].envelope.event.payload as any).containers).toEqual([]);
+    });
+
+    it('survives a runtime that cannot be introspected', async () => {
+      // An agent that cannot list containers must still serve commands.
+      const { runtime, published, agent } = makeAgent();
+      runtime.listManaged = async () => {
+        throw new Error('docker unreachable');
+      };
+
+      await expect(agent.reportInventory()).resolves.toBeUndefined();
+      expect(published).toHaveLength(0);
     });
   });
 

@@ -14,6 +14,7 @@ import { importRoot, resolveImportPath } from './imports.js';
 const KEY_STARTED = 'infra.server.started';
 const KEY_STOPPED = 'infra.server.stopped';
 const KEY_CRASHED = 'infra.server.crashed';
+const KEY_INVENTORY = 'infra.node.inventory';
 
 export type PublishFn = (routingKey: string, envelope: EventEnvelope) => Promise<boolean>;
 
@@ -32,6 +33,14 @@ export interface AgentDeps {
 
 export interface NodeAgent {
   handleCommand(envelope: EventEnvelope): Promise<void>;
+  /**
+   * Report what this node is actually running (#244).
+   *
+   * Called once at startup. A crashed agent comes back with no memory of what it
+   * was doing, so rather than guess, it says what Docker can see and lets the
+   * orchestrator reconcile that against its records.
+   */
+  reportInventory(): Promise<void>;
 }
 
 /**
@@ -158,7 +167,17 @@ export function createAgent(deps: AgentDeps): NodeAgent {
     }
   }
 
-  return { handleCommand };
+  async function reportInventory(): Promise<void> {
+    try {
+      const containers = await runtime.listManaged();
+      await emit(KEY_INVENTORY, { type: 'node.inventory', payload: { nodeId, containers } });
+    } catch (err) {
+      // Never fatal: an agent that cannot introspect must still serve commands.
+      console.error(`[node-agent] could not report inventory: ${errMessage(err)}`);
+    }
+  }
+
+  return { handleCommand, reportInventory };
 }
 
 function errMessage(err: unknown): string {

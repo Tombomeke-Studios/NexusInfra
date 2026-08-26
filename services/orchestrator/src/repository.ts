@@ -544,6 +544,6 @@ export class InMemoryRepository implements Repository {
   private toView(d: DeploymentRecord): DeploymentView | null {
     const config = this.configs.get(d.serverConfigId);
     if (!config) return null;
-    return { ...d, name: config.name, dockerImage: config.dockerImage, userId: config.userId, teamId: config.teamId, type: config.type, resourceLimits: config.resourceLimits };
+    return { ...d, name: config.name, dockerImage: config.dockerImage, userId: config.userId, teamId: config.teamId, type: config.type, resourceLimits: config.resourceLimits, autoRestart: config.autoRestart };
   }
 }

@@ -14,6 +14,9 @@ import type { TerminalSession } from './terminal.js';
 // host snapshot reported to the Control Room via the node heartbeat.
 export type { NodeResources };
 
+/** Marks a container as one this platform started, so we never touch anyone else's. */
+export const MANAGED_LABEL = 'nexusinfra.managed';
+
 export interface StartSpec {
   dockerImage: string;
   containerName?: string;
@@ -40,6 +43,8 @@ export interface ContainerRuntime {
   stop(containerId: string): Promise<void>;
   /** Force-terminate (SIGKILL) a container that will not stop gracefully (#253). */
   kill(containerId: string): Promise<void>;
+  /** Every container this agent manages, running or not — for reconciliation (#244). */
+  listManaged(): Promise<{ containerId: string; running: boolean }[]>;
   restart(containerId: string): Promise<void>;
   collectResources(): Promise<NodeResources>;
   /** Follow a container's logs, invoking `onLine` per line. Returns an unsubscribe. */
@@ -120,6 +125,9 @@ export class DockerodeRuntime implements ContainerRuntime {
       name: spec.containerName,
       Env: env,
       ExposedPorts: exposedPorts,
+      // Labelled so a returning agent can tell its own containers from anything
+      // else on the host, rather than guessing from names (#244).
+      Labels: { [MANAGED_LABEL]: 'true' },
       HostConfig: {
         PortBindings: portBindings,
         ...limits,
@@ -131,6 +139,11 @@ export class DockerodeRuntime implements ContainerRuntime {
 
     await container.start();
     return container.id;
+  }
+
+  async listManaged(): Promise<{ containerId: string; running: boolean }[]> {
+    const containers = await this.docker.listContainers({ all: true, filters: { label: [`${MANAGED_LABEL}=true`] } });
+    return containers.map((c) => ({ containerId: c.Id, running: c.State === 'running' }));
   }
 
   async stop(containerId: string): Promise<void> {

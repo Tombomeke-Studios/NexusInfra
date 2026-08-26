@@ -49,6 +49,12 @@ startOutboxFlusher(reportOutbox);
 
 const agent = createAgent({ nodeId: NODE_ID, runtime, publish: (key, envelope) => reportOutbox.publish(key, envelope) });
 
+// Say what this node is actually running (#244). A crashed agent returns with no
+// memory of what it was doing, so rather than guess it reports what Docker can
+// see and lets the orchestrator reconcile that against its records. Goes through
+// the outbox, so a broker that has not come up yet does not lose it.
+void agent.reportInventory();
+
 // ── HTTP: health probe ────────────────────────────────────────────────────────
 const app = express();
 app.use(express.json({ limit: '4mb' })); // file writes carry content in the body

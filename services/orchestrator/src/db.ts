@@ -472,6 +472,7 @@ export class PrismaRepository implements Repository {
       teamId: d.serverConfig.teamId,
       type: d.serverConfig.type,
       resourceLimits: parseLimits(d.serverConfig.resourceLimits),
+      autoRestart: d.serverConfig.autoRestart,
     }));
   }
 
@@ -497,6 +498,7 @@ export class PrismaRepository implements Repository {
       teamId: d.serverConfig.teamId,
       type: d.serverConfig.type,
       resourceLimits: parseLimits(d.serverConfig.resourceLimits),
+      autoRestart: d.serverConfig.autoRestart,
     }));
   }
 

@@ -19,6 +19,7 @@ import { createNodeRegistry } from './nodeRegistry.js';
 import { createLifecycle } from './lifecycle.js';
 import { createSuspendHandler, type SuspendPayload } from './suspend.js';
 import { startScheduler, type ScheduleActions } from './scheduler.js';
+import { createReconcileHandler } from './reconcile.js';
 
 // ── Orchestrator ────────────────────────────────────────────────────────────
 // Turns deployment requests into running containers. It keeps a node registry
@@ -50,6 +51,7 @@ async function agentUrlFor(nodeId: string | null): Promise<string> {
 
 const users = createUserService({ repo });
 const registry = createNodeRegistry(repo);
+const reconcile = createReconcileHandler({ repo, publish: publishRabbitEvent });
 const lifecycle = createLifecycle(repo);
 const suspend = createSuspendHandler({ repo });
 
@@ -212,10 +214,21 @@ async function start() {
   try {
     await consumeRabbitQueue(
       'nexusinfra.orchestrator',
-      ['monitoring.heartbeat.node.#', 'infra.server.started', 'infra.server.stopped', 'infra.server.crashed', 'billing.server.suspend'],
+      [
+        'monitoring.heartbeat.node.#',
+        'infra.server.started',
+        'infra.server.stopped',
+        'infra.server.crashed',
+        // What a node reports when its agent restarts, so our records stop
+        // describing a machine that no longer matches (#244).
+        'infra.node.inventory',
+        'billing.server.suspend',
+      ],
       async (envelope: EventEnvelope) => {
         if (envelope.event.type === 'heartbeat.node') {
           await registry.handleHeartbeat(envelope);
+        } else if (envelope.event.type === 'node.inventory') {
+          await reconcile(envelope);
         } else if (envelope.event.type === 'billing.server.suspend') {
           await suspend(readPayload(envelope.event) as unknown as SuspendPayload);
         } else {
@@ -223,7 +236,7 @@ async function start() {
         }
       }
     );
-    console.log('[Orchestrator] Consuming node heartbeats + server lifecycle reports');
+    console.log('[Orchestrator] Consuming node heartbeats + server lifecycle reports + node inventories');
 
     startHeartbeat('orchestrator', 1000);
     console.log('[Orchestrator] Publishing heartbeat on monitoring.heartbeat.service.orchestrator');

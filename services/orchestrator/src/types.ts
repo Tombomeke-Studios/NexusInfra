@@ -96,6 +96,12 @@ export interface DeploymentView extends DeploymentRecord {
    * invent that figure from the server count (#261).
    */
   resourceLimits: ResourceLimits;
+  /**
+   * Whether this server asked to be kept alive. On the list view because
+   * reconciliation reads it (#244) — guessing it would start containers nobody
+   * asked for.
+   */
+  autoRestart: boolean;
 }
 
 export type DatabaseEngine = 'mysql' | 'mariadb' | 'postgres';
