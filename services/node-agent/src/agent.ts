@@ -7,6 +7,7 @@ import {
 } from 'shared';
 import type { ResourceLimits } from 'shared';
 import type { ContainerRuntime, StartSpec } from './runtime.js';
+import { importRoot, resolveImportPath } from './imports.js';
 
 // Routing keys for lifecycle reports the agent publishes. Command keys the agent
 // consumes (infra.server.start/stop/restart) are bound in index.ts.
@@ -21,6 +22,12 @@ export interface AgentDeps {
   runtime: ContainerRuntime;
   /** Injectable so tests can capture events without a live broker. */
   publish?: PublishFn;
+  /**
+   * Resolves an import directory against this node's allowlist (#268). Injected so
+   * the escape cases are testable without touching a real filesystem; the default
+   * uses fs.realpath and IMPORT_ROOT.
+   */
+  resolveMount?: (hostPath: string) => Promise<string>;
 }
 
 export interface NodeAgent {
@@ -38,6 +45,12 @@ export interface NodeAgent {
 export function createAgent(deps: AgentDeps): NodeAgent {
   const { nodeId, runtime } = deps;
   const publish = deps.publish ?? publishRabbitEvent;
+  const resolveMount =
+    deps.resolveMount ??
+    (async (hostPath: string) => {
+      const { realpath } = await import('fs/promises');
+      return resolveImportPath(hostPath, { root: importRoot(), realpath });
+    });
   const source = `node-agent:${nodeId}`;
 
   const emit = (routingKey: string, event: NexusInfraEvent) =>
@@ -62,6 +75,15 @@ export function createAgent(deps: AgentDeps): NodeAgent {
           resourceLimits: payload.resourceLimits as ResourceLimits | undefined,
         };
         try {
+          // An import path is re-resolved here even though the orchestrator
+          // already asked this node to check it (#268). The orchestrator cannot
+          // see this filesystem, the event travels over a broker, and the failure
+          // mode is handing someone a root shell over the host — so the node that
+          // will perform the mount is the one that decides it is allowed.
+          const mount = payload.dataMount as { hostPath: string; containerPath: string } | undefined;
+          if (mount) {
+            spec.dataMount = { hostPath: await resolveMount(String(mount.hostPath)), containerPath: String(mount.containerPath) };
+          }
           const containerId = await runtime.start(spec);
           await emit(KEY_STARTED, {
             type: 'server.started',

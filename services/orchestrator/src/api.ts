@@ -142,6 +142,19 @@ const defaultRemoveBackup: RemoveBackupFn = async (agentUrl, ref) => {
   await agentFetch(`${agentUrl}/backups/${ref}`, { method: 'DELETE' });
 };
 
+/**
+ * The bind mount a server needs at start, if it imported a directory (#268).
+ *
+ * Where it mounts comes from the egg rather than a stored copy, so a server always
+ * follows the catalogue rather than a value frozen when it was created.
+ */
+function dataMountFor(config: ServerConfigRecord): { dataMount?: { hostPath: string; containerPath: string } } {
+  if (!config.dataPath) return {};
+  const containerPath = getEgg(config.type)?.dataPath;
+  if (!containerPath) return {};
+  return { dataMount: { hostPath: config.dataPath, containerPath } };
+}
+
 function userIdOf(req: Request): string {
   return principalOf(req).id;
 }
@@ -173,7 +186,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   // Create a deployment: persist config, place it on the least-loaded node, and
   // command the agent to start it.
   router.post('/deployments', async (req: Request, res: Response) => {
-    const { name, dockerImage, ports, env, resourceLimits, autoRestart, type, nodeId, eggId, eggValues } = req.body ?? {};
+    const { name, dockerImage, ports, env, resourceLimits, autoRestart, type, nodeId, eggId, eggValues, dataPath } = req.body ?? {};
     if (typeof name !== 'string' || !name) {
       return res.status(400).json({ error: 'name is required' });
     }
@@ -182,14 +195,14 @@ export function createApiRouter(deps: ApiDeps): Router {
     // environment, so anything the caller sent for those is ignored rather than
     // merged. An egg that could be overridden would be a suggestion, not a recipe
     // — you could run any image at all and still be labelled a Minecraft server.
-    let spec: { dockerImage: string; ports: Record<string, string>; env: Record<string, string>; type: string };
+    let spec: { dockerImage: string; ports: Record<string, string>; env: Record<string, string>; type: string; dataPath?: string };
     if (eggId !== undefined) {
       if (typeof eggId !== 'string') return res.status(400).json({ error: 'eggId must be a string' });
       const egg = getEgg(eggId);
       if (!egg) return res.status(400).json({ error: `unknown egg ${eggId}` });
       try {
         const built = buildEggDeployment(egg, (eggValues ?? {}) as Record<string, string>, ports as Record<string, string> | undefined);
-        spec = { dockerImage: built.dockerImage, ports: built.ports, env: built.env, type: egg.id };
+        spec = { dockerImage: built.dockerImage, ports: built.ports, env: built.env, type: egg.id, dataPath: built.dataPath };
       } catch (err) {
         // The egg names the field as the person saw it, so pass the message through.
         if (err instanceof EggValidationError) return res.status(400).json({ error: err.message });
@@ -237,9 +250,34 @@ export function createApiRouter(deps: ApiDeps): Router {
       return res.status(503).json({ error: 'No healthy node available to place the deployment' });
     }
 
+    // Importing an existing directory (#268). Platform-admin only: a bind mount is
+    // a host-escape primitive, and a per-server role must never be able to point
+    // one anywhere. The *node* decides whether the path is allowed — it is the only
+    // process that can see its own filesystem — and it checks again at start.
+    let importedPath: string | null = null;
+    if (dataPath !== undefined && dataPath !== null && dataPath !== '') {
+      const principal = principalOf(req);
+      if (principal.platformRole !== 'admin' && principal.platformRole !== 'owner') {
+        return res.status(403).json({ error: 'only a platform administrator may import a directory' });
+      }
+      if (!spec.dataPath) {
+        return res.status(400).json({ error: 'importing a directory needs an egg, which decides where it is mounted' });
+      }
+      try {
+        const agentUrl = await agentUrlFor(node.id);
+        const r = await agentFetch(`${agentUrl}/imports/resolve`, asJson('POST', { path: dataPath }));
+        const body = (await r.json().catch(() => ({}))) as { path?: string; error?: string };
+        if (!r.ok) return res.status(400).json({ error: body.error ?? 'the node refused that directory' });
+        importedPath = body.path ?? String(dataPath);
+      } catch {
+        return res.status(502).json({ error: 'node agent unreachable' });
+      }
+    }
+
     const config = await repo.createServerConfig({
       userId,
       name,
+      dataPath: importedPath,
       dockerImage: spec.dockerImage,
       ports: spec.ports,
       env: spec.env,
@@ -261,6 +299,7 @@ export function createApiRouter(deps: ApiDeps): Router {
         env: config.env,
         ports: config.ports,
         resourceLimits: config.resourceLimits,
+        ...dataMountFor(config),
       },
     });
 
@@ -440,6 +479,7 @@ export function createApiRouter(deps: ApiDeps): Router {
         env: config.env,
         ports: config.ports,
         resourceLimits: config.resourceLimits,
+        ...dataMountFor(config),
       },
     });
     return res.status(202).json({ status: 'starting', deploymentId: detail.id });

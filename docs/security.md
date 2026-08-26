@@ -78,6 +78,20 @@ immediately rather than whenever the holder's token happens to expire.
 | **admin** | The above, plus writing files, databases, backups, schedules, managing access, and editing the server's configuration (#220) |
 | **owner** | The above, plus deleting the server |
 
+### Importing a host directory (#268)
+
+Mounting an existing directory into a server is the most dangerous capability in the panel, because
+the person who owns that server has a root shell inside the container. `/`, `/var/run/docker.sock`
+or a home directory mounted in is the whole machine. It is therefore fenced in four ways:
+
+- **Platform administrators only.** It never follows from a per-server role, however high.
+- **Off by default.** A node imports nothing unless `IMPORT_ROOT` is set on that node.
+- **The node decides.** Only the agent can see its own filesystem, so the orchestrator asks it; the
+  agent checks again at container start rather than trusting an event that crossed a broker.
+- **Resolved, then checked.** Containment is tested on the real path after symlink resolution, and by
+  path segment rather than string prefix — `/srv/import-evil` is not inside `/srv/import`, and
+  `/srv/import/escape -> /` passes any check performed before resolution.
+
 Design decisions worth stating explicitly:
 
 - **No access answers 404, not 403.** A 403 would confirm that a server exists, letting anyone walk

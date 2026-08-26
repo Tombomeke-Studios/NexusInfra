@@ -10,6 +10,7 @@ import { createFileRouter } from './fileRoutes.js';
 import { createDatabaseRouter } from './dbRoutes.js';
 import { createBackupRouter } from './bkRoutes.js';
 import { createExecRouter } from './execRoutes.js';
+import { createImportRouter, importRoot } from './imports.js';
 import { attachTerminal, type TerminalSocket } from './terminal.js';
 
 // ── Node Agent ────────────────────────────────────────────────────────────────
@@ -115,6 +116,11 @@ app.use(createBackupRouter(runtime));
 
 // ── HTTP: console (#68) — one-shot command exec in a container ────────────────
 app.use(createExecRouter(runtime));
+
+// Directory imports (#268) — off unless IMPORT_ROOT is set on this node. The
+// Orchestrator asks here before creating a deployment, because only this process
+// can see this filesystem.
+app.use(createImportRouter({ root: importRoot(), realpath: async (p) => (await import('fs/promises')).realpath(p) }));
 
 // ── WebSocket: interactive terminal (#71) ─────────────────────────────────────
 // Internal WS endpoint (reached only via the Orchestrator's WS proxy) that opens

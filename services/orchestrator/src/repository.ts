@@ -211,6 +211,7 @@ export class InMemoryRepository implements Repository {
       env: input.env ?? {},
       resourceLimits: input.resourceLimits ?? {},
       autoRestart: input.autoRestart ?? false,
+      dataPath: input.dataPath ?? null,
       type: input.type ?? 'generic',
       createdAt: new Date().toISOString(),
     };

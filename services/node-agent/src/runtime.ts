@@ -20,6 +20,12 @@ export interface StartSpec {
   ports?: Record<string, string>;
   // Resource caps / runtime behaviour enforced on the container (#107).
   resourceLimits?: ResourceLimits;
+  /**
+   * An existing host directory to mount as the server's data directory (#268).
+   * Already resolved and containment-checked by the caller — the runtime only
+   * turns it into a bind.
+   */
+  dataMount?: { hostPath: string; containerPath: string };
 }
 
 /**
@@ -112,7 +118,13 @@ export class DockerodeRuntime implements ContainerRuntime {
       name: spec.containerName,
       Env: env,
       ExposedPorts: exposedPorts,
-      HostConfig: { PortBindings: portBindings, ...limits },
+      HostConfig: {
+        PortBindings: portBindings,
+        ...limits,
+        // Read-write: the point of importing a server directory is that the
+        // server keeps using it, world saves and all.
+        ...(spec.dataMount ? { Binds: [`${spec.dataMount.hostPath}:${spec.dataMount.containerPath}`] } : {}),
+      },
     });
 
     await container.start();

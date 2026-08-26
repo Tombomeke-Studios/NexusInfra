@@ -12,10 +12,12 @@ class FakeRuntime implements ContainerRuntime {
   lastStartSpec: StartSpec | null = null;
   async start(spec: StartSpec): Promise<string> {
     this.calls.push(`start:${spec.dockerImage}`);
+    this.lastSpec = spec;
     this.lastStartSpec = spec;
     if (this.failOn === 'start') throw new Error('image pull failed');
     return this.nextContainerId;
   }
+  lastSpec: unknown = null;
   async stop(containerId: string): Promise<void> {
     this.calls.push(`stop:${containerId}`);
     if (this.failOn === 'stop') throw new Error('no such container');
@@ -61,7 +63,7 @@ class FakeRuntime implements ContainerRuntime {
 
 const NODE_ID = 'node-1';
 
-function makeAgent() {
+function makeAgent(overrides: Partial<Parameters<typeof createAgent>[0]> = {}) {
   const runtime = new FakeRuntime();
   const published: Array<{ key: string; envelope: EventEnvelope }> = [];
   const agent = createAgent({
@@ -71,6 +73,7 @@ function makeAgent() {
       published.push({ key, envelope });
       return true;
     },
+    ...overrides,
   });
   return { runtime, published, agent };
 }
@@ -141,6 +144,59 @@ describe('Node Agent command handling', () => {
 
   // Kill is a force-terminate for a container that ignores a graceful stop (#253).
   // It reports the same server.stopped, because the outcome is the same: not running.
+  // Importing an existing directory bind-mounts it into the container (#268).
+  // The node re-checks the path even though the orchestrator already asked it to:
+  // the event crosses a broker and the failure mode is a host takeover.
+  describe('an imported data directory', () => {
+    it('mounts the resolved path', async () => {
+      const { runtime, agent } = makeAgent({ resolveMount: async () => '/mnt/data/import/mc' });
+      await agent.handleCommand(
+        cmd({
+          type: 'server.start',
+          payload: {
+            deploymentId: 'd-1',
+            nodeId: NODE_ID,
+            dockerImage: 'itzg/minecraft-server',
+            dataMount: { hostPath: '/srv/import/mc', containerPath: '/data' },
+          },
+        } as never)
+      );
+
+      expect((runtime.lastSpec as { dataMount?: unknown }).dataMount).toEqual({
+        // The *resolved* path is mounted, not the one that was asked for.
+        hostPath: '/mnt/data/import/mc',
+        containerPath: '/data',
+      });
+    });
+
+    it('refuses to start when the node rejects the path', async () => {
+      const { runtime, published, agent } = makeAgent({
+        resolveMount: async () => {
+          throw new Error('/etc is outside the import root /srv/import');
+        },
+      });
+      await agent.handleCommand(
+        cmd({
+          type: 'server.start',
+          payload: { deploymentId: 'd-1', nodeId: NODE_ID, dockerImage: 'nginx', dataMount: { hostPath: '/etc', containerPath: '/data' } },
+        } as never)
+      );
+
+      // Nothing started, and the reason is reported rather than swallowed.
+      expect(runtime.calls).toEqual([]);
+      expect(published[0].key).toBe('infra.server.crashed');
+      expect((published[0].envelope.event.payload as any).reason).toMatch(/outside the import root/);
+    });
+
+    it('starts normally when no directory is imported', async () => {
+      const { runtime, agent } = makeAgent();
+      await agent.handleCommand(
+        cmd({ type: 'server.start', payload: { deploymentId: 'd-1', nodeId: NODE_ID, dockerImage: 'nginx' } })
+      );
+      expect((runtime.lastSpec as { dataMount?: unknown }).dataMount).toBeUndefined();
+    });
+  });
+
   it('kills a container and reports server.stopped', async () => {
     const { runtime, published, agent } = makeAgent();
     await agent.handleCommand(
