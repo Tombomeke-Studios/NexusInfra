@@ -1,4 +1,5 @@
 import os from 'os';
+import { statfs } from 'fs/promises';
 import Docker from 'dockerode';
 import { Writable } from 'stream';
 import type { NodeResources, ResourceLimits } from 'shared';
@@ -6,6 +7,7 @@ import { lineSplitter } from './logs.js';
 import { parseDockerStats, type ContainerStats } from './stats.js';
 import { resourceLimitsToHostConfig } from './limits.js';
 import { buildTarball, normalizeContainerPath, parseLsOutput, type FileEntry } from './files.js';
+import { collectDisk } from './disk.js';
 import type { TerminalSession } from './terminal.js';
 
 // NodeResources is the shared event-payload type (shared/src/events.ts) — the
@@ -368,9 +370,9 @@ export class DockerodeRuntime implements ContainerRuntime {
       cpuCores: os.cpus().length,
       ramUsedMb: Math.round((totalMem - freeMem) / 1024 / 1024),
       ramTotalMb: Math.round(totalMem / 1024 / 1024),
-      // Disk metrics need a platform-specific probe; deferred to a later phase.
-      diskUsedGb: 0,
-      diskTotalGb: 0,
+      // Real figures, or none at all (#276). Reporting 0 made a full disk look
+      // identical to an empty one, beside meters that were genuine.
+      ...((await collectDisk((p) => statfs(p))) ?? {}),
     };
   }
 

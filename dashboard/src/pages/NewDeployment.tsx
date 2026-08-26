@@ -49,7 +49,6 @@ export function NewDeployment() {
   const [cpuUnit, setCpuUnit] = useState<'percent' | 'cores'>('percent');
   const [ramMb, setRamMb] = useState(2048);
   const [cpuCores, setCpuCores] = useState(2);
-  const [disk, setDisk] = useState(defaults.disk);
   const [swap, setSwap] = useState(defaults.swap);
   const [io, setIo] = useState<string>(defaults.io);
   const [restart, setRestart] = useState<string>(defaults.restart);
@@ -95,7 +94,6 @@ export function NewDeployment() {
           // sending both would only be ambiguous.
           ...(cpuUnit === 'cores' ? { cpuCores } : { cpuPercent: cpu }),
           ...(ramUnit === 'mb' ? { ramMb } : { ramPercent: ram }),
-          diskPercent: disk,
           swapPercent: swap,
           ioPriority: io as 'low' | 'normal' | 'high',
           restartPolicy: restart as 'no' | 'on-failure' | 'always',
@@ -392,7 +390,13 @@ export function NewDeployment() {
                 {heapWarning}
               </p>
             )}
-            <Slider label="Disk limit" value={disk} onChange={setDisk} suffix="%" min={5} max={100} step={5} hint="The share of the node's disk this server's files may occupy." />
+            {/*
+              A "Disk limit" slider sat here. It was persisted and never enforced:
+              resourceLimitsToHostConfig has no disk field, and a per-container
+              quota needs a backing filesystem with project quotas (xfs+pquota),
+              which most hosts do not have (#276). It returns when it can mean
+              something on the node it is set for.
+            */}
             <Slider label="Swap (of RAM limit)" value={swap} onChange={setSwap} suffix="%" min={0} max={100} step={25} neutral hint="Extra swap space as a percentage of the RAM limit. 0% disables swap for this server; swap is slower disk-backed memory used when RAM is full." />
           </div>
 

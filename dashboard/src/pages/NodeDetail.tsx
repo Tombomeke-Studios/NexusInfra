@@ -11,7 +11,8 @@ const HISTORY = 60; // samples kept (~2 min at the 2s poll)
 
 const cpuOf = (n: NodeView) => Math.round(n.cpuPercent ?? 0);
 const ramOf = (n: NodeView) => (n.ramUsedMb != null && n.ramTotalMb ? Math.round((n.ramUsedMb / n.ramTotalMb) * 100) : 0);
-const diskOf = (n: NodeView) => (n.diskUsedGb != null && n.diskTotalGb ? Math.round((n.diskUsedGb / n.diskTotalGb) * 100) : 0);
+// Null when the node cannot measure its disk — rendered as unknown, not 0% (#276).
+const diskOf = (n: NodeView) => (n.diskUsedGb != null && n.diskTotalGb ? Math.round((n.diskUsedGb / n.diskTotalGb) * 100) : null);
 
 export function NodeDetail() {
   const { id = '' } = useParams();
@@ -81,7 +82,7 @@ export function NodeDetail() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12, marginBottom: 24 }}>
         <StatBox label="CPU" value={`${cpuOf(node)}%`} />
         <StatBox label="Memory" value={`${ramOf(node)}%`} />
-        <StatBox label="Disk" value={`${diskOf(node)}%`} />
+        <StatBox label="Disk" value={diskOf(node) != null ? `${diskOf(node)}%` : '—'} />
         <StatBox label="Servers" value={String(deps.length)} />
       </div>
 

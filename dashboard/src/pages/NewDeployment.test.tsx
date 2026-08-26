@@ -78,7 +78,7 @@ describe('NewDeployment', () => {
       resourceLimits: {
         cpuPercent: 50,
         ramPercent: 50,
-        diskPercent: 50,
+        // No diskPercent: the control was never enforced and is gone (#276).
         swapPercent: 0,
         ioPriority: 'normal',
         restartPolicy: 'on-failure',
