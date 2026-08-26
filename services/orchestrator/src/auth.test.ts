@@ -404,3 +404,108 @@ describe('login rate limiting', () => {
     expect(res.status).toBe(429);
   });
 });
+
+// Forgetting a password used to mean editing the database by hand (#226). The
+// community edition has no mail server to assume, so an administrator sets a new
+// one — which makes who may reset whom the whole design question.
+describe('password reset by an administrator', () => {
+  let repo: InMemoryRepository;
+  let users: UserService;
+  let app: express.Express;
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    users = createUserService({ repo });
+    app = buildApp(users, repo);
+    await seedOwner(users);
+  });
+
+  async function tokenFor(email: string, password: string) {
+    const res = await request(app).post('/auth/login').send({ email, password });
+    return res.body.token as string;
+  }
+
+  async function makeUser(email: string, password: string, platformRole: 'user' | 'admin' | 'owner' = 'user') {
+    const result = await users.register({ email, password, platformRole });
+    if (!result.ok) throw new Error(result.error);
+    return result.user;
+  }
+
+  it('lets an administrator set a new password, which then works', async () => {
+    const ada = await makeUser('ada@example.com', 'forgotten-one');
+    const admin = await tokenFor('admin@local', 'admin123!');
+
+    await request(app)
+      .post(`/users/${ada.id}/password`)
+      .set('authorization', `Bearer ${admin}`)
+      .send({ newPassword: 'a-fresh-start' })
+      .expect(204);
+
+    expect((await request(app).post('/auth/login').send({ email: 'ada@example.com', password: 'a-fresh-start' })).status).toBe(200);
+    expect((await request(app).post('/auth/login').send({ email: 'ada@example.com', password: 'forgotten-one' })).status).toBe(401);
+  });
+
+  it('signs the account out everywhere', async () => {
+    const ada = await makeUser('ada@example.com', 'forgotten-one');
+    const hers = await tokenFor('ada@example.com', 'forgotten-one');
+    const admin = await tokenFor('admin@local', 'admin123!');
+
+    await request(app).post(`/users/${ada.id}/password`).set('authorization', `Bearer ${admin}`).send({ newPassword: 'a-fresh-start' });
+
+    // A reset is what you do when you think somebody else is in the account, so
+    // leaving their token working would defeat the whole exercise (#227).
+    expect((await request(app).get('/protected').set('authorization', `Bearer ${hers}`)).status).toBe(401);
+  });
+
+  it('refuses to reset an account that outranks the caller', async () => {
+    // Otherwise any administrator an owner appoints can lock the owner out and
+    // take the installation.
+    const owner = await repo.getUserByEmail('admin@local');
+    const adminUser = await makeUser('admin2@example.com', 'admin-password', 'admin');
+    const adminToken = await tokenFor('admin2@example.com', 'admin-password');
+
+    const res = await request(app)
+      .post(`/users/${owner!.id}/password`)
+      .set('authorization', `Bearer ${adminToken}`)
+      .send({ newPassword: 'taking-over-now' });
+
+    expect(res.status).toBe(403);
+    expect((await request(app).post('/auth/login').send({ email: 'admin@local', password: 'admin123!' })).status).toBe(200);
+    expect(adminUser.platformRole).toBe('admin');
+  });
+
+  it('allows an administrator to reset another administrator', async () => {
+    // They already hold the same power; refusing this only makes the panel
+    // useless the moment one of two admins forgets a password.
+    await makeUser('admin2@example.com', 'admin-password', 'admin');
+    const other = await makeUser('admin3@example.com', 'their-password', 'admin');
+    const token = await tokenFor('admin2@example.com', 'admin-password');
+
+    await request(app).post(`/users/${other.id}/password`).set('authorization', `Bearer ${token}`).send({ newPassword: 'reset-by-peer' }).expect(204);
+  });
+
+  it('is refused to an ordinary user', async () => {
+    const ada = await makeUser('ada@example.com', 'her-password');
+    await makeUser('bob@example.com', 'his-password');
+    const token = await tokenFor('bob@example.com', 'his-password');
+
+    expect(
+      (await request(app).post(`/users/${ada.id}/password`).set('authorization', `Bearer ${token}`).send({ newPassword: 'not-yours' })).status
+    ).toBe(403);
+  });
+
+  it('applies the same password rules as anywhere else', async () => {
+    const ada = await makeUser('ada@example.com', 'her-password');
+    const admin = await tokenFor('admin@local', 'admin123!');
+
+    const res = await request(app).post(`/users/${ada.id}/password`).set('authorization', `Bearer ${admin}`).send({ newPassword: 'short' });
+    expect(res.status).toBe(400);
+  });
+
+  it('404s an account that does not exist', async () => {
+    const admin = await tokenFor('admin@local', 'admin123!');
+    expect(
+      (await request(app).post('/users/nobody/password').set('authorization', `Bearer ${admin}`).send({ newPassword: 'a-fresh-start' })).status
+    ).toBe(404);
+  });
+});

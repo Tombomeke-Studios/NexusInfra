@@ -269,6 +269,14 @@ export function listUsers(): Promise<CurrentUser[]> {
   return request('/users');
 }
 
+/**
+ * Set somebody's password without their old one (#226) — the community edition's
+ * answer to a forgotten password. Ends every session that account has.
+ */
+export function resetUserPassword(id: string, newPassword: string): Promise<void> {
+  return request(`/users/${id}/password`, { method: 'POST', body: JSON.stringify({ newPassword }) });
+}
+
 /** Administrator-created account: the way in when self-registration is closed. */
 export function createUser(input: { email: string; password: string; displayName?: string; platformRole?: PlatformRole }): Promise<CurrentUser> {
   return request('/users', { method: 'POST', body: JSON.stringify(input) });

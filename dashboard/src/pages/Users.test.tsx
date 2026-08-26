@@ -69,4 +69,24 @@ describe('Users', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/only platform administrators/i);
   });
+  it('resets a password and warns that it signs the account out', async () => {
+    vi.spyOn(window, 'prompt').mockReturnValue('a-fresh-start');
+    renderUsers();
+    await screen.findByText('ada@example.com');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reset the password for ada@example.com' }));
+
+    const call = fetchMock.mock.calls.find(([u, o]) => String(u).includes('/users/u2/password') && o?.method === 'POST');
+    expect(call).toBeDefined();
+    expect(JSON.parse(call![1].body as string)).toEqual({ newPassword: 'a-fresh-start' });
+  });
+
+  it('does nothing when the prompt is cancelled', async () => {
+    vi.spyOn(window, 'prompt').mockReturnValue(null);
+    renderUsers();
+    await screen.findByText('ada@example.com');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reset the password for ada@example.com' }));
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/password'))).toBe(false);
+  });
 });

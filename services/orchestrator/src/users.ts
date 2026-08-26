@@ -107,6 +107,14 @@ export interface UserService {
   /** Resolve a login by email or by legacy username/id; null when it fails. */
   authenticate(identifier: string, password: string): Promise<UserRecord | null>;
   changePassword(userId: string, current: string, next: string): Promise<RegisterResult>;
+  /**
+   * Set someone's password without knowing the old one (#226).
+   *
+   * Deliberately a separate method from `changePassword` rather than an optional
+   * argument: skipping the current-password check is the whole difference, and it
+   * should be impossible to reach by passing the wrong thing.
+   */
+  resetPassword(userId: string, next: string): Promise<RegisterResult>;
   /** Seed or repair the first administrator. Safe to call on every start. */
   bootstrapOwner(input: { email: string; password: string; displayName?: string }): Promise<'created' | 'password-set' | 'exists'>;
 }
@@ -183,5 +191,13 @@ export function createUserService(deps: { repo: Repository }): UserService {
     return 'created';
   }
 
-  return { register, authenticate, changePassword, bootstrapOwner };
+  async function resetPassword(userId: string, next: string): Promise<RegisterResult> {
+    const problem = passwordProblem(next);
+    if (problem) return { ok: false, status: 400, error: problem };
+    const updated = await repo.setUserPassword(userId, await hashPassword(next));
+    if (!updated) return { ok: false, status: 404, error: 'account not found' };
+    return { ok: true, user: updated };
+  }
+
+  return { register, authenticate, changePassword, resetPassword, bootstrapOwner };
 }

@@ -345,5 +345,38 @@ export function createUserAdminRouter(deps: { users: UserService; repo: Reposito
     return res.status(201).json(toPublicUser(result.user));
   });
 
+  /**
+   * Reset somebody's password (#226).
+   *
+   * The community edition's answer to a forgotten password: there is no mail
+   * server to assume, and accounts are created by an administrator anyway, so the
+   * administrator sets a new one and tells the person.
+   *
+   * Two rules make this safe to hand to an `admin` rather than only an `owner`:
+   *
+   * - You cannot reset an account that outranks you, or the installation's owner
+   *   could be locked out by any administrator they appointed. An admin resetting
+   *   another admin is allowed; both already hold the same power.
+   * - Every session belonging to that account ends (#227). A reset is what you do
+   *   when you think somebody else is in the account — leaving their existing
+   *   token working would defeat the entire exercise.
+   */
+  router.post('/users/:id/password', requirePlatformAdmin, async (req: Request, res: Response) => {
+    const actor = principalOf(req);
+    const target = await repo.getUser(req.params.id);
+    if (!target) return res.status(404).json({ error: 'account not found' });
+
+    const rank: Record<string, number> = { user: 0, admin: 1, owner: 2 };
+    if ((rank[target.platformRole] ?? 0) > (rank[actor.platformRole] ?? 0)) {
+      return res.status(403).json({ error: 'you cannot reset the password of an account that outranks you' });
+    }
+
+    const result = await users.resetPassword(target.id, String((req.body ?? {}).newPassword ?? ''));
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+
+    await repo.deleteSessionsForUser(target.id);
+    return res.status(204).end();
+  });
+
   return router;
 }
