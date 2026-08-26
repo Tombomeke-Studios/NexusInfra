@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { readPayload, type EventEnvelope } from 'shared';
@@ -431,6 +431,76 @@ describe('deployment API', () => {
       const res = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
       expect(res.status).toBe(201);
       expect((await repo.getDeploymentConfig(res.body.id))?.dockerImage).toBe('nginx');
+    });
+  });
+
+  // Importing an existing server directory (#268). The node decides whether a path
+  // is allowed; the orchestrator only asks, because it cannot see that filesystem.
+  describe('importing a directory', () => {
+    const okAgent = () =>
+      vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ path: '/mnt/data/import/mc' }) } as Response);
+
+    it('is refused to a caller who is not a platform administrator', async () => {
+      await seedHealthyNode(repo);
+      vi.stubGlobal('fetch', okAgent());
+      const res = await request(app)
+        .post('/deployments')
+        .send({ name: 'mc', eggId: 'minecraft-java', dataPath: '/srv/import/mc' });
+
+      // A bind mount is a host-escape primitive; it never follows a server role.
+      expect(res.status).toBe(403);
+      expect(await repo.listDeployments()).toHaveLength(0);
+      vi.unstubAllGlobals();
+    });
+
+    it('stores the path the node resolved, not the one that was asked for', async () => {
+      await seedHealthyNode(repo);
+      vi.stubGlobal('fetch', okAgent());
+      const adminApp = buildApp(repo, published, PLATFORM_ADMIN);
+
+      const res = await request(adminApp)
+        .post('/deployments')
+        .send({ name: 'mc', eggId: 'minecraft-java', dataPath: '/srv/import/mc' });
+
+      expect(res.status).toBe(201);
+      expect((await repo.getDeploymentConfig(res.body.id))?.dataPath).toBe('/mnt/data/import/mc');
+      vi.unstubAllGlobals();
+    });
+
+    it("sends the mount on server.start, at the egg's data path", async () => {
+      await seedHealthyNode(repo);
+      vi.stubGlobal('fetch', okAgent());
+      const adminApp = buildApp(repo, published, PLATFORM_ADMIN);
+
+      await request(adminApp).post('/deployments').send({ name: 'mc', eggId: 'minecraft-java', dataPath: '/srv/import/mc' });
+
+      const start = published.find((p) => p.key === 'infra.server.start');
+      const payload = readPayload(start!.envelope.event) as Record<string, unknown>;
+      expect(payload.dataMount).toEqual({ hostPath: '/mnt/data/import/mc', containerPath: '/data' });
+      vi.unstubAllGlobals();
+    });
+
+    it("passes the node's refusal through instead of creating the server", async () => {
+      await seedHealthyNode(repo);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: false, status: 400, json: async () => ({ error: '/etc is outside the import root /srv/import' }) } as Response)
+      );
+      const adminApp = buildApp(repo, published, PLATFORM_ADMIN);
+
+      const res = await request(adminApp).post('/deployments').send({ name: 'mc', eggId: 'minecraft-java', dataPath: '/etc' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/outside the import root/);
+      expect(await repo.listDeployments()).toHaveLength(0);
+      vi.unstubAllGlobals();
+    });
+
+    it('refuses an import without an egg, since nothing says where to mount it', async () => {
+      await seedHealthyNode(repo);
+      const adminApp = buildApp(repo, published, PLATFORM_ADMIN);
+      const res = await request(adminApp).post('/deployments').send({ name: 'x', dockerImage: 'nginx', dataPath: '/srv/import/mc' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/egg/i);
     });
   });
 

@@ -96,6 +96,9 @@ model ServerConfig {
   environmentVars String       @default("{}")
   resourceLimits  String       @default("{}")
   autoRestart     Boolean      @default(false)
+  // An existing host directory on the node, mounted as this server's data
+  // directory (#268). Null for the normal case of a server that starts empty.
+  dataPath        String?
   type            String       @default("generic")
   createdAt       DateTime     @default(now())
   deployments     Deployment[]

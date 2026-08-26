@@ -121,6 +121,7 @@ Volume: `/data` — the database. Back this up.
 | `INTERNAL_API_TOKEN` | yes | Must match the orchestrator's. |
 | `AGENT_URL` | no | How the orchestrator reaches this agent, advertised on its heartbeat. Defaults to `http://<hostname>:<PORT>`, which works on a Compose network; set it explicitly for anything else. |
 | `BACKUP_DIR` | no | Where backup tarballs live. Point at a volume so they survive restarts. |
+| `IMPORT_ROOT` | no | Enables importing existing server directories (#268). A path a person may point a new server at, so it runs against files already on this host. **Unset means the feature is off, which is the default.** Only a platform administrator may use it, and the agent refuses anything that does not resolve inside this root. Mount the same path into the agent container so it can see it. |
 
 Requires the Docker socket: `-v /var/run/docker.sock:/var/run/docker.sock`.
 

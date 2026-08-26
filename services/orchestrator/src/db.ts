@@ -122,6 +122,7 @@ function toConfigRecord(c: PrismaConfig): ServerConfigRecord {
     env: parseJson(c.environmentVars),
     resourceLimits: parseLimits(c.resourceLimits),
     autoRestart: c.autoRestart,
+    dataPath: c.dataPath,
     type: c.type,
     createdAt: c.createdAt.toISOString(),
   };
@@ -370,6 +371,7 @@ export class PrismaRepository implements Repository {
         environmentVars: JSON.stringify(input.env ?? {}),
         resourceLimits: JSON.stringify(input.resourceLimits ?? {}),
         autoRestart: input.autoRestart ?? false,
+        dataPath: input.dataPath ?? null,
         type: input.type ?? 'generic',
       },
     });

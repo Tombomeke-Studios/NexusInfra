@@ -63,6 +63,11 @@ export interface ServerConfigRecord {
   env: Record<string, string>;
   resourceLimits: ResourceLimits;
   autoRestart: boolean;
+  /**
+   * A host directory on the owning node, mounted as this server's data directory
+   * (#268). Null for a server that starts from an empty container.
+   */
+  dataPath: string | null;
   type: string;
   createdAt: string;
 }
@@ -259,6 +264,8 @@ export interface CreateServerConfigInput {
   env?: Record<string, string>;
   resourceLimits?: ResourceLimits;
   autoRestart?: boolean;
+  /** Import an existing host directory as this server's data directory (#268). */
+  dataPath?: string | null;
   type?: string;
 }
 

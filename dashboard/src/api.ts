@@ -118,7 +118,13 @@ export function listEggs(): Promise<Egg[]> {
  * a caller send an image that is then ignored.
  */
 export type CreateDeploymentInput = CreateDeploymentBase &
-  ({ eggId: string; eggValues?: Record<string, string>; dockerImage?: never } | { dockerImage: string; eggId?: never });
+  ({
+    eggId: string;
+    eggValues?: Record<string, string>;
+    dockerImage?: never;
+    /** Import an existing directory on the node as this server's data (#268). */
+    dataPath?: string;
+  } | { dockerImage: string; eggId?: never });
 
 interface CreateDeploymentBase {
   name: string;

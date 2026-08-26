@@ -173,6 +173,18 @@ default, and the egg's `fixedEnv` (such as Minecraft's `EULA=TRUE`) is applied l
 honoured, as the host-side override. `400` for an unknown egg or an invalid answer, with the message
 naming the field as the person saw it ("Player slots must be a whole number").
 
+**Importing an existing directory (#268):** send `dataPath` alongside an egg. The directory is
+bind-mounted at the egg's `dataPath`, so the server runs against files that are already on the node
+— an existing world, config and all.
+
+This is **platform-administrator only**, and it is the one place the panel hands out a host-escape
+primitive: a bind mount of the wrong directory into a container the user has a root shell in is the
+machine. So the *node* decides, not the orchestrator, which cannot see that filesystem: the path
+must resolve inside the node's `IMPORT_ROOT` (unset = importing is off), containment is checked on
+the **resolved real path** after symlinks, and the agent re-checks at start rather than trusting the
+event. `403` for a non-administrator, `400` when the node refuses the path or when no egg says where
+to mount it.
+
 `nodeId` pins the server to a specific node (#254); omit it to let the Orchestrator place it on the
 least-loaded healthy node. A pin is honoured or refused, never silently reassigned — `400` for an
 unknown node, `409` for one that is not healthy.

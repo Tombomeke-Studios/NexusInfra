@@ -33,6 +33,9 @@ export function NewDeployment() {
   // Answers keyed by variable; a key absent here means "use the egg's default",
   // which is also how the API reads it.
   const [eggValues, setEggValues] = useState<Record<string, string>>({});
+  // Importing an existing directory (#268) — platform admins only; the node checks
+  // the path and refuses anything outside its import root.
+  const [dataPath, setDataPath] = useState('');
   const [ports, setPorts] = useState<Row[]>([{ key: '', value: '' }]);
   const [env, setEnv] = useState<Row[]>([{ key: '', value: '' }]);
   const [nodes, setNodes] = useState<NodeView[]>([]);
@@ -75,7 +78,7 @@ export function NewDeployment() {
       await createDeployment({
         name,
         ...(fromEgg
-          ? { eggId: egg.id, eggValues, ports: rowsToRecord(ports) }
+          ? { eggId: egg.id, eggValues, ports: rowsToRecord(ports), ...(dataPath.trim() ? { dataPath: dataPath.trim() } : {}) }
           : { dockerImage, ports: rowsToRecord(ports), env: rowsToRecord(env), type: 'app' }),
         // 'auto' means "you pick"; anything else is a deliberate pin the API honours (#254).
         nodeId: placement === 'auto' ? undefined : placement,
@@ -190,9 +193,25 @@ export function NewDeployment() {
                   {egg.variables.map((v) => (
                     <EggField key={v.key} variable={v} value={eggValues[v.key] ?? v.default} onChange={(val) => setEggValue(v.key, val)} />
                   ))}
-                  <span className="subtle" style={{ display: 'block', fontSize: '.8rem' }}>
+                  <span className="subtle" style={{ display: 'block', fontSize: '.8rem', marginBottom: 14 }}>
                     Publishes port {Object.keys(egg.ports)[0]} by default — override it under Ports below.
                   </span>
+                  <div className="field">
+                    <label className="field__label" htmlFor="egg-datapath">
+                      Import an existing directory <span className="subtle" style={{ fontWeight: 400 }}>(optional)</span>
+                      <InfoHint text={`A folder already on the node — an existing world and config — mounted at ${egg.dataPath} so this server runs against the files that are already there. Administrators only, and the node refuses anything outside its configured import root.`} label="Import help" />
+                    </label>
+                    <input
+                      id="egg-datapath"
+                      className="input mono"
+                      value={dataPath}
+                      onChange={(e) => setDataPath(e.target.value)}
+                      placeholder="/srv/import/my-minecraft-server"
+                    />
+                    <span className="field__hint">
+                      Leave empty to start from an empty {egg.dataPath}. Requires IMPORT_ROOT on the node and a platform administrator.
+                    </span>
+                  </div>
                 </>
               )}
             </div>
