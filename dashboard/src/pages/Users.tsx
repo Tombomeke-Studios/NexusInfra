@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { listUsers, createUser, getCurrentUser, ApiError, type CurrentUser, type PlatformRole } from '../api';
+import { listUsers, createUser, getCurrentUser, resetUserPassword, ApiError, type CurrentUser, type PlatformRole } from '../api';
 import { useToast } from '../components/Toast';
 import { InfoHint } from '../components/InfoHint';
 import { formatRelative } from '../format';
@@ -56,6 +56,19 @@ export function Users() {
     void load();
     void getCurrentUser().then(setMe).catch(() => undefined);
   }, [load]);
+
+  // Resetting a password is how somebody gets back in when they have forgotten
+  // theirs; there is no mail server to assume in the community edition (#226).
+  const resetPassword = async (user: CurrentUser) => {
+    const next = window.prompt(`New password for ${user.email}. They will be signed out everywhere and should change it once they are back in.`);
+    if (next === null) return;
+    try {
+      await resetUserPassword(user.id, next);
+      toast(`${user.email} can sign in with the new password`, 'success', 'Accounts');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not reset that password', 'error', 'Accounts');
+    }
+  };
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -154,13 +167,21 @@ export function Users() {
               </span>
               <span className={`badge${u.platformRole === 'user' ? '' : ' badge--info'}`} style={{ textTransform: 'capitalize' }}>{u.platformRole}</span>
               <span className="subtle" style={{ fontSize: '.8rem', minWidth: 90, textAlign: 'right' }}>{formatRelative(u.createdAt)}</span>
+              <button
+                className="btn btn--secondary btn--sm"
+                data-ripple
+                onClick={() => void resetPassword(u)}
+                aria-label={`Reset the password for ${u.email}`}
+              >
+                Reset password
+              </button>
             </div>
           ))
         )}
       </div>
       <p className="subtle" style={{ marginTop: 14, fontSize: '.82rem' }}>
-        Removing an account, resetting someone's password and ending their sessions are separate pieces of
-        work — an account created here cannot yet be deleted from the panel.
+        Resetting a password signs that account out everywhere, so it also works as "somebody else is in
+        this account". Deleting an account is still separate work.
       </p>
     </div>
   );

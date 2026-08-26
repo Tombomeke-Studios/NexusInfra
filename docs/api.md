@@ -137,6 +137,23 @@ The signed-in account (never including any credential material), and a password 
 the current password: `{ "currentPassword": "…", "newPassword": "…" }` → `204`, `401` if the current
 password is wrong.
 
+### `POST /users/:id/password`  *(platform administrators)*
+
+Set somebody's password without knowing the old one (#226) — the community edition's answer to a
+forgotten one, since there is no mail server to assume and accounts are created by an administrator
+anyway. Body `{ "newPassword": "…" }` → `204`.
+
+Two rules make this safe to give an `admin` rather than only an `owner`:
+
+- **You cannot reset an account that outranks you** (`403`), or any administrator an owner appoints
+  could lock the owner out and take the installation. Admin-resets-admin is allowed; they already hold
+  the same power, and refusing it makes the panel useless the moment one of two admins forgets a
+  password.
+- **Every session of that account ends** (#227). A reset is what you do when you suspect somebody else
+  is in the account, so leaving their existing token working would defeat the exercise.
+
+`400` on a password that fails the usual rules, `404` for an unknown account.
+
 ### `GET /me/sessions` · `POST /auth/logout` · `DELETE /me/sessions/:id` · `DELETE /me/sessions`
 
 Where this account is signed in, and how to stop being (#227).
