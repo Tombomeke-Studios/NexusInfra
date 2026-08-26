@@ -373,6 +373,33 @@ export function writeFile(id: string, path: string, content: string): Promise<vo
   return request(`/deployments/${id}/files/content`, { method: 'PUT', body: JSON.stringify({ path, content }) });
 }
 
+/**
+ * Upload a file's raw bytes (#263). Deliberately not `writeFile`: that sends a
+ * JSON string, and decoding a binary file to text replaces every invalid byte,
+ * so a JAR or zip arrived corrupt while the panel reported success.
+ */
+export async function uploadFile(id: string, path: string, file: Blob): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`${BASE}/deployments/${id}/files/binary?path=${encodeURIComponent(path)}`, {
+    method: 'PUT',
+    headers: {
+      'content-type': 'application/octet-stream',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: file,
+  });
+  if (!res.ok) {
+    let message = res.statusText;
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body?.error) message = body.error;
+    } catch {
+      // non-JSON error body; keep the status text
+    }
+    throw new ApiError(res.status, message);
+  }
+}
+
 export function makeDir(id: string, path: string): Promise<void> {
   return request(`/deployments/${id}/files/dir`, { method: 'POST', body: JSON.stringify({ path }) });
 }

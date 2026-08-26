@@ -1,10 +1,16 @@
-import { Router, type Request, type Response } from 'express';
+import { Router, raw, type Request, type Response } from 'express';
 import type { ContainerRuntime } from './runtime.js';
 
 // Internal file-management HTTP for a container (#108), reached only via the
 // Orchestrator's proxy on the private network. Every handler is thin: it turns a
 // request into a ContainerRuntime call and maps failures to 400 (the runtime
 // throws with the container's own error message, e.g. "No such file").
+
+/**
+ * Cap on a single upload. The file is held in memory as a Buffer and again inside
+ * the tar, so an unbounded upload is an out-of-memory crash of the agent.
+ */
+const MAX_UPLOAD_BYTES = process.env.MAX_UPLOAD_BYTES || '64mb';
 
 const fail = (res: Response, err: unknown) =>
   res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
@@ -43,6 +49,25 @@ export function createFileRouter(runtime: ContainerRuntime): Router {
       fail(res, err);
     }
   });
+
+  // Create or overwrite a file from raw bytes — the upload path (#263). Reading a
+  // file as text and re-encoding it loses every byte that is not valid UTF-8, so
+  // uploads travel as octet-stream all the way to putArchive.
+  router.put(
+    '/files/:containerId/binary',
+    raw({ type: 'application/octet-stream', limit: MAX_UPLOAD_BYTES }),
+    async (req: Request, res: Response) => {
+      const path = String(req.query.path ?? '');
+      if (!path) return res.status(400).json({ error: 'path is required' });
+      const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      try {
+        await runtime.writeFileBytes(req.params.containerId, path, data);
+        res.status(204).end();
+      } catch (err) {
+        fail(res, err);
+      }
+    }
+  );
 
   // Make a directory.
   router.post('/files/:containerId/dir', async (req: Request, res: Response) => {

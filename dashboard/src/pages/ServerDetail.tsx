@@ -13,6 +13,7 @@ import {
   listFiles,
   readFile,
   writeFile,
+  uploadFile,
   makeDir,
   renamePath,
   deletePath,
@@ -507,9 +508,10 @@ function FilesTab({ id, running }: { id: string; running: boolean }) {
   const remove = (entry: FileEntry) => {
     if (window.confirm(`Delete ${entry.name}? This cannot be undone.`)) void act(() => deletePath(id, joinPath(cwd, entry.name)), `Deleted ${entry.name}`);
   };
+  // Raw bytes, not text (#263): decoding an upload and re-encoding it corrupts
+  // anything that is not UTF-8 — which is most of what people upload here.
   const onUpload = async (file: File) => {
-    const content = await file.text();
-    void act(() => writeFile(id, joinPath(cwd, file.name), content), `Uploaded ${file.name}`);
+    void act(() => uploadFile(id, joinPath(cwd, file.name), file), `Uploaded ${file.name}`);
   };
 
   const crumbs = cwd === '/' ? [] : cwd.slice(1).split('/');

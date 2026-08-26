@@ -53,3 +53,23 @@ describe('buildTarball', () => {
     expect(tar.toString('utf8', 0, 9)).toBe('etc/motd\0');
   });
 });
+
+// Uploads used to be read with file.text() and re-encoded as UTF-8, which replaces
+// every invalid byte with U+FFFD — a plugin JAR arrived corrupt while the panel
+// reported success (#263).
+describe('buildTarball with binary content', () => {
+  it('archives raw bytes without touching them', () => {
+    // 0xC3 0x28 is invalid UTF-8; 0x00 and 0xFF never survive a text round trip.
+    const bytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0xc3, 0x28, 0x00, 0xff, 0xfe]);
+    const tar = buildTarball('plugin.jar', bytes);
+
+    expect(parseInt(tar.toString('ascii', 124, 135).replace(/\0/g, '').trim(), 8)).toBe(bytes.length);
+    expect(tar.subarray(512, 512 + bytes.length).equals(bytes)).toBe(true);
+  });
+
+  it('still handles text, sized by its encoded byte length', () => {
+    // 'é' is two bytes in UTF-8 — the size field must count bytes, not characters.
+    const tar = buildTarball('note.txt', 'café');
+    expect(parseInt(tar.toString('ascii', 124, 135).replace(/\0/g, '').trim(), 8)).toBe(5);
+  });
+});

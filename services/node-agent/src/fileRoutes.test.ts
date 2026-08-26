@@ -25,6 +25,11 @@ class FakeRuntime implements Partial<ContainerRuntime> {
   async writeFile(id: string, path: string, content: string): Promise<void> {
     this.calls.push(`write:${id}:${path}:${content}`);
   }
+  written: Buffer | null = null;
+  async writeFileBytes(id: string, path: string, data: Buffer): Promise<void> {
+    this.calls.push(`writeBytes:${id}:${path}:${data.length}`);
+    this.written = data;
+  }
   async makeDir(id: string, path: string): Promise<void> {
     this.calls.push(`mkdir:${id}:${path}`);
   }
@@ -45,6 +50,30 @@ describe('file router', () => {
     app = express();
     app.use(express.json());
     app.use(createFileRouter(runtime as unknown as ContainerRuntime));
+  });
+
+  // The upload path must carry bytes, not a decoded string: text decoding destroys
+  // every byte that is not valid UTF-8, corrupting any binary upload (#263).
+  it('writes raw bytes verbatim on the binary route', async () => {
+    const bytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0xc3, 0x28, 0x00, 0xff]);
+
+    const res = await request(app)
+      .put('/files/c1/binary')
+      .query({ path: '/app/plugin.jar' })
+      .set('content-type', 'application/octet-stream')
+      .send(bytes);
+
+    expect(res.status).toBe(204);
+    expect(runtime.calls).toContain(`writeBytes:c1:/app/plugin.jar:${bytes.length}`);
+    expect(runtime.written?.equals(bytes)).toBe(true);
+  });
+
+  it('refuses a binary write with no path', async () => {
+    const res = await request(app)
+      .put('/files/c1/binary')
+      .set('content-type', 'application/octet-stream')
+      .send(Buffer.from([1, 2, 3]));
+    expect(res.status).toBe(400);
   });
 
   it('lists a directory', async () => {
