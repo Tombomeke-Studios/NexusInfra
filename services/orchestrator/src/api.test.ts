@@ -370,6 +370,70 @@ describe('deployment API', () => {
     });
   });
 
+  // Deploying from an egg (#231): the recipe lives on the server, so its rules
+  // apply to every caller rather than only the one who used the form.
+  describe('eggs', () => {
+    it('serves the catalogue', async () => {
+      const res = await request(app).get('/eggs');
+      expect(res.status).toBe(200);
+      const minecraft = res.body.find((e: { id: string }) => e.id === 'minecraft-java');
+      expect(minecraft).toBeDefined();
+      expect(minecraft.variables.length).toBeGreaterThan(0);
+    });
+
+    it('creates a server from an egg, deriving image, ports and environment', async () => {
+      await seedHealthyNode(repo);
+      const res = await request(app)
+        .post('/deployments')
+        .send({ name: 'mc', eggId: 'minecraft-java', eggValues: { TYPE: 'PAPER', MAX_PLAYERS: '40' } });
+
+      expect(res.status).toBe(201);
+      const config = await repo.getDeploymentConfig(res.body.id);
+      expect(config?.dockerImage).toBe('itzg/minecraft-server');
+      expect(config?.ports).toEqual({ '25565': '25565' });
+      expect(config?.env).toMatchObject({ TYPE: 'PAPER', MAX_PLAYERS: '40', EULA: 'TRUE' });
+      expect(config?.type).toBe('minecraft-java');
+    });
+
+    it('ignores an image and environment sent alongside an egg', async () => {
+      await seedHealthyNode(repo);
+      // Otherwise the egg is advisory and a caller can run anything it likes
+      // while still being labelled a Minecraft server.
+      const res = await request(app)
+        .post('/deployments')
+        .send({ name: 'mc', eggId: 'minecraft-java', dockerImage: 'evil/image', env: { LD_PRELOAD: '/tmp/x.so' } });
+
+      const config = await repo.getDeploymentConfig(res.body.id);
+      expect(config?.dockerImage).toBe('itzg/minecraft-server');
+      expect(config?.env).not.toHaveProperty('LD_PRELOAD');
+    });
+
+    it('rejects an unknown egg', async () => {
+      await seedHealthyNode(repo);
+      const res = await request(app).post('/deployments').send({ name: 'x', eggId: 'not-an-egg' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/egg/i);
+    });
+
+    it('reports an invalid answer against the field a person saw', async () => {
+      await seedHealthyNode(repo);
+      const res = await request(app)
+        .post('/deployments')
+        .send({ name: 'mc', eggId: 'minecraft-java', eggValues: { MAX_PLAYERS: 'lots' } });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/Player slots/);
+      expect(await repo.listDeployments()).toHaveLength(0);
+    });
+
+    it('still accepts a plain image deployment with no egg', async () => {
+      await seedHealthyNode(repo);
+      const res = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+      expect(res.status).toBe(201);
+      expect((await repo.getDeploymentConfig(res.body.id))?.dockerImage).toBe('nginx');
+    });
+  });
+
   it('stops a running deployment by emitting server.stop', async () => {
     await seedHealthyNode(repo);
     const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });

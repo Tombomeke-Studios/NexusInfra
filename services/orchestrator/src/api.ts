@@ -10,6 +10,7 @@ import { principalOf, requirePlatformAdmin } from './auth.js';
 import { accessGuard, accessOf, requirePermission } from './accessGuard.js';
 import { isGrantableRole, resolveRole } from './access.js';
 import { createServerTeamRouter } from './teams.js';
+import { EGGS, getEgg, buildEggDeployment, EggValidationError } from './eggs.js';
 import type { DeploymentDetail, NodeRecord, Repository, ServerConfigRecord, UpdateServerConfigInput } from './types.js';
 
 const SCHEDULE_ACTIONS = ['restart', 'backup'];
@@ -172,9 +173,38 @@ export function createApiRouter(deps: ApiDeps): Router {
   // Create a deployment: persist config, place it on the least-loaded node, and
   // command the agent to start it.
   router.post('/deployments', async (req: Request, res: Response) => {
-    const { name, dockerImage, ports, env, resourceLimits, autoRestart, type, nodeId } = req.body ?? {};
-    if (typeof name !== 'string' || typeof dockerImage !== 'string' || !name || !dockerImage) {
-      return res.status(400).json({ error: 'name and dockerImage are required' });
+    const { name, dockerImage, ports, env, resourceLimits, autoRestart, type, nodeId, eggId, eggValues } = req.body ?? {};
+    if (typeof name !== 'string' || !name) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+
+    // Deploying from an egg (#231): the recipe decides the image, ports and
+    // environment, so anything the caller sent for those is ignored rather than
+    // merged. An egg that could be overridden would be a suggestion, not a recipe
+    // — you could run any image at all and still be labelled a Minecraft server.
+    let spec: { dockerImage: string; ports: Record<string, string>; env: Record<string, string>; type: string };
+    if (eggId !== undefined) {
+      if (typeof eggId !== 'string') return res.status(400).json({ error: 'eggId must be a string' });
+      const egg = getEgg(eggId);
+      if (!egg) return res.status(400).json({ error: `unknown egg ${eggId}` });
+      try {
+        const built = buildEggDeployment(egg, (eggValues ?? {}) as Record<string, string>, ports as Record<string, string> | undefined);
+        spec = { dockerImage: built.dockerImage, ports: built.ports, env: built.env, type: egg.id };
+      } catch (err) {
+        // The egg names the field as the person saw it, so pass the message through.
+        if (err instanceof EggValidationError) return res.status(400).json({ error: err.message });
+        throw err;
+      }
+    } else {
+      if (typeof dockerImage !== 'string' || !dockerImage) {
+        return res.status(400).json({ error: 'dockerImage is required when no egg is given' });
+      }
+      spec = {
+        dockerImage,
+        ports: ports ?? {},
+        env: env ?? {},
+        type: typeof type === 'string' ? type : 'generic',
+      };
     }
 
     // Enforce the plan's server quota (hosted edition; no-op in community).
@@ -210,12 +240,12 @@ export function createApiRouter(deps: ApiDeps): Router {
     const config = await repo.createServerConfig({
       userId,
       name,
-      dockerImage,
-      ports: ports ?? {},
-      env: env ?? {},
+      dockerImage: spec.dockerImage,
+      ports: spec.ports,
+      env: spec.env,
       resourceLimits: resourceLimits && typeof resourceLimits === 'object' ? resourceLimits : {},
       autoRestart: Boolean(autoRestart),
-      type: typeof type === 'string' ? type : 'generic',
+      type: spec.type,
     });
     const deployment = await repo.createDeployment(config.id, node.id);
     await repo.appendDeploymentEvent(deployment.id, 'created', `placed on node ${node.id}`);
@@ -456,6 +486,13 @@ export function createApiRouter(deps: ApiDeps): Router {
     }
     await repo.deleteDeployment(detail.id);
     return res.status(204).end();
+  });
+
+  // The egg catalogue (#231) — what a server can be created from. Readable to any
+  // signed-in user: it is a menu, and the panel builds its form from it rather
+  // than carrying a second copy that could drift.
+  router.get('/eggs', (_req: Request, res: Response) => {
+    res.json(EGGS);
   });
 
   // Node health is what the Overview renders, so it stays readable to any

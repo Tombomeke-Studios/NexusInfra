@@ -1,11 +1,10 @@
 import { useEffect, useState, type FormEvent, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createDeployment, listNodes, type NodeView } from '../api';
+import { createDeployment, listNodes, listEggs, type NodeView, type Egg, type EggVariable } from '../api';
 import { IconPlus } from '../components/Icons';
 import { useToast } from '../components/Toast';
 import { InfoHint } from '../components/InfoHint';
 import { getDeploymentDefaults } from '../prefs';
-import { buildGameDeployment } from '../gameSpec';
 
 // New Deployment — ported from the redesign. The deploy sends name, image, ports,
 // env, the resource limits + restart policy, the kind and the chosen placement,
@@ -29,11 +28,11 @@ export function NewDeployment() {
   const [kind, setKind] = useState<'app' | 'game'>(defaults.type);
   const [name, setName] = useState('');
   const [dockerImage, setDockerImage] = useState('');
-  const [game, setGame] = useState('minecraft');
-  const [software, setSoftware] = useState('paper');
-  const [version, setVersion] = useState('1.21.4');
-  const [slots, setSlots] = useState(20);
-  const [motd, setMotd] = useState('');
+  const [eggs, setEggs] = useState<Egg[]>([]);
+  const [eggId, setEggId] = useState('');
+  // Answers keyed by variable; a key absent here means "use the egg's default",
+  // which is also how the API reads it.
+  const [eggValues, setEggValues] = useState<Record<string, string>>({});
   const [ports, setPorts] = useState<Row[]>([{ key: '', value: '' }]);
   const [env, setEnv] = useState<Row[]>([{ key: '', value: '' }]);
   const [nodes, setNodes] = useState<NodeView[]>([]);
@@ -54,21 +53,30 @@ export function NewDeployment() {
     listNodes()
       .then(setNodes)
       .catch(() => {});
+    listEggs()
+      .then((list) => {
+        setEggs(list);
+        setEggId((current) => current || list[0]?.id || '');
+      })
+      .catch(() => {});
   }, []);
+
+  const egg = eggs.find((e) => e.id === eggId) ?? null;
+  const setEggValue = (key: string, value: string) => setEggValues((prev) => ({ ...prev, [key]: value }));
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      // Games map to a real image + startup env/port; apps use the entered image + rows.
-      const g = kind === 'game' ? buildGameDeployment({ game, software, version, slots, motd }) : null;
+      // An egg decides its own image and environment server-side (#231); a plain
+      // application deployment carries the image and rows the form collected.
+      const fromEgg = kind === 'game' && egg;
       await createDeployment({
         name,
-        dockerImage: g ? g.dockerImage : dockerImage,
-        ports: g ? g.ports : rowsToRecord(ports),
-        env: g ? g.env : rowsToRecord(env),
-        type: kind,
+        ...(fromEgg
+          ? { eggId: egg.id, eggValues, ports: rowsToRecord(ports) }
+          : { dockerImage, ports: rowsToRecord(ports), env: rowsToRecord(env), type: 'app' }),
         // 'auto' means "you pick"; anything else is a deliberate pin the API honours (#254).
         nodeId: placement === 'auto' ? undefined : placement,
         autoRestart: restart !== 'no',
@@ -147,33 +155,57 @@ export function NewDeployment() {
           ) : (
             <div style={{ marginBottom: 16, padding: 16, border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', background: 'var(--color-surface-2)' }}>
               <div style={{ marginBottom: 14 }}>
-                <span className="field__label" style={{ fontSize: '.86rem' }}>Game</span>
-                <Seg options={['minecraft', 'valheim', 'rust', 'cs2'].map((g) => ({ value: g, label: g }))} value={game} onChange={setGame} />
+                <span className="field__label" style={{ fontSize: '.86rem' }}>
+                  Egg
+                  <InfoHint text="A ready-made recipe: which image to run, which port to publish and which settings the server understands. The orchestrator applies and validates it, so the options below are the ones this server actually has." label="Egg help" />
+                </span>
+                {eggs.length === 0 ? (
+                  <span className="subtle" style={{ fontSize: '.84rem' }}>Loading the catalogue…</span>
+                ) : (
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {eggs.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        data-ripple
+                        onClick={() => {
+                          setEggId(e.id);
+                          setEggValues({});
+                        }}
+                        className={`opt opt--card${eggId === e.id ? ' is-active' : ''}`}
+                        style={{ minWidth: 150, textAlign: 'left' }}
+                      >
+                        <span style={{ display: 'block', fontWeight: 650, fontSize: '.88rem' }}>{e.name}</span>
+                        <span className="mono" style={{ display: 'block', fontSize: '.72rem', opacity: 0.8 }}>{e.dockerImage}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-              <div style={{ marginBottom: 14 }}>
-                <span className="field__label" style={{ fontSize: '.86rem' }}>Software</span>
-                <Seg options={['paper', 'fabric', 'forge', 'vanilla', 'purpur'].map((s) => ({ value: s, label: s }))} value={software} onChange={setSoftware} />
-              </div>
-              <div style={{ marginBottom: 14 }}>
-                <span className="field__label" style={{ fontSize: '.86rem' }}>Version</span>
-                <Seg options={['1.21.4', '1.21.1', '1.20.6', '1.20.1', '1.19.4'].map((v) => ({ value: v, label: v }))} value={version} onChange={setVersion} />
-              </div>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <label style={{ flex: 'none', width: 120 }}>
-                  <span className="field__label" style={{ fontSize: '.8rem', color: 'var(--color-text-muted)' }}>Max players</span>
-                  <input className="input mono" type="number" min={1} max={500} value={slots} onChange={(e) => setSlots(Number(e.target.value))} />
-                </label>
-                <label style={{ flex: 1, minWidth: 0 }}>
-                  <span className="field__label" style={{ fontSize: '.8rem', color: 'var(--color-text-muted)' }}>MOTD</span>
-                  <input className="input" value={motd} onChange={(e) => setMotd(e.target.value)} placeholder="A NexusInfra server" />
-                </label>
-              </div>
+
+              {egg && (
+                <>
+                  <p className="subtle" style={{ margin: '0 0 16px', fontSize: '.84rem' }}>{egg.description}</p>
+                  {/* Rendered from the egg, so a new egg needs no dashboard change. */}
+                  {egg.variables.map((v) => (
+                    <EggField key={v.key} variable={v} value={eggValues[v.key] ?? v.default} onChange={(val) => setEggValue(v.key, val)} />
+                  ))}
+                  <span className="subtle" style={{ display: 'block', fontSize: '.8rem' }}>
+                    Publishes port {Object.keys(egg.ports)[0]} by default — override it under Ports below.
+                  </span>
+                </>
+              )}
             </div>
           )}
 
           {/* Ports & env */}
           <RowEditor legend="Ports" hint="host : container" keyPlaceholder="8080" valuePlaceholder="80" rows={ports} onChange={setPorts} />
-          <RowEditor legend="Environment" hint="KEY : value" keyPlaceholder="KEY" valuePlaceholder="value" rows={env} onChange={setEnv} />
+          {/* An egg owns its environment: the fields above are that environment,
+              validated server-side. Free-form rows here would let a caller set
+              anything at all, which is what moving the recipe off the client fixed. */}
+          {kind === 'app' && (
+            <RowEditor legend="Environment" hint="KEY : value" keyPlaceholder="KEY" valuePlaceholder="value" rows={env} onChange={setEnv} />
+          )}
 
           <div style={{ height: 1, background: 'var(--color-border)', margin: '6px 0 20px' }} />
 
@@ -279,6 +311,35 @@ export function NewDeployment() {
           </button>
         </form>
       </div>
+    </div>
+  );
+}
+
+/** One egg variable, rendered according to its kind. */
+function EggField({ variable, value, onChange }: { variable: EggVariable; value: string; onChange: (v: string) => void }) {
+  const id = `egg-${variable.key}`;
+  return (
+    <div className="field">
+      <label className="field__label" htmlFor={id}>
+        {variable.label}
+        <InfoHint text={variable.description} label={`${variable.label} help`} />
+      </label>
+      {variable.kind === 'choice' ? (
+        <Seg options={(variable.options ?? []).map((o) => ({ value: o, label: o }))} value={value} onChange={onChange} />
+      ) : variable.kind === 'boolean' ? (
+        <Toggle on={value === 'true'} onToggle={() => onChange(value === 'true' ? 'false' : 'true')} />
+      ) : (
+        <input
+          id={id}
+          className={variable.kind === 'integer' ? 'input mono' : 'input'}
+          type={variable.kind === 'integer' ? 'number' : 'text'}
+          min={variable.min}
+          max={variable.max}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
+      <span className="field__hint">{variable.description}</span>
     </div>
   );
 }

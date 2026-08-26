@@ -134,6 +134,13 @@ List accounts, and create one — the way people get access in the community edi
 `{ email, password, displayName?, platformRole? }` and returns `201`. Both return `403` for
 non-administrators.
 
+### `GET /eggs`
+
+The egg catalogue (#231) — the recipes a server can be created from. Each egg carries its
+`dockerImage`, default `ports`, the `dataPath` where the server keeps its files, and a list of
+`variables` (key, label, description, kind, default, and options/bounds). The panel renders its
+creation form from this, so adding an egg needs no dashboard change.
+
 ### `POST /deployments`
 
 Create and place a deployment.
@@ -156,6 +163,15 @@ Request:
 `name` and `dockerImage` are required; the rest are optional and stored with the server config (#106) so
 a re-start reuses them. The limits ride on `server.start` and the Node Agent enforces them on the
 container — RAM/CPU caps, swap, block-I/O weight, restart policy and the OOM killer (#107).
+
+**From an egg (#231):** send `eggId` and `eggValues` instead of `dockerImage`/`env`. The egg decides
+the image, the environment and the default ports; anything the caller sends for those is **ignored,
+not merged** — an egg that could be overridden would be a suggestion rather than a recipe, and you
+could run any image at all while still being labelled a Minecraft server. Unknown variables are
+dropped rather than passed through as arbitrary container environment, missing ones take their
+default, and the egg's `fixedEnv` (such as Minecraft's `EULA=TRUE`) is applied last. `ports` is still
+honoured, as the host-side override. `400` for an unknown egg or an invalid answer, with the message
+naming the field as the person saw it ("Player slots must be a whole number").
 
 `nodeId` pins the server to a specific node (#254); omit it to let the Orchestrator place it on the
 least-loaded healthy node. A pin is honoured or refused, never silently reassigned — `400` for an
