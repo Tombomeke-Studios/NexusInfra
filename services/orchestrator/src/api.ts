@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from 'express';
+import { Router, raw, type Request, type Response } from 'express';
 import { buildEnvelope, getInternalToken, INTERNAL_TOKEN_HEADER, isHosted, publishRabbitEvent, type EventEnvelope, type NexusInfraEvent } from 'shared';
 import { nodeHealth } from './nodeRegistry.js';
 import { selectNode as defaultSelectNode } from './nodeSelection.js';
@@ -13,6 +13,10 @@ import { createServerTeamRouter } from './teams.js';
 import type { DeploymentDetail, NodeRecord, Repository } from './types.js';
 
 const SCHEDULE_ACTIONS = ['restart', 'backup'];
+
+// Cap on a single file upload; the body is buffered here and again in the agent,
+// so an unbounded upload is an out-of-memory crash rather than a slow request.
+const MAX_UPLOAD_BYTES = process.env.MAX_UPLOAD_BYTES || '64mb';
 const isEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 
 // Short id suffix for an auto-generated node id (not security-sensitive).
@@ -498,6 +502,23 @@ export function createApiRouter(deps: ApiDeps): Router {
   router.post('/deployments/:id/files/dir', requirePermission('file.write'), (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}/dir`, asJson('POST', req.body))));
   router.post('/deployments/:id/files/rename', requirePermission('file.write'), (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}/rename`, asJson('POST', req.body))));
   router.delete('/deployments/:id/files', requirePermission('file.write'), (req, res) => withContainer(req, res, (c, a) => agentFetch(`${fileBase(a, c)}?path=${q(req.query.path)}`, { method: 'DELETE' })));
+
+  // Binary-safe upload (#263). The body stays raw bytes the whole way: reading an
+  // upload as text and re-encoding it destroys every byte that is not valid UTF-8,
+  // which silently corrupted every JAR, zip and image the panel uploaded.
+  router.put(
+    '/deployments/:id/files/binary',
+    requirePermission('file.write'),
+    raw({ type: 'application/octet-stream', limit: MAX_UPLOAD_BYTES }),
+    (req, res) =>
+      withContainer(req, res, (c, a) =>
+        agentFetch(`${fileBase(a, c)}/binary?path=${q(req.query.path)}`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/octet-stream' },
+          body: Buffer.isBuffer(req.body) ? new Uint8Array(req.body) : new Uint8Array(),
+        })
+      )
+  );
 
   // ── Console (#68) — run a one-shot command in the running container ─────────
   router.post('/deployments/:id/exec', requirePermission('console.exec'), (req, res) => withContainer(req, res, (c, a) => agentFetch(`${a}/exec/${c}`, asJson('POST', req.body))));

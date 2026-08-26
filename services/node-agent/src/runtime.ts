@@ -46,6 +46,8 @@ export interface ContainerRuntime {
   readFile(containerId: string, path: string): Promise<string>;
   /** Create or overwrite a text file. */
   writeFile(containerId: string, path: string, content: string): Promise<void>;
+  /** Create or overwrite a file from raw bytes — the binary-safe upload path (#263). */
+  writeFileBytes(containerId: string, path: string, data: Buffer): Promise<void>;
   /** Create a directory (and any missing parents). */
   makeDir(containerId: string, path: string): Promise<void>;
   /** Move/rename a file or directory. */
@@ -219,6 +221,14 @@ export class DockerodeRuntime implements ContainerRuntime {
   }
 
   async writeFile(containerId: string, path: string, content: string): Promise<void> {
+    return this.putFile(containerId, path, content);
+  }
+
+  async writeFileBytes(containerId: string, path: string, data: Buffer): Promise<void> {
+    return this.putFile(containerId, path, data);
+  }
+
+  private async putFile(containerId: string, path: string, content: string | Buffer): Promise<void> {
     const file = normalizeContainerPath(path);
     const slash = file.lastIndexOf('/');
     const dir = slash > 0 ? file.slice(0, slash) : '/';

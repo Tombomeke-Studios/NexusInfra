@@ -223,7 +223,8 @@ form on the agent, and file operations run as argv arrays (no shell) so a path c
 |---|---|
 | `GET /deployments/:id/files?path=/dir` | List a directory — `[{ name, kind: 'file'\|'dir', size }]`, directories first |
 | `GET /deployments/:id/files/content?path=/f` | Read a text file — `{ path, content }` |
-| `PUT /deployments/:id/files/content` | Create/overwrite a file — body `{ path, content }` → `204` |
+| `PUT /deployments/:id/files/content` | Create/overwrite a text file — body `{ path, content }` → `204` |
+| `PUT /deployments/:id/files/binary?path=/f` | Upload raw bytes — `Content-Type: application/octet-stream`, body is the file → `204`. The binary-safe path (#263): text encoding destroys any byte that is not valid UTF-8, so uploads never travel as JSON. Capped by `MAX_UPLOAD_BYTES` (default `64mb`), over which the request is refused |
 | `POST /deployments/:id/files/dir` | Make a directory — body `{ path }` → `201` |
 | `POST /deployments/:id/files/rename` | Move/rename — body `{ from, to }` |
 | `DELETE /deployments/:id/files?path=/f` | Delete a file or directory (recursive) → `204` |
