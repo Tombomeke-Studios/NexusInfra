@@ -256,6 +256,27 @@ scrolling log lines describing events that never happened.
 - [ ] The hosted billing-bridge image contradicts its own edition stamp (#292)
 - [x] IO priority makes every container start fail on hosts without `io.weight` — detect and skip it (#288)
 
+### Panel — replace the browser's own dialogs
+
+- [ ] Replace all 16 `window.confirm` / `window.prompt` calls with in-app dialogs (#299)
+
+### 🏨 Hosted edition — what is missing (`edition:hosted`)
+
+Found while running the hosted release bundle live for the first time (2026-08-26). Community is in
+far better shape than hosted; these are the gaps between "the code exists" and "a customer could use
+it". Every item carries the `edition:hosted` label on GitHub.
+
+- [ ] The credit balance never refreshes on its own — a stale balance is a wrong answer stated with confidence (#296)
+- [ ] Creating a server is never charged and the form shows no plan entitlements (RAM ceiling, storage, backups, databases) (#297)
+- [ ] The FinVault integration has never been exercised end to end — written, not verified; a mismatched message key fails *silently* (#298)
+- [ ] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)
+- [ ] `docs/billing.md` is missing from the documentation ownership table (#248)
+
+> **Labels.** Issues now carry `edition:community`, `edition:hosted` or `edition:both` alongside
+> their `type:*` label, so it is clear at a glance which product an item belongs to. Almost
+> everything is `edition:both` — one codebase — which is exactly why the hosted-only gaps above were
+> easy to lose sight of.
+
 ### Small cleanups / follow-ups
 
 - [x] Remove the default DB engine from Preferences (engine is chosen at creation) (#150)
