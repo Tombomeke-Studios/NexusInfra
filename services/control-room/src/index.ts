@@ -1,10 +1,12 @@
 import express from 'express';
+import { readDlq, type QueueProbe } from './dlq.js';
 import {
   assertEditionIsRunnable,
   buildInfo,
   consumeRabbitQueue,
   startHeartbeat,
   readPayload,
+  connectRabbitMQ,
   type EventEnvelope,
 } from 'shared';
 import { DEGRADED_MS, Monitor, OFFLINE_MS } from './monitor.js';
@@ -39,8 +41,16 @@ app.get('/health', (_req, res) => {
 
 // Live snapshot: one entry per heartbeat source with its derived status and
 // uptime %. Shape is backward-compatible — `uptimePercent` was added (#165).
-app.get('/status', (_req, res) => {
-  res.json({ monitored: monitor.snapshot(Date.now()), thresholds: { degradedMs: DEGRADED_MS, offlineMs: OFFLINE_MS } });
+app.get('/status', async (_req, res) => {
+  res.json({
+    monitored: monitor.snapshot(Date.now()),
+    thresholds: { degradedMs: DEGRADED_MS, offlineMs: OFFLINE_MS },
+    // Whether anything failed to process (#243). Consumers dead-letter on error
+    // and nothing used to read that queue, so events could pile up unnoticed
+    // indefinitely — the Control Room already answers "is everything alive", and
+    // this is the same question about the messages.
+    deadLetters: await readDlq(probe),
+  });
 });
 
 // Reliability detail: cumulative uptime plus recent status transitions per source.
@@ -49,6 +59,11 @@ app.get('/uptime', (_req, res) => {
 });
 
 app.listen(PORT, () => console.log(`[Control Room] HTTP listening on http://localhost:${PORT}`));
+
+// The channel, once connected, used only to ask the dead-letter queue's depth
+// (#243). Null until then, which `readDlq` reports as unknown rather than as
+// "nothing failed" — a claim nobody should make without having looked.
+let probe: QueueProbe | null = null;
 
 // ── Event bus: consume heartbeats, emit our own ───────────────────────────────
 async function start() {
@@ -69,6 +84,12 @@ async function start() {
         monitor.heartbeat(source, Date.now());
       }
     );
+
+    // One channel, kept for passive queue inspection. checkQueue consumes
+    // nothing: these messages are evidence, and reading them properly would mean
+    // requeueing and mutating their redelivery state.
+    const { channel } = await connectRabbitMQ();
+    probe = channel as QueueProbe;
 
     // Emit our own heartbeat so the Control Room appears in its own status view.
     startHeartbeat('control-room', 1000);

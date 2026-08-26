@@ -93,4 +93,39 @@ describe('Overview', () => {
     expect(await screen.findByText('maintenance')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /exit maintenance/i })).toBeInTheDocument();
   });
+  // Consumers dead-letter on failure and nothing read that queue, so events could
+  // pile up unnoticed indefinitely (#243).
+  it('warns when events are stuck in the dead-letter queue', async () => {
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () =>
+          String(url).includes('/monitoring')
+            ? { monitored: [], reachable: true, deadLetters: { status: 'messages-waiting', depth: 3 } }
+            : jsonFor(url),
+      } as Response)
+    );
+    render(<Overview />, { wrapper: MemoryRouter });
+
+    expect(await screen.findByText(/could not be processed/)).toBeInTheDocument();
+  });
+
+  it('says nothing at all when the queue is empty', async () => {
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () =>
+          String(url).includes('/monitoring')
+            ? { monitored: [], reachable: true, deadLetters: { status: 'empty', depth: 0 } }
+            : jsonFor(url),
+      } as Response)
+    );
+    render(<Overview />, { wrapper: MemoryRouter });
+    await screen.findByText('node-local');
+
+    // A healthy queue does not need a line of its own.
+    expect(screen.queryByText(/dead-letter queue/)).not.toBeInTheDocument();
+  });
 });

@@ -32,7 +32,14 @@ Live monitoring snapshot of every heartbeat source seen on the bus.
 }
 ```
 
-`status` ∈ `healthy | degraded | offline` derived from last-seen age. `uptimePercent` (#165) is the
+`status` ∈ `healthy | degraded | offline` derived from last-seen age.
+
+The response also carries `deadLetters` (#243): `{ status: 'empty' | 'messages-waiting' | 'unknown',
+depth }`. Consumers `nack` without requeue on failure, so a message that cannot be processed lands in
+`finvault.events.dlq` — which nothing read and nothing reported on, meaning events could pile up
+unnoticed indefinitely. The depth is read passively (`checkQueue` consumes nothing), and a broker that
+cannot be asked reports `unknown` rather than `0`: not knowing and knowing nothing failed are
+different claims, and only one of them is safe to make without looking. `uptimePercent` (#165) is the
 share of observed time the source was healthy, since it was first seen.
 
 ### `GET /uptime`
