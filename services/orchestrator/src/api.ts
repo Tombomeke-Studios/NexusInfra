@@ -10,7 +10,7 @@ import { principalOf, requirePlatformAdmin } from './auth.js';
 import { accessGuard, accessOf, requirePermission } from './accessGuard.js';
 import { isGrantableRole, resolveRole } from './access.js';
 import { createServerTeamRouter } from './teams.js';
-import type { DeploymentDetail, NodeRecord, Repository } from './types.js';
+import type { DeploymentDetail, NodeRecord, Repository, ServerConfigRecord, UpdateServerConfigInput } from './types.js';
 
 const SCHEDULE_ACTIONS = ['restart', 'backup'];
 
@@ -277,6 +277,52 @@ export function createApiRouter(deps: ApiDeps): Router {
 
   router.get('/deployments/:id', requirePermission('server.view'), (req: Request, res: Response) => {
     res.json({ ...accessOf(req).deployment, role: accessOf(req).role });
+  });
+
+  // Change an existing server's configuration (#220). Before this a server was
+  // frozen at creation: correcting a typo in a name meant deleting it, and its
+  // databases, backups, schedules and subusers went with it.
+  //
+  // Deliberately does not touch the running container. A config change that
+  // silently restarted someone's server would be a worse surprise than one that
+  // waits; the panel says the change lands on the next start.
+  router.patch('/deployments/:id', requirePermission('server.edit'), async (req: Request, res: Response) => {
+    const { name, dockerImage, ports, env, resourceLimits, autoRestart } = req.body ?? {};
+    const patch: UpdateServerConfigInput = {};
+
+    if (name !== undefined) {
+      if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'name cannot be empty' });
+      patch.name = name.trim();
+    }
+    if (dockerImage !== undefined) {
+      if (typeof dockerImage !== 'string' || !dockerImage.trim()) return res.status(400).json({ error: 'dockerImage cannot be empty' });
+      patch.dockerImage = dockerImage.trim();
+    }
+    const isRecord = (v: unknown) => v !== null && typeof v === 'object' && !Array.isArray(v);
+    if (ports !== undefined) {
+      if (!isRecord(ports)) return res.status(400).json({ error: 'ports must be an object' });
+      patch.ports = ports as Record<string, string>;
+    }
+    if (env !== undefined) {
+      if (!isRecord(env)) return res.status(400).json({ error: 'env must be an object' });
+      patch.env = env as Record<string, string>;
+    }
+    if (resourceLimits !== undefined) {
+      if (!isRecord(resourceLimits)) return res.status(400).json({ error: 'resourceLimits must be an object' });
+      patch.resourceLimits = resourceLimits as ServerConfigRecord['resourceLimits'];
+    }
+    if (autoRestart !== undefined) patch.autoRestart = Boolean(autoRestart);
+
+    const updated = await repo.updateDeploymentConfig(req.params.id, patch);
+    if (!updated) return res.status(404).json({ error: 'deployment not found' });
+
+    await repo.appendDeploymentEvent(
+      req.params.id,
+      'config-updated',
+      `configuration changed (${Object.keys(patch).join(', ') || 'no fields'})`
+    );
+    const detail = await repo.getDeployment(req.params.id);
+    return res.json({ ...detail, role: accessOf(req).role });
   });
 
   // The audit trail, newest first (#223). Every lifecycle change has written a

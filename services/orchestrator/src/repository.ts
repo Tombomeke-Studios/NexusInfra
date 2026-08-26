@@ -13,6 +13,7 @@ import type {
   DeploymentView,
   NodeRecord,
   RegisterNodeInput,
+  UpdateServerConfigInput,
   Repository,
   ServerBackupRecord,
   ServerConfigRecord,
@@ -306,6 +307,25 @@ export class InMemoryRepository implements Repository {
     for (const [key, su] of this.subusers) if (su.deploymentId === id) this.subusers.delete(key);
     this.deployments.delete(id);
     this.configs.delete(deployment.serverConfigId);
+  }
+
+  async updateDeploymentConfig(deploymentId: string, patch: UpdateServerConfigInput): Promise<ServerConfigRecord | null> {
+    const deployment = this.deployments.get(deploymentId);
+    if (!deployment) return null;
+    const config = this.configs.get(deployment.serverConfigId);
+    if (!config) return null;
+    // Undefined means "leave it": a partial edit must not blank the rest.
+    const next: ServerConfigRecord = {
+      ...config,
+      name: patch.name ?? config.name,
+      dockerImage: patch.dockerImage ?? config.dockerImage,
+      ports: patch.ports ?? config.ports,
+      env: patch.env ?? config.env,
+      resourceLimits: patch.resourceLimits ?? config.resourceLimits,
+      autoRestart: patch.autoRestart ?? config.autoRestart,
+    };
+    this.configs.set(config.id, next);
+    return next;
   }
 
   async getDeploymentConfig(deploymentId: string): Promise<ServerConfigRecord | null> {

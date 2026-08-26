@@ -292,6 +292,84 @@ describe('deployment API', () => {
     });
   });
 
+  // A server's configuration was frozen at creation: fixing a typo in a name, or
+  // adding an environment variable, meant deleting the server and losing its
+  // databases, backups, schedules and subusers with it (#220).
+  describe('editing a server', () => {
+    async function makeServer() {
+      await seedHealthyNode(repo);
+      const created = await request(app)
+        .post('/deployments')
+        .send({ name: 'svc', dockerImage: 'nginx', ports: { '8080': '80' }, env: { A: '1' } });
+      return created.body.id as string;
+    }
+
+    it('updates the stored configuration', async () => {
+      const id = await makeServer();
+      const res = await request(app).patch(`/deployments/${id}`).send({
+        name: 'renamed',
+        dockerImage: 'nginx:alpine',
+        ports: { '9090': '80' },
+        env: { A: '2', B: 'new' },
+        autoRestart: true,
+        resourceLimits: { cpuPercent: 25 },
+      });
+
+      expect(res.status).toBe(200);
+      const config = await repo.getDeploymentConfig(id);
+      expect(config?.name).toBe('renamed');
+      expect(config?.dockerImage).toBe('nginx:alpine');
+      expect(config?.ports).toEqual({ '9090': '80' });
+      expect(config?.env).toEqual({ A: '2', B: 'new' });
+      expect(config?.autoRestart).toBe(true);
+      expect(config?.resourceLimits).toEqual({ cpuPercent: 25 });
+    });
+
+    it('leaves omitted fields alone', async () => {
+      const id = await makeServer();
+      await request(app).patch(`/deployments/${id}`).send({ name: 'renamed' });
+
+      const config = await repo.getDeploymentConfig(id);
+      expect(config?.name).toBe('renamed');
+      expect(config?.dockerImage).toBe('nginx'); // untouched
+      expect(config?.ports).toEqual({ '8080': '80' });
+    });
+
+    it('records the change in the audit trail', async () => {
+      const id = await makeServer();
+      await request(app).patch(`/deployments/${id}`).send({ name: 'renamed' });
+
+      const detail = await repo.getDeployment(id);
+      expect(detail?.events.map((e) => e.event)).toContain('config-updated');
+    });
+
+    // Changing config does not touch the running container: the panel says the
+    // change lands on the next start, and the API must not quietly restart it.
+    it('does not restart the server', async () => {
+      const id = await makeServer();
+      await repo.updateDeploymentStatus(id, { status: 'running', containerId: 'abc' });
+      published.length = 0;
+
+      await request(app).patch(`/deployments/${id}`).send({ dockerImage: 'nginx:alpine' });
+      expect(published.some((p) => p.key.startsWith('infra.server.'))).toBe(false);
+    });
+
+    it('rejects an empty name or image', async () => {
+      const id = await makeServer();
+      expect((await request(app).patch(`/deployments/${id}`).send({ name: '   ' })).status).toBe(400);
+      expect((await request(app).patch(`/deployments/${id}`).send({ dockerImage: '' })).status).toBe(400);
+    });
+
+    it('is refused to an operator, who may run the server but not redefine it', async () => {
+      const id = await makeServer();
+      await repo.createUser({ id: 'user-op', email: 'op@example.com', displayName: 'op', passwordHash: '!', platformRole: 'user' });
+      await repo.createSubuser({ deploymentId: id, email: 'op@example.com', role: 'operator', userId: 'user-op', status: 'active' });
+
+      const opApp = buildApp(repo, published, { id: 'user-op', platformRole: 'user' });
+      expect((await request(opApp).patch(`/deployments/${id}`).send({ name: 'theirs' })).status).toBe(403);
+    });
+  });
+
   it('stops a running deployment by emitting server.stop', async () => {
     await seedHealthyNode(repo);
     const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });

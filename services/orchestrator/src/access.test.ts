@@ -41,6 +41,8 @@ describe('the permission matrix', () => {
     expect(can('operator', 'database.manage')).toBe(false);
     expect(can('operator', 'schedule.manage')).toBe(false);
     expect(can('operator', 'subuser.manage')).toBe(false);
+    // Running a server is not the same as redefining it (#220).
+    expect(can('operator', 'server.edit')).toBe(false);
     expect(can('operator', 'server.delete')).toBe(false);
   });
 
@@ -48,6 +50,8 @@ describe('the permission matrix', () => {
     expect(can('admin', 'file.write')).toBe(true);
     expect(can('admin', 'subuser.manage')).toBe(true);
     expect(can('admin', 'backup.manage')).toBe(true);
+    // Changing the config is a management action, not a destructive one (#220).
+    expect(can('admin', 'server.edit')).toBe(true);
     expect(can('admin', 'server.delete')).toBe(false);
   });
 

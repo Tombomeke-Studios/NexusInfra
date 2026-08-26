@@ -75,7 +75,7 @@ immediately rather than whenever the holder's token happens to expire.
 |---|---|
 | **viewer** | See the server, its logs and its resource usage |
 | **operator** | The above, plus start / stop / restart, the console, and reading files |
-| **admin** | The above, plus writing files, databases, backups, schedules and managing access |
+| **admin** | The above, plus writing files, databases, backups, schedules, managing access, and editing the server's configuration (#220) |
 | **owner** | The above, plus deleting the server |
 
 Design decisions worth stating explicitly:

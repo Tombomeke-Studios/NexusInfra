@@ -14,6 +14,7 @@ import type {
   CreateUserInput,
   NodeRecord,
   RegisterNodeInput,
+  UpdateServerConfigInput,
   Repository,
   ResourceLimits,
   ServerBackupRecord,
@@ -443,6 +444,26 @@ export class PrismaRepository implements Repository {
       type: d.serverConfig.type,
       resourceLimits: parseLimits(d.serverConfig.resourceLimits),
     }));
+  }
+
+  async updateDeploymentConfig(deploymentId: string, patch: UpdateServerConfigInput): Promise<ServerConfigRecord | null> {
+    const d = await this.client.deployment.findUnique({ where: { id: deploymentId } });
+    if (!d) return null;
+    // Undefined means "leave it": only keys explicitly provided are written, so a
+    // partial edit cannot blank the rest of the config.
+    const provided = <T>(v: T | undefined): v is T => v !== undefined;
+    const updated = await this.client.serverConfig.update({
+      where: { id: d.serverConfigId },
+      data: {
+        ...(provided(patch.name) ? { name: patch.name } : {}),
+        ...(provided(patch.dockerImage) ? { dockerImage: patch.dockerImage } : {}),
+        ...(provided(patch.ports) ? { ports: JSON.stringify(patch.ports) } : {}),
+        ...(provided(patch.env) ? { environmentVars: JSON.stringify(patch.env) } : {}),
+        ...(provided(patch.resourceLimits) ? { resourceLimits: JSON.stringify(patch.resourceLimits) } : {}),
+        ...(provided(patch.autoRestart) ? { autoRestart: patch.autoRestart } : {}),
+      },
+    });
+    return toConfigRecord(updated);
   }
 
   async getDeploymentConfig(deploymentId: string): Promise<ServerConfigRecord | null> {

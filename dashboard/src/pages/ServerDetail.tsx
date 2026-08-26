@@ -6,6 +6,7 @@ import {
   stopDeployment,
   restartDeployment,
   deleteDeployment,
+  updateDeployment,
   killDeployment,
   streamLogs,
   streamStats,
@@ -207,7 +208,7 @@ export function ServerDetail() {
       {activeTab === 'subusers' && <SubusersTab id={d.id} />}
       {activeTab === 'startup' && <StartupTab image={d.dockerImage} env={d.env ?? {}} autoRestart={d.autoRestart ?? false} />}
       {activeTab === 'activity' && <ActivityTab id={d.id} />}
-      {activeTab === 'settings' && <SettingsTab id={d.id} teamId={d.teamId ?? null} onDelete={onDelete} />}
+      {activeTab === 'settings' && <SettingsTab deployment={d} allows={allows} onDelete={onDelete} onSaved={load} />}
     </div>
   );
 }
@@ -1148,8 +1149,116 @@ function StartupTab({ image, env, autoRestart }: { image: string; env: Record<st
   );
 }
 
-function SettingsTab({ id, teamId, onDelete }: { id: string; teamId: string | null; onDelete: () => void }) {
+/**
+ * Change a server's configuration after creation (#220). Until this existed the
+ * config was frozen: correcting a typo in a name meant deleting the server, and
+ * its databases, backups, schedules and subusers went with it.
+ *
+ * Nothing here restarts the container. A settings form that silently bounced
+ * someone's running server would be a worse surprise than one that waits, so the
+ * change is stored and applied the next time it starts — and the form says so.
+ */
+function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; onSaved: () => Promise<void> | void }) {
   const { toast } = useToast();
+  const [name, setName] = useState(deployment.name);
+  const [image, setImage] = useState(deployment.dockerImage);
+  const [ports, setPorts] = useState(() => JSON.stringify(deployment.ports ?? {}, null, 2));
+  const [env, setEnv] = useState(() => JSON.stringify(deployment.env ?? {}, null, 2));
+  const [autoRestart, setAutoRestart] = useState(Boolean(deployment.autoRestart));
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const parseMap = (text: string, label: string): Record<string, string> => {
+    const value: unknown = JSON.parse(text || '{}');
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be a JSON object`);
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, String(v)]));
+  };
+
+  const save = async () => {
+    setError(null);
+    let parsedPorts: Record<string, string>;
+    let parsedEnv: Record<string, string>;
+    try {
+      parsedPorts = parseMap(ports, 'Ports');
+      parsedEnv = parseMap(env, 'Environment');
+    } catch (e) {
+      return setError(e instanceof Error ? e.message : 'Ports and environment must be JSON objects');
+    }
+    if (!name.trim()) return setError('A name is required');
+    if (!image.trim()) return setError('An image is required');
+
+    setBusy(true);
+    try {
+      await updateDeployment(deployment.id, {
+        name: name.trim(),
+        dockerImage: image.trim(),
+        ports: parsedPorts,
+        env: parsedEnv,
+        autoRestart,
+      });
+      toast('Configuration saved — it applies the next time this server starts', 'success', 'Settings');
+      await onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save the configuration');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ padding: '20px 22px', marginBottom: 18 }}>
+      <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6 }}>
+        Server configuration
+        <InfoHint text="Name, image, published ports and environment. Saving stores the change; the running container is left alone and picks it up the next time the server starts." label="Server configuration help" />
+      </strong>
+      <p className="subtle" style={{ margin: '0 0 16px', fontSize: '.84rem' }}>
+        Changes take effect the next time this server starts — nothing is restarted for you.
+      </p>
+
+      <div className="field">
+        <label className="field__label" htmlFor="cfg-name">Name</label>
+        <input id="cfg-name" className="input" value={name} onChange={(e) => setName(e.target.value)} />
+      </div>
+      <div className="field">
+        <label className="field__label" htmlFor="cfg-image">Docker image</label>
+        <input id="cfg-image" className="input mono" value={image} onChange={(e) => setImage(e.target.value)} />
+      </div>
+      <div className="field">
+        <label className="field__label" htmlFor="cfg-ports">Ports <span className="subtle" style={{ fontWeight: 400 }}>(host : container, as JSON)</span></label>
+        <textarea id="cfg-ports" className="input mono" rows={3} value={ports} onChange={(e) => setPorts(e.target.value)} style={{ resize: 'vertical' }} />
+      </div>
+      <div className="field">
+        <label className="field__label" htmlFor="cfg-env">Environment <span className="subtle" style={{ fontWeight: 400 }}>(as JSON)</span></label>
+        <textarea id="cfg-env" className="input mono" rows={4} value={env} onChange={(e) => setEnv(e.target.value)} style={{ resize: 'vertical' }} />
+      </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, fontSize: '.86rem' }}>
+        <input type="checkbox" checked={autoRestart} onChange={(e) => setAutoRestart(e.target.checked)} />
+        Restart automatically if it stops unexpectedly
+      </label>
+
+      {error && <p role="alert" className="alert alert--error" style={{ marginBottom: 14 }}>{error}</p>}
+
+      <button className="btn btn--primary btn--sm" data-ripple data-burst="success" disabled={busy} onClick={() => void save()}>
+        {busy ? 'Saving…' : 'Save configuration'}
+      </button>
+    </div>
+  );
+}
+
+function SettingsTab({
+  deployment,
+  allows,
+  onDelete,
+  onSaved,
+}: {
+  deployment: DeploymentDetail;
+  allows: (p: ServerPermission) => boolean;
+  onDelete: () => void;
+  onSaved: () => Promise<void> | void;
+}) {
+  const { toast } = useToast();
+  const id = deployment.id;
+  const teamId = deployment.teamId ?? null;
   const [teams, setTeams] = useState<Team[]>([]);
   const [team, setTeam] = useState<string>(teamId ?? '');
 
@@ -1172,6 +1281,7 @@ function SettingsTab({ id, teamId, onDelete }: { id: string; teamId: string | nu
 
   return (
     <>
+      {allows('server.edit') && <ConfigEditor deployment={deployment} onSaved={onSaved} />}
       <div className="card" style={{ padding: '20px 22px', marginBottom: 18 }}>
         <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6 }}>
           Share with a team

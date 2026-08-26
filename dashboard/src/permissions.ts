@@ -23,6 +23,7 @@ export type ServerPermission =
   | 'backup.manage'
   | 'schedule.manage'
   | 'subuser.manage'
+  | 'server.edit'
   | 'server.delete';
 
 const VIEWER: ServerPermission[] = ['server.view', 'server.logs', 'server.stats'];
@@ -37,7 +38,7 @@ const OPERATOR: ServerPermission[] = [
   'file.read',
 ];
 
-const ADMIN: ServerPermission[] = [...OPERATOR, 'file.write', 'database.manage', 'backup.manage', 'schedule.manage', 'subuser.manage'];
+const ADMIN: ServerPermission[] = [...OPERATOR, 'file.write', 'database.manage', 'backup.manage', 'schedule.manage', 'subuser.manage', 'server.edit'];
 
 const OWNER: ServerPermission[] = [...ADMIN, 'server.delete'];
 

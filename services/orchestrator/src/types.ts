@@ -275,6 +275,20 @@ export interface DeploymentStatusPatch {
  * (production, SQLite) and InMemoryRepository (tests, and a DB-less local mode).
  */
 /** Register/relabel a node's human metadata without touching its liveness/resources (#113). */
+/**
+ * A configuration change to an existing server (#220). Every field is optional and
+ * an omitted one is left alone — a server's config used to be frozen at creation,
+ * so fixing a typo meant deleting it and losing its databases and backups with it.
+ */
+export interface UpdateServerConfigInput {
+  name?: string;
+  dockerImage?: string;
+  ports?: Record<string, string>;
+  env?: Record<string, string>;
+  resourceLimits?: ResourceLimits;
+  autoRestart?: boolean;
+}
+
 export interface RegisterNodeInput {
   id: string;
   name?: string;
@@ -328,6 +342,8 @@ export interface Repository {
    */
   listDeploymentsForUser(user: { id: string; email: string }): Promise<DeploymentView[]>;
   getDeployment(id: string): Promise<DeploymentDetail | null>;
+  /** Change an existing server's configuration; takes effect on its next start (#220). */
+  updateDeploymentConfig(deploymentId: string, patch: UpdateServerConfigInput): Promise<ServerConfigRecord | null>;
   /** The server config behind a deployment (image/ports/env), for re-starting it. */
   getDeploymentConfig(deploymentId: string): Promise<ServerConfigRecord | null>;
   /** Remove a deployment and all of its child records (events/databases/backups/schedules/subusers). */
