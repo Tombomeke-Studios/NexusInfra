@@ -13,6 +13,8 @@ import type {
   DeploymentView,
   NodeRecord,
   RegisterNodeInput,
+  SessionRecord,
+  CreateSessionInput,
   UpdateServerConfigInput,
   Repository,
   ServerBackupRecord,
@@ -160,6 +162,48 @@ export class InMemoryRepository implements Repository {
 
   async listNodes(): Promise<NodeRecord[]> {
     return Array.from(this.nodes.values()).sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  // ── Sessions (#227) ────────────────────────────────────────────────────────
+  private sessions = new Map<string, SessionRecord>();
+
+  async createSession(input: CreateSessionInput): Promise<SessionRecord> {
+    const at = new Date().toISOString();
+    const session: SessionRecord = {
+      id: randomUUID(),
+      userId: input.userId,
+      createdAt: at,
+      lastSeenAt: at,
+      userAgent: input.userAgent ?? null,
+      ipAddress: input.ipAddress ?? null,
+    };
+    this.sessions.set(session.id, session);
+    return session;
+  }
+
+  async getSession(id: string): Promise<SessionRecord | null> {
+    return this.sessions.get(id) ?? null;
+  }
+
+  async listSessions(userId: string): Promise<SessionRecord[]> {
+    return Array.from(this.sessions.values())
+      .filter((s) => s.userId === userId)
+      .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt));
+  }
+
+  async deleteSession(id: string): Promise<void> {
+    this.sessions.delete(id);
+  }
+
+  async deleteSessionsForUser(userId: string, exceptId?: string): Promise<void> {
+    for (const [id, session] of this.sessions) {
+      if (session.userId === userId && id !== exceptId) this.sessions.delete(id);
+    }
+  }
+
+  async touchSession(id: string, at: string): Promise<void> {
+    const session = this.sessions.get(id);
+    if (session) this.sessions.set(id, { ...session, lastSeenAt: at });
   }
 
   async registerNode(input: RegisterNodeInput): Promise<NodeRecord> {

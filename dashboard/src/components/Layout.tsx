@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { getCurrentUser, type CurrentUser } from '../api';
+import { getCurrentUser, logoutSession, type CurrentUser } from '../api';
 import { logout } from '../session';
 import { useEdition } from '../edition';
 import { BILLING_INCLUDED } from '../buildEdition';
@@ -38,6 +38,11 @@ export function Layout() {
   };
 
   const signOut = () => {
+    // Ends the session server-side too (#227). Clearing the token locally used to
+    // be the whole of "sign out", which left it working for anyone holding a copy
+    // until it expired. Fire-and-forget: a failure here must not trap someone on a
+    // page they are trying to leave, and the local token goes either way.
+    void logoutSession().catch(() => undefined);
     logout();
     navigate('/login', { replace: true });
   };

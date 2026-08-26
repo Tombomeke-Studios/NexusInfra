@@ -78,6 +78,30 @@ immediately rather than whenever the holder's token happens to expire.
 | **admin** | The above, plus writing files, databases, backups, schedules, managing access, and editing the server's configuration (#220) |
 | **owner** | The above, plus deleting the server |
 
+### Credential checks are rate limited (#225)
+
+The API Gateway limits per IP, and the dashboard's nginx proxies `/api` straight to the Orchestrator,
+around it — so login was unlimited against bcrypt hashes, whose work factor slows an attacker by a
+constant rather than by enough.
+
+Attempts are now measured per address **and** per account. Per-IP alone is defeated by a botnet
+spreading one password list; per-account alone lets one machine work through a list of accounts. Only
+failures count, and a success clears them, so someone signing in normally never meets the limit. A
+lockout answers exactly the same `401` as a wrong password, for the same reason unknown accounts do:
+a distinct reply would confirm the account is worth attacking.
+
+### Sessions can be ended (#227)
+
+A JWT is stateless. Before this, a token remained valid until it expired regardless of what happened
+to the account behind it — changing a password did not sign other devices out, and "sign out" was a
+client-side gesture that left the token working for anyone holding a copy.
+
+Tokens now name a session row, which `requireAuth` verifies still exists. That costs one indexed read
+per authenticated request and buys the ability to answer truthfully: sign out ends *this* session,
+changing a password ends every *other* one, and a person can see where they are signed in and end any
+of it. A token naming no session is refused outright, because an unrevocable token is what this
+replaced.
+
 ### Importing a host directory (#268)
 
 Mounting an existing directory into a server is the most dangerous capability in the panel, because

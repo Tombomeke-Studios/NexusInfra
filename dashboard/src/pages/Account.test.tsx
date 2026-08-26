@@ -10,6 +10,11 @@ import { ToastProvider } from '../components/Toast';
 
 const ME = { id: 'u1', email: 'ada@example.com', displayName: 'Ada', platformRole: 'user', createdAt: new Date().toISOString() };
 
+const SESSIONS = [
+  { id: 's1', createdAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(), userAgent: 'This browser', ipAddress: '10.0.0.1', current: true },
+  { id: 's2', createdAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(), userAgent: 'Firefox on the laptop', ipAddress: '10.0.0.9', current: false },
+];
+
 function renderAccount() {
   render(
     <MemoryRouter>
@@ -26,7 +31,9 @@ describe('Account', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', fetchMock);
     fetchMock.mockReset();
-    fetchMock.mockImplementation(() => Promise.resolve({ ok: true, status: 200, json: async () => ME } as Response));
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve({ ok: true, status: 200, json: async () => (String(url).includes('/me/sessions') ? SESSIONS : ME) } as Response)
+    );
   });
   afterEach(() => vi.unstubAllGlobals());
 
@@ -68,7 +75,11 @@ describe('Account', () => {
     renderAccount();
     await screen.findByText('ada@example.com');
     // The API answers 401; "Unauthorized" would tell the user nothing useful.
-    fetchMock.mockResolvedValue({ ok: false, status: 401, statusText: 'Unauthorized', json: async () => ({}) } as Response);
+    fetchMock.mockImplementation((url: string) =>
+      String(url).includes('/me/sessions')
+        ? Promise.resolve({ ok: true, status: 200, json: async () => SESSIONS } as Response)
+        : Promise.resolve({ ok: false, status: 401, statusText: 'Unauthorized', json: async () => ({}) } as Response)
+    );
 
     await userEvent.type(screen.getByLabelText('Current password'), 'wrong-password');
     await userEvent.type(screen.getByLabelText('New password'), 'new-password');
@@ -76,5 +87,57 @@ describe('Account', () => {
     await userEvent.click(screen.getByRole('button', { name: /change password/i }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/not your current password/i);
+  });
+});
+
+// A token used to stay valid until it expired whatever happened to the account,
+// so "sign out" was a client-side gesture and nothing could answer "is anyone
+// else signed in as me" (#227).
+describe('Account sessions', () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock.mockReset();
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve({ ok: true, status: 200, json: async () => (String(url).includes('/me/sessions') ? SESSIONS : ME) } as Response)
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('lists where the account is signed in, marking this device', async () => {
+    renderAccount();
+    expect(await screen.findByText('Firefox on the laptop')).toBeInTheDocument();
+    expect(screen.getByText('this device')).toBeInTheDocument();
+  });
+
+  it('offers no sign-out for the session making the request', async () => {
+    renderAccount();
+    await screen.findByText('Firefox on the laptop');
+    // One button for the other session, and none for this one.
+    expect(screen.getAllByRole('button', { name: 'Sign out' })).toHaveLength(1);
+  });
+
+  it('ends one session by id', async () => {
+    renderAccount();
+    await screen.findByText('Firefox on the laptop');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+    const call = fetchMock.mock.calls.find(([u, o]) => String(u).includes('/me/sessions/s2') && o?.method === 'DELETE');
+    expect(call).toBeDefined();
+  });
+
+  it('ends every other session at once', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    renderAccount();
+    await screen.findByText('Firefox on the laptop');
+
+    await userEvent.click(screen.getByRole('button', { name: /Sign out everywhere else/ }));
+
+    const call = fetchMock.mock.calls.find(
+      ([u, o]) => String(u).endsWith('/me/sessions') && o?.method === 'DELETE'
+    );
+    expect(call).toBeDefined();
   });
 });

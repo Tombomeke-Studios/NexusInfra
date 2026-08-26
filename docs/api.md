@@ -102,7 +102,16 @@ Exchange account credentials for a signed JWT (12h TTL, signed with `JWT_SECRET`
 ```
 
 `401` on bad credentials — deliberately the same response for an unknown account as for a wrong
-password. `400` when either field is missing. Send the token as `Authorization: Bearer <jwt>` on
+password. `400` when either field is missing.
+
+**Rate limited (#225)** per address *and* per account: the first stops one machine walking a password
+list, the second stops a botnet spreading the same list across many addresses, and neither alone is
+enough. Only failures count and a success clears the count, so normal use never meets the limit. A
+locked-out attempt answers **exactly the same 401** as a wrong password — a distinct "account locked"
+reply would confirm the account exists and is worth attacking — with a `Retry-After` header.
+Configure with `LOGIN_MAX_ATTEMPTS` (10), `LOGIN_WINDOW_MS` and `LOGIN_LOCKOUT_MS` (15 min each).
+
+Every successful login creates a **session** (#227) and the token names it. Send the token as `Authorization: Bearer <jwt>` on
 every other call. An install that predates accounts may also sign in with its legacy username.
 
 The first administrator is seeded from `ADMIN_EMAIL` / `ADMIN_PASSWORD` on first start.
@@ -127,6 +136,26 @@ the request is ignored — registration never grants privilege.
 The signed-in account (never including any credential material), and a password change that requires
 the current password: `{ "currentPassword": "…", "newPassword": "…" }` → `204`, `401` if the current
 password is wrong.
+
+### `GET /me/sessions` · `POST /auth/logout` · `DELETE /me/sessions/:id` · `DELETE /me/sessions`
+
+Where this account is signed in, and how to stop being (#227).
+
+A JWT is stateless, so before this a token stayed valid until it expired no matter what happened to
+the account behind it: signing out cleared it in the browser and nothing else, and there was no way to
+end somebody else's session. A token now names a session row, and `requireAuth` checks that row still
+exists — one indexed read per request, which is the price of the answer being true.
+
+- `GET /me/sessions` lists your own, each flagged `current` so you can tell which is you.
+- `POST /auth/logout` ends the session making the request; the token stops working immediately.
+- `DELETE /me/sessions/:id` ends one other — the "that wasn't me" button. A session that is not yours
+  answers `404`, not `403`, so ids cannot be probed (the same rule as servers, #175).
+- `DELETE /me/sessions` ends every session but the current one.
+
+Changing your password ends every **other** session, since that is how you respond to thinking
+somebody else has it — and leaves the one that made the change signed in, because being logged out of
+the page you just used is a punishment for doing the right thing. A token that names no session at all
+is refused: it cannot be revoked, which is the thing this replaced.
 
 ### `GET /users` · `POST /users`  *(platform administrators)*
 

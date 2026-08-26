@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { getCurrentUser, changePassword, ApiError, type CurrentUser } from '../api';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { getCurrentUser, changePassword, listSessions, endSession, endOtherSessions, ApiError, type CurrentUser, type SessionView } from '../api';
 import { useToast } from '../components/Toast';
 import { InfoHint } from '../components/InfoHint';
 
@@ -20,6 +20,19 @@ export function Account() {
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const [sessions, setSessions] = useState<SessionView[] | null>(null);
+  const loadSessions = useCallback(async () => {
+    try {
+      setSessions(await listSessions());
+    } catch {
+      setSessions([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSessions();
+  }, [loadSessions]);
 
   useEffect(() => {
     let active = true;
@@ -45,7 +58,8 @@ export function Account() {
       setCurrent('');
       setNext('');
       setConfirm('');
-      toast('Password changed', 'success', 'Account');
+      toast('Password changed — every other session was signed out', 'success', 'Account');
+      await loadSessions();
     } catch (e) {
       // A wrong current password is 401 — say so plainly rather than as a status.
       setError(e instanceof ApiError && e.status === 401 ? 'That is not your current password' : e instanceof Error ? e.message : 'Could not change your password');
@@ -82,10 +96,13 @@ export function Account() {
         )}
       </div>
 
+      <SessionsCard sessions={sessions} onChanged={loadSessions} />
+
       <div className="card" style={{ padding: 24 }}>
         <strong style={{ display: 'block', fontSize: '.95rem', marginBottom: 6 }}>Change password</strong>
         <p className="subtle" style={{ margin: '0 0 18px', fontSize: '.84rem' }}>
-          Your current password is required. Existing sessions are not signed out yet — that is tracked separately.
+          Your current password is required. Every other session is signed out, since changing a password is how you
+          respond to thinking somebody else has it.
         </p>
         <form onSubmit={onSubmit}>
           <div className="field">
@@ -109,6 +126,93 @@ export function Account() {
           </button>
         </form>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Where this account is signed in, and how to stop being (#227).
+ *
+ * A token used to stay valid until it expired whatever happened to the account,
+ * so this list is the first thing that can answer "is anyone else signed in as
+ * me" — and the buttons are the first that can do anything about it.
+ */
+function SessionsCard({ sessions, onChanged }: { sessions: SessionView[] | null; onChanged: () => Promise<void> | void }) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+
+  const others = (sessions ?? []).filter((s) => !s.current);
+
+  const end = async (session: SessionView) => {
+    setBusy(true);
+    try {
+      await endSession(session.id);
+      toast('That session was signed out', 'success', 'Sessions');
+      await onChanged();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not end that session', 'error', 'Sessions');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const endAll = async () => {
+    if (!window.confirm('Sign out everywhere else? Other devices will have to sign in again.')) return;
+    setBusy(true);
+    try {
+      await endOtherSessions();
+      toast('Every other session was signed out', 'success', 'Sessions');
+      await onChanged();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not end the other sessions', 'error', 'Sessions');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ padding: 24, marginBottom: 18 }}>
+      <strong style={{ display: 'block', fontSize: '.95rem', marginBottom: 6 }}>
+        Signed in on
+        <InfoHint text="Every device you are signed in on. Ending one stops its token working immediately, rather than whenever it would have expired." label="Sessions help" />
+      </strong>
+      <p className="subtle" style={{ margin: '0 0 16px', fontSize: '.84rem' }}>
+        Anything here that you do not recognise can be signed out.
+      </p>
+
+      {sessions === null ? (
+        <div className="empty">Loading…</div>
+      ) : (
+        <div style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+          {sessions.map((s) => (
+            <div
+              key={s.id}
+              style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: '1px solid var(--color-border)', flexWrap: 'wrap' }}
+            >
+              <span style={{ flex: 1, minWidth: 180 }}>
+                <span style={{ display: 'block', fontSize: '.86rem' }}>
+                  {s.userAgent || 'Unknown device'}
+                  {s.current && <span className="badge badge--info" style={{ marginLeft: 8 }}>this device</span>}
+                </span>
+                <span className="subtle mono" style={{ fontSize: '.78rem' }}>
+                  {s.ipAddress ?? 'unknown address'} · last used {new Date(s.lastSeenAt).toLocaleString()}
+                </span>
+              </span>
+              {!s.current && (
+                <button className="btn btn--secondary btn--sm" data-ripple disabled={busy} onClick={() => void end(s)}>
+                  Sign out
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {others.length > 0 && (
+        <button className="btn btn--danger btn--sm" data-ripple disabled={busy} style={{ marginTop: 14 }} onClick={() => void endAll()}>
+          Sign out everywhere else ({others.length})
+        </button>
+      )}
     </div>
   );
 }

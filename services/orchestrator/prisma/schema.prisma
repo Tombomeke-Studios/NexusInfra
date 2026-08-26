@@ -32,6 +32,27 @@ model User {
   createdAt    DateTime @default(now())
 }
 
+// One signed-in session (#227).
+//
+// JWTs are stateless, so before this a token stayed valid until it expired no
+// matter what happened to the account behind it: changing your password, or
+// removing someone's access, did not end their session. The token now names a
+// session row, and a session that is gone is a token that no longer works.
+//
+// The cost is a database read per authenticated request, which is the price of
+// being able to answer "log me out everywhere" truthfully.
+model Session {
+  id         String   @id
+  userId     String
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  // Recorded so a person can recognise their own sessions when ending one.
+  userAgent  String?
+  ipAddress  String?
+
+  @@index([userId])
+}
+
 // A group of people who share servers (#177). Per-server invitations cover
 // one-off sharing; a team means "everyone here gets my servers" without
 // re-inviting each person to each one. A server is still owned by an individual

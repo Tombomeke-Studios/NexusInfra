@@ -296,6 +296,22 @@ export interface UpdateServerConfigInput {
   autoRestart?: boolean;
 }
 
+/** One signed-in session (#227). A token names one; deleting it ends that login. */
+export interface SessionRecord {
+  id: string;
+  userId: string;
+  createdAt: string;
+  lastSeenAt: string;
+  userAgent: string | null;
+  ipAddress: string | null;
+}
+
+export interface CreateSessionInput {
+  userId: string;
+  userAgent?: string | null;
+  ipAddress?: string | null;
+}
+
 export interface RegisterNodeInput {
   id: string;
   name?: string;
@@ -332,6 +348,15 @@ export interface Repository {
   upsertNode(input: UpsertNodeInput): Promise<NodeRecord>;
   listNodes(): Promise<NodeRecord[]>;
   /** Create or relabel a node (name/location); leaves lastHeartbeat/resources intact. */
+  // ── Sessions (#227) — what makes a token revocable ────────────────────────
+  createSession(input: CreateSessionInput): Promise<SessionRecord>;
+  getSession(id: string): Promise<SessionRecord | null>;
+  listSessions(userId: string): Promise<SessionRecord[]>;
+  deleteSession(id: string): Promise<void>;
+  /** End every session for a user, optionally sparing the one making the request. */
+  deleteSessionsForUser(userId: string, exceptId?: string): Promise<void>;
+  touchSession(id: string, at: string): Promise<void>;
+
   registerNode(input: RegisterNodeInput): Promise<NodeRecord>;
   /** Remove a node record; detaches it from any deployments first. */
   deleteNode(id: string): Promise<void>;
