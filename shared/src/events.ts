@@ -42,6 +42,8 @@ export type NexusInfraEvent =
 
 export interface NodeResources {
   cpuPercent: number;
+  /** How many CPUs the host actually has (#261). Optional: older agents omit it. */
+  cpuCores?: number;
   ramUsedMb: number;
   ramTotalMb: number;
   diskUsedGb: number;

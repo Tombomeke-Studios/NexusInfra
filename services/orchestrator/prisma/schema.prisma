@@ -72,6 +72,7 @@ model Node {
   agentUrl      String?
   lastHeartbeat DateTime
   cpuPercent    Float?
+  cpuCores      Int?
   ramUsedMb     Float?
   ramTotalMb    Float?
   diskUsedGb    Float?

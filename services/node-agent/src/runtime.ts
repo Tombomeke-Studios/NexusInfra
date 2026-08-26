@@ -342,6 +342,8 @@ export class DockerodeRuntime implements ContainerRuntime {
     const freeMem = os.freemem();
     return {
       cpuPercent: cpuPercent(),
+      // The real core count, so the panel stops inferring one from RAM (#261).
+      cpuCores: os.cpus().length,
       ramUsedMb: Math.round((totalMem - freeMem) / 1024 / 1024),
       ramTotalMb: Math.round(totalMem / 1024 / 1024),
       // Disk metrics need a platform-specific probe; deferred to a later phase.

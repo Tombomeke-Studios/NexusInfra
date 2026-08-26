@@ -197,11 +197,16 @@ export function Overview() {
           const healthLabel = inMaint ? 'maintenance' : n.health;
           const cpu = cpuOf(n);
           const ram = ramOf(n);
-          const svCount = ds.filter((d) => d.nodeId === n.id).length;
+          const here = ds.filter((d) => d.nodeId === n.id);
+          const svCount = here.length;
           const memGB = n.ramTotalMb ? Math.round(n.ramTotalMb / 1024) : 0;
-          const cores = Math.max(1, Math.round((n.ramTotalMb ?? 4096) / 2048));
-          const allocCpu = Math.min(100, svCount * 22);
-          const allocRam = Math.min(100, svCount * 18);
+          // Real numbers only (#261). The core count used to be inferred from RAM,
+          // and "committed" from the server count times an arbitrary constant.
+          // Committed is now the sum of the caps those servers were actually given;
+          // servers deployed without a cap contribute nothing, which is the truth —
+          // they are uncapped, not free.
+          const committedCpu = Math.min(100, Math.round(here.reduce((a, d) => a + (d.resourceLimits?.cpuPercent ?? 0), 0)));
+          const committedRam = Math.min(100, Math.round(here.reduce((a, d) => a + (d.resourceLimits?.ramPercent ?? 0), 0)));
           return (
             <article key={n.id} className="card node-card spotlight" data-spotlight style={{ ['--i']: i } as CSSProperties}>
               <div style={{ padding: 20 }}>
@@ -239,7 +244,9 @@ export function Overview() {
                   </span>
                 </div>
                 <div style={{ display: 'flex', gap: 12, fontSize: '.76rem', color: 'var(--color-text-subtle)', fontFamily: 'var(--font-mono)', marginBottom: 14, flexWrap: 'wrap' }}>
-                  <span>{cores} vCPU</span><span>·</span><span>{memGB} GB</span><span>·</span><span>{svCount} servers</span>
+                  {n.cpuCores != null && (<><span>{n.cpuCores} vCPU</span><span>·</span></>)}
+                  {memGB > 0 && (<><span>{memGB} GB</span><span>·</span></>)}
+                  <span>{svCount} servers</span>
                   {n.location && (<><span>·</span><span>📍 {n.location}</span></>)}
                 </div>
                 <NodeMeter label="Live CPU" pct={cpu} />
@@ -247,11 +254,11 @@ export function Overview() {
                 <div style={{ paddingTop: 12, borderTop: '1px solid var(--color-border)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
                     <span style={{ fontSize: '.72rem', textTransform: 'uppercase', letterSpacing: '.04em', color: 'var(--color-text-subtle)' }}>Committed</span>
-                    <span className="tnum mono" style={{ fontSize: '.76rem', color: 'var(--color-text-subtle)' }}>cpu {allocCpu}% · ram {allocRam}%</span>
+                    <span className="tnum mono" style={{ fontSize: '.76rem', color: 'var(--color-text-subtle)' }}>cpu {committedCpu}% · ram {committedRam}%</span>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    <div className="meter" style={{ flex: 1, height: 5 }}><div className="meter__fill" style={{ width: `${allocCpu}%` }} /></div>
-                    <div className="meter" style={{ flex: 1, height: 5 }}><div className="meter__fill" style={{ width: `${allocRam}%`, background: 'oklch(0.72 0.13 180)' }} /></div>
+                    <div className="meter" style={{ flex: 1, height: 5 }}><div className="meter__fill" style={{ width: `${committedCpu}%` }} /></div>
+                    <div className="meter" style={{ flex: 1, height: 5 }}><div className="meter__fill" style={{ width: `${committedRam}%`, background: 'oklch(0.72 0.13 180)' }} /></div>
                   </div>
                 </div>
                 <button className="btn btn--secondary btn--sm" data-ripple style={{ marginTop: 14, width: '100%' }} onClick={() => void toggleMaint(n.id, n.name, !inMaint)}>

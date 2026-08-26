@@ -144,6 +144,7 @@ export class InMemoryRepository implements Repository {
       agentUrl: input.agentUrl ?? existing?.agentUrl ?? null,
       lastHeartbeat: input.lastHeartbeat,
       cpuPercent: input.cpuPercent ?? existing?.cpuPercent ?? null,
+      cpuCores: input.cpuCores ?? existing?.cpuCores ?? null,
       ramUsedMb: input.ramUsedMb ?? existing?.ramUsedMb ?? null,
       ramTotalMb: input.ramTotalMb ?? existing?.ramTotalMb ?? null,
       diskUsedGb: input.diskUsedGb ?? existing?.diskUsedGb ?? null,
@@ -179,6 +180,7 @@ export class InMemoryRepository implements Repository {
           // Registered-but-unseen → epoch so it reads offline until its agent beats.
           lastHeartbeat: new Date(0).toISOString(),
           cpuPercent: null,
+          cpuCores: null,
           ramUsedMb: null,
           ramTotalMb: null,
           diskUsedGb: null,
@@ -477,6 +479,6 @@ export class InMemoryRepository implements Repository {
   private toView(d: DeploymentRecord): DeploymentView | null {
     const config = this.configs.get(d.serverConfigId);
     if (!config) return null;
-    return { ...d, name: config.name, dockerImage: config.dockerImage, userId: config.userId, teamId: config.teamId, type: config.type };
+    return { ...d, name: config.name, dockerImage: config.dockerImage, userId: config.userId, teamId: config.teamId, type: config.type, resourceLimits: config.resourceLimits };
   }
 }

@@ -20,6 +20,8 @@ export interface NodeView {
   location?: string; // free-form label for a self-hosted node (e.g. "home-server")
   lastHeartbeat: string;
   cpuPercent: number | null;
+  /** The node's real CPU count; null until its agent reports one (#261). */
+  cpuCores?: number | null;
   ramUsedMb: number | null;
   ramTotalMb: number | null;
   diskUsedGb: number | null;
@@ -42,6 +44,8 @@ export interface DeploymentView {
   role?: 'owner' | 'admin' | 'operator' | 'viewer';
   nodeId: string | null;
   containerId: string | null;
+  /** The caps this server was given — summed per node for "committed" (#261). */
+  resourceLimits?: ResourceLimits;
   status: DeploymentStatus;
   startedAt: string | null;
   stoppedAt: string | null;
