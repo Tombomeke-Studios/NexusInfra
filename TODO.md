@@ -5,7 +5,7 @@
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/next-Phase_5_·_Production-3b82f6?style=flat-square)
 ![Editions](https://img.shields.io/badge/editions-community_·_hosted-8b5cf6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-862_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-892_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -239,7 +239,7 @@ scrolling log lines describing events that never happened.
 - [ ] Migrate a server to another node (#234)
 - [ ] Real SFTP access per server, honouring the file permissions (#235)
 - [ ] Notification service — mail/webhook on crash, suspend, node offline (#236)
-- [ ] Search, filter and pagination on the Servers list (#237)
+- [x] Search, filter and pagination on the Servers list (#237)
 - [ ] Bulk actions on multiple servers (#238)
 - [ ] Update a deployment's container image (pull + recreate) (#239)
 - [ ] `nexusctl` — a CLI client for the panel (#240)

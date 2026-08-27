@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { listNodes, listDeployments, deregisterNode, type NodeView, type DeploymentView } from '../api';
+import { listNodes, listAllDeployments, deregisterNode, type NodeView, type DeploymentView } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
 import { useToast } from '../components/Toast';
 import { useDialog } from '../components/Dialog';
@@ -29,7 +29,7 @@ export function NodeDetail() {
 
   const load = useCallback(async () => {
     try {
-      const [nodes, deployments] = await Promise.all([listNodes(), listDeployments()]);
+      const [nodes, deployments] = await Promise.all([listNodes(), listAllDeployments()]);
       const n = nodes.find((x) => x.id === id) ?? null;
       setNode(n);
       setDeps(deployments.filter((d) => d.nodeId === id));

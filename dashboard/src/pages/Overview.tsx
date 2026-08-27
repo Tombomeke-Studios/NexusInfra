@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { listNodes, listDeployments, registerNode, deregisterNode, setNodeMaintenance, getMonitoring, type NodeView, type DeploymentView, type MonitoringSnapshot, type DeadLetterSnapshot } from '../api';
+import { listNodes, listAllDeployments, registerNode, deregisterNode, setNodeMaintenance, getMonitoring, type NodeView, type DeploymentView, type MonitoringSnapshot, type DeadLetterSnapshot } from '../api';
 import { CountUp } from '../components/CountUp';
 import { useToast } from '../components/Toast';
 import { useDialog } from '../components/Dialog';
@@ -33,7 +33,7 @@ export function Overview() {
 
   const refresh = useCallback(
     (first = false) =>
-      Promise.all([listNodes(), listDeployments()])
+      Promise.all([listNodes(), listAllDeployments()])
         .then(([n, d]) => {
           setNodes(n);
           setDeployments(d);

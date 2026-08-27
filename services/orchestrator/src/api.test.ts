@@ -136,7 +136,7 @@ describe('deployment API', () => {
     await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
 
     const list = await request(app).get('/deployments');
-    expect(list.body).toHaveLength(1);
+    expect(list.body.items).toHaveLength(1);
 
     const nodes = await request(app).get('/nodes');
     expect(nodes.body[0].health).toBe('healthy');
@@ -752,7 +752,7 @@ describe('deployment API', () => {
     expect(stop).toBeDefined();
     // …and the deployment is gone.
     expect(await repo.getDeployment(created.body.id)).toBeNull();
-    expect((await request(app).get('/deployments')).body).toHaveLength(0);
+    expect((await request(app).get('/deployments')).body.items).toHaveLength(0);
   });
 
   // #293: deleting a running server emits server.stop, and the agent's
@@ -1204,7 +1204,7 @@ describe('per-server authorization', () => {
 
   describe('someone with no access at all', () => {
     it('cannot see the server in their list', async () => {
-      expect((await request(guestApp).get('/deployments')).body).toEqual([]);
+      expect((await request(guestApp).get('/deployments')).body.items).toEqual([]);
     });
 
     it('gets 404 rather than 403, so ids cannot be probed for existence', async () => {
@@ -1225,8 +1225,8 @@ describe('per-server authorization', () => {
 
     it('sees the server, with their role attached', async () => {
       const list = await request(guestApp).get('/deployments');
-      expect(list.body).toHaveLength(1);
-      expect(list.body[0]).toMatchObject({ id: deploymentId, role: 'viewer' });
+      expect(list.body.items).toHaveLength(1);
+      expect(list.body.items[0]).toMatchObject({ id: deploymentId, role: 'viewer' });
     });
 
     it('cannot start, stop or restart it', async () => {
@@ -1292,7 +1292,7 @@ describe('per-server authorization', () => {
 
       await shareAs(null);
       expect((await request(guestApp).get(`/deployments/${deploymentId}`)).status).toBe(404);
-      expect((await request(guestApp).get('/deployments')).body).toEqual([]);
+      expect((await request(guestApp).get('/deployments')).body.items).toEqual([]);
       expect((await request(guestApp).post(`/deployments/${deploymentId}/stop`)).status).toBe(404);
     });
   });
@@ -1300,7 +1300,7 @@ describe('per-server authorization', () => {
   describe('the owner', () => {
     it('keeps full control including deletion', async () => {
       const list = await request(ownerApp).get('/deployments');
-      expect(list.body[0]).toMatchObject({ role: 'owner' });
+      expect(list.body.items[0]).toMatchObject({ role: 'owner' });
       expect((await request(ownerApp).get(`/deployments/${deploymentId}/subusers`)).status).toBe(200);
       expect((await request(ownerApp).delete(`/deployments/${deploymentId}`)).status).toBe(204);
     });
@@ -1310,8 +1310,8 @@ describe('per-server authorization', () => {
     it('sees and controls every server without needing a share', async () => {
       const adminApp = buildApp(repo, [], PLATFORM_ADMIN);
       const list = await request(adminApp).get('/deployments');
-      expect(list.body).toHaveLength(1);
-      expect(list.body[0]).toMatchObject({ role: 'owner' });
+      expect(list.body.items).toHaveLength(1);
+      expect(list.body.items[0]).toMatchObject({ role: 'owner' });
       expect((await request(adminApp).get(`/deployments/${deploymentId}`)).status).toBe(200);
     });
   });
@@ -1363,7 +1363,7 @@ describe('server invitations', () => {
 
     const guestApp = buildApp(repo, [], NEWCOMER);
     expect((await request(guestApp).get(`/deployments/${deploymentId}`)).status).toBe(404);
-    expect((await request(guestApp).get('/deployments')).body).toEqual([]);
+    expect((await request(guestApp).get('/deployments')).body.items).toEqual([]);
   });
 
   it('is claimed when the invited person registers', async () => {
@@ -1373,8 +1373,8 @@ describe('server invitations', () => {
 
     const guestApp = buildApp(repo, [], { id: registered.user.id, platformRole: 'user' });
     const list = await request(guestApp).get('/deployments');
-    expect(list.body).toHaveLength(1);
-    expect(list.body[0]).toMatchObject({ id: deploymentId, role: 'operator' });
+    expect(list.body.items).toHaveLength(1);
+    expect(list.body.items[0]).toMatchObject({ id: deploymentId, role: 'operator' });
   });
 
   it('is claimed when an existing account signs in for the first time after being invited', async () => {
@@ -1424,7 +1424,7 @@ describe('transferring ownership (#230)', () => {
 
   const roleOf = async (user: { id: string; platformRole: 'owner' | 'admin' | 'user' }) => {
     const list = await request(buildApp(repo, [], user)).get('/deployments');
-    return (list.body as Array<{ id: string; role: string }>).find((d) => d.id === deploymentId)?.role ?? null;
+    return (list.body.items as Array<{ id: string; role: string }>).find((d) => d.id === deploymentId)?.role ?? null;
   };
 
   it('makes the recipient the owner and takes the previous owner off entirely', async () => {
@@ -1474,5 +1474,78 @@ describe('transferring ownership (#230)', () => {
 
   it('refuses to hand the server to its current owner', async () => {
     expect((await transfer({ email: OWNER.email })).status).toBe(400);
+  });
+});
+
+describe('listing servers: search, filter and paging (#237)', () => {
+  let repo: InMemoryRepository;
+  let app: express.Express;
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    app = buildApp(repo, []);
+    await seedUser(repo);
+    await seedHealthyNode(repo);
+    for (const name of ['web-one', 'web-two', 'db-primary', 'db-replica', 'cache']) {
+      await request(app).post('/deployments').send({ name, dockerImage: 'nginx' });
+    }
+  });
+
+  const list = (qs = '') => request(app).get(`/deployments${qs}`);
+
+  it('answers an envelope, so a page can say there is more', async () => {
+    // A bare array of 25 rows out of 200 cannot tell anyone it is a page.
+    const res = await list('?limit=2');
+    expect(res.body.items).toHaveLength(2);
+    expect(res.body).toMatchObject({ total: 5, limit: 2, offset: 0 });
+  });
+
+  it('searches the name, case-insensitively', async () => {
+    const res = await list('?q=WEB');
+    expect(res.body.total).toBe(2);
+    expect((res.body.items as Array<{ name: string }>).map((d) => d.name).sort()).toEqual(['web-one', 'web-two']);
+  });
+
+  it('filters by status', async () => {
+    const all = (await list()).body.items as Array<{ id: string }>;
+    await repo.updateDeploymentStatus(all[0].id, { status: 'running', containerId: 'c1', nodeId: 'node-local' });
+
+    expect((await list('?status=running')).body.total).toBe(1);
+    expect((await list('?status=pending')).body.total).toBe(4);
+  });
+
+  it('filters by node, including the servers that landed nowhere', async () => {
+    // Placement happens at creation, so all five start on the node; detaching one
+    // is the state somebody goes looking for when placement has failed.
+    const all = (await list()).body.items as Array<{ id: string }>;
+    await repo.updateDeploymentStatus(all[0].id, { nodeId: null });
+
+    expect((await list('?nodeId=node-local')).body.total).toBe(4);
+    expect((await list('?nodeId=unassigned')).body.total).toBe(1);
+  });
+
+  it('pages without repeating or losing a row', async () => {
+    const seen: string[] = [];
+    for (let offset = 0; offset < 5; offset += 2) {
+      seen.push(...((await list(`?limit=2&offset=${offset}`)).body.items as Array<{ id: string }>).map((d) => d.id));
+    }
+    expect(new Set(seen).size).toBe(5);
+  });
+
+  it('counts what matched, not what it returned', async () => {
+    const res = await list('?q=web&limit=1');
+    expect(res.body.items).toHaveLength(1);
+    expect(res.body.total).toBe(2);
+  });
+
+  it('bounds the page even when nobody asked it to', async () => {
+    expect((await list()).body.limit).toBe(25);
+    expect((await list('?limit=99999')).body.limit).toBe(200);
+  });
+
+  it('still carries the caller’s role on each row', async () => {
+    // Paging must not quietly drop what the panel gates its buttons on (#178).
+    const res = await list('?limit=1');
+    expect(res.body.items[0]).toMatchObject({ role: 'owner' });
   });
 });

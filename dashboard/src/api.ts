@@ -463,8 +463,56 @@ export function deregisterNode(id: string): Promise<void> {
   return request(`/nodes/${id}`, { method: 'DELETE' });
 }
 
-export function listDeployments(): Promise<DeploymentView[]> {
-  return request('/deployments');
+/** Filtering and paging for the server list (#237). */
+export interface DeploymentQuery {
+  /** Case-insensitive substring of the name. */
+  q?: string;
+  status?: string;
+  /** A node id, or `unassigned` for servers not placed anywhere. */
+  nodeId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface Page<T> {
+  items: T[];
+  /** How many match the filter in total — not how many are in `items`. */
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/**
+ * One page of the servers this account can see.
+ *
+ * The envelope is deliberate: a page of rows with no count beside it cannot tell
+ * anyone there is more, and a list that silently shows the first 25 of 200 is
+ * worse than the unbounded one it replaced.
+ */
+export function listDeployments(query: DeploymentQuery = {}): Promise<Page<DeploymentView>> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== '') params.set(key, String(value));
+  }
+  const qs = params.toString();
+  return request(`/deployments${qs ? `?${qs}` : ''}`);
+}
+
+/**
+ * Every server the caller can see, for the places that genuinely need all of
+ * them — the overview's counts, a node's hosted list.
+ *
+ * Named so the cost is visible at the call site: it walks the pages rather than
+ * pretending the first one is everything.
+ */
+export async function listAllDeployments(query: DeploymentQuery = {}): Promise<DeploymentView[]> {
+  const limit = 200;
+  const all: DeploymentView[] = [];
+  for (let offset = 0; ; offset += limit) {
+    const page = await listDeployments({ ...query, limit, offset });
+    all.push(...page.items);
+    if (all.length >= page.total || page.items.length === 0) return all;
+  }
 }
 
 export function getDeployment(id: string): Promise<DeploymentDetail> {

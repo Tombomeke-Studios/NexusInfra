@@ -128,8 +128,8 @@ describe('teams', () => {
       await shareWithTeam();
 
       const list = await request(memberApp).get('/deployments');
-      expect(list.body).toHaveLength(1);
-      expect(list.body[0]).toMatchObject({ id: deploymentId, role: 'operator' });
+      expect(list.body.items).toHaveLength(1);
+      expect(list.body.items[0]).toMatchObject({ id: deploymentId, role: 'operator' });
       expect((await request(memberApp).post(`/deployments/${deploymentId}/restart`)).status).toBe(202);
       // Still an operator, so the limits of that role hold.
       expect((await request(memberApp).get(`/deployments/${deploymentId}/backups`)).status).toBe(403);
@@ -155,7 +155,7 @@ describe('teams', () => {
       await shareWithTeam();
       await request(leadApp).delete(`/teams/${teamId}/members/${MEMBER.id}`);
       expect((await request(memberApp).get(`/deployments/${deploymentId}`)).status).toBe(404);
-      expect((await request(memberApp).get('/deployments')).body).toEqual([]);
+      expect((await request(memberApp).get('/deployments')).body.items).toEqual([]);
     });
 
     it('takes the stronger of a direct share and team membership', async () => {
@@ -164,7 +164,7 @@ describe('teams', () => {
       await request(leadApp).post(`/deployments/${deploymentId}/subusers`).send({ email: MEMBER.email, role: 'admin' });
 
       const list = await request(memberApp).get('/deployments');
-      expect(list.body[0].role).toBe('admin');
+      expect(list.body.items[0].role).toBe('admin');
       expect((await request(memberApp).get(`/deployments/${deploymentId}/backups`)).status).toBe(200);
     });
 

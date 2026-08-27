@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState, type CSSProperties } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   getCurrentUser,
   listDeployments,
@@ -24,6 +24,17 @@ import { can, ROLE_LABELS, type ServerRole } from '../permissions';
 // each row, so the panel doesn't offer a button that would come back 403.
 const POLL_MS = 3000;
 
+/**
+ * One page at a time (#237).
+ *
+ * The list used to render every server the caller could see and poll all of them
+ * every three seconds. Fine with five; with two hundred it is two hundred rows
+ * of live meters and a response that grows without bound.
+ */
+const PAGE_SIZE = 25;
+
+const STATUSES = ['pending', 'running', 'stopped', 'crashed'] as const;
+
 interface ServerActions {
   stop: (id: string) => void;
   restart: (id: string) => void;
@@ -31,7 +42,15 @@ interface ServerActions {
 }
 
 export function Servers() {
+  // The query lives in the URL, so a filtered list is a link somebody can send,
+  // and going back returns to what you were looking at rather than to everything.
+  const [params, setParams] = useSearchParams();
+  const q = params.get('q') ?? '';
+  const status = params.get('status') ?? '';
+  const offset = Number(params.get('offset') ?? 0) || 0;
+
   const [deployments, setDeployments] = useState<DeploymentView[] | null>(null);
+  const [total, setTotal] = useState(0);
   const [me, setMe] = useState<CurrentUser | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -40,12 +59,16 @@ export function Servers() {
 
   const load = useCallback(async () => {
     try {
-      setDeployments(await listDeployments());
+      // A zero offset is the default; sending it would put `offset=0` on every
+      // request and make "am I on the first page" a thing to parse rather than see.
+      const page = await listDeployments({ q, status, limit: PAGE_SIZE, offset: offset || undefined });
+      setDeployments(page.items);
+      setTotal(page.total);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load deployments');
     }
-  }, []);
+  }, [q, status, offset]);
 
   useEffect(() => {
     void getCurrentUser()
@@ -55,6 +78,22 @@ export function Servers() {
     const handle = setInterval(() => void load(), POLL_MS);
     return () => clearInterval(handle);
   }, [load]);
+
+  // Changing a filter returns to the first page: staying on page four of a new
+  // filter shows an empty list, which reads as a failure rather than as paging.
+  const setQuery = (next: { q?: string; status?: string; offset?: number }) => {
+    const merged = new URLSearchParams(params);
+    for (const [key, value] of Object.entries(next)) {
+      if (value === undefined || value === '' || value === 0) merged.delete(key);
+      else merged.set(key, String(value));
+    }
+    if (next.offset === undefined) merged.delete('offset');
+    setParams(merged, { replace: true });
+  };
+
+  const filtering = Boolean(q || status);
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageNumber = Math.floor(offset / PAGE_SIZE) + 1;
 
   const runAction = async (id: string, action: (id: string) => Promise<unknown>, verb: string) => {
     setPendingId(id);
@@ -80,8 +119,8 @@ export function Servers() {
   // Ownership comes from the record, not from the role: a platform administrator
   // resolves to `owner` on every server, and calling all of them "mine" would be
   // misleading.
-  const owned = deployments?.filter((d) => !me || !d.userId || d.userId === me.id) ?? [];
-  const shared = deployments?.filter((d) => me && d.userId && d.userId !== me.id) ?? [];
+  const owned = useMemo(() => deployments?.filter((d) => !me || !d.userId || d.userId === me.id) ?? [], [deployments, me]);
+  const shared = useMemo(() => deployments?.filter((d) => me && d.userId && d.userId !== me.id) ?? [], [deployments, me]);
 
   return (
     <div className="page" style={{ maxWidth: 1320 }}>
@@ -91,6 +130,42 @@ export function Servers() {
           <span className="live__dot" />
           Live
         </span>
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
+        <input
+          className="input"
+          type="search"
+          value={q}
+          onChange={(e) => setQuery({ q: e.target.value })}
+          placeholder="Search by name"
+          aria-label="Search servers by name"
+          style={{ width: 'auto', minWidth: 220 }}
+        />
+        <select
+          className="select"
+          value={status}
+          onChange={(e) => setQuery({ status: e.target.value })}
+          aria-label="Filter by status"
+          style={{ width: 'auto' }}
+        >
+          <option value="">Any status</option>
+          {STATUSES.map((s) => (
+            <option key={s} value={s}>
+              {s[0].toUpperCase() + s.slice(1)}
+            </option>
+          ))}
+        </select>
+        {filtering && (
+          <button className="btn btn--ghost btn--sm" data-ripple onClick={() => setQuery({ q: '', status: '' })}>
+            Clear
+          </button>
+        )}
+        {deployments && (
+          <span className="subtle" style={{ fontSize: '.82rem', marginLeft: 'auto' }}>
+            {total === 0 ? 'No matches' : `${total} server${total === 1 ? '' : 's'}${filtering ? ' matching' : ''}`}
+          </span>
+        )}
       </div>
 
       {error && (
@@ -106,7 +181,14 @@ export function Servers() {
       ) : deployments.length === 0 ? (
         <div className="table-wrap">
           <div className="empty">
-            No deployments yet. Create one from <strong>New Deployment</strong>.
+            {filtering ? (
+              // "None yet" would be a lie here: they may have plenty.
+              <>No servers match that search.</>
+            ) : (
+              <>
+                No deployments yet. Create one from <strong>New Deployment</strong>.
+              </>
+            )}
           </div>
         </div>
       ) : (
@@ -135,6 +217,30 @@ export function Servers() {
             </>
           )}
         </>
+      )}
+
+      {total > PAGE_SIZE && (
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'center', marginTop: 18 }}>
+          <button
+            className="btn btn--secondary btn--sm"
+            data-ripple
+            disabled={offset === 0}
+            onClick={() => setQuery({ offset: Math.max(0, offset - PAGE_SIZE) })}
+          >
+            Previous
+          </button>
+          <span className="subtle" style={{ fontSize: '.82rem' }}>
+            Page {pageNumber} of {pageCount}
+          </span>
+          <button
+            className="btn btn--secondary btn--sm"
+            data-ripple
+            disabled={offset + PAGE_SIZE >= total}
+            onClick={() => setQuery({ offset: offset + PAGE_SIZE })}
+          >
+            Next
+          </button>
+        </div>
       )}
     </div>
   );
