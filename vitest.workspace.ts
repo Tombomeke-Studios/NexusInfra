@@ -7,7 +7,9 @@ export default defineWorkspace([
   {
     test: {
       name: 'backend',
-      include: ['{services,shared}/**/*.test.ts'],
+      // `deploy` has no source of its own — it holds the release bundles, which
+      // are checked against the grammars Docker enforces (#291, #292).
+      include: ['{services,shared,deploy}/**/*.test.ts'],
       environment: 'node',
     },
   },
