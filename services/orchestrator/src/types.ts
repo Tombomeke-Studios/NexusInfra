@@ -293,6 +293,22 @@ export interface DeploymentStatusPatch {
  * an omitted one is left alone — a server's config used to be frozen at creation,
  * so fixing a typo meant deleting it and losing its databases and backups with it.
  */
+/**
+ * Everything one ownership transfer changes (#230), applied together.
+ *
+ * Three writes that must not half-happen: a server whose owner moved but whose
+ * outgoing owner never got their retained share is a server the previous owner
+ * has silently lost, and that is not recoverable from the outside.
+ */
+export interface TransferOwnershipInput {
+  deploymentId: string;
+  newOwnerId: string;
+  /** A share to write for the outgoing owner, already bound to their account. */
+  retainedShare: { email: string; userId: string; role: string } | null;
+  /** A share the incoming owner held on their new server, now redundant. */
+  dropShareId: string | null;
+}
+
 export interface UpdateServerConfigInput {
   name?: string;
   dockerImage?: string;
@@ -382,6 +398,8 @@ export interface Repository {
   getDeployment(id: string): Promise<DeploymentDetail | null>;
   /** Change an existing server's configuration; takes effect on its next start (#220). */
   updateDeploymentConfig(deploymentId: string, patch: UpdateServerConfigInput): Promise<ServerConfigRecord | null>;
+  /** Hand a server to another account, share changes and all, in one go (#230). */
+  transferDeploymentOwner(input: TransferOwnershipInput): Promise<ServerConfigRecord | null>;
   /** The server config behind a deployment (image/ports/env), for re-starting it. */
   getDeploymentConfig(deploymentId: string): Promise<ServerConfigRecord | null>;
   /** Remove a deployment and all of its child records (events/databases/backups/schedules/subusers). */

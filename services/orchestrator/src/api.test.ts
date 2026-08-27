@@ -1402,3 +1402,77 @@ describe('server invitations', () => {
     expect(again.body).toMatchObject({ role: 'admin', status: 'active', userId: NEWCOMER.id });
   });
 });
+
+describe('transferring ownership (#230)', () => {
+  const HEIR = { id: 'user-heir', email: 'heir@example.com', platformRole: 'user' as const };
+
+  let repo: InMemoryRepository;
+  let app: express.Express;
+  let deploymentId: string;
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    app = buildApp(repo, []);
+    await seedUser(repo);
+    await seedUser(repo, HEIR);
+    await seedHealthyNode(repo);
+    deploymentId = (await request(app).post('/deployments').send({ name: 'legacy', dockerImage: 'nginx' })).body.id;
+  });
+
+  const transfer = (body: Record<string, unknown>, as = app) =>
+    request(as).post(`/deployments/${deploymentId}/transfer`).send(body);
+
+  const roleOf = async (user: { id: string; platformRole: 'owner' | 'admin' | 'user' }) => {
+    const list = await request(buildApp(repo, [], user)).get('/deployments');
+    return (list.body as Array<{ id: string; role: string }>).find((d) => d.id === deploymentId)?.role ?? null;
+  };
+
+  it('makes the recipient the owner and takes the previous owner off entirely', async () => {
+    expect((await transfer({ email: HEIR.email })).status).toBe(200);
+    expect(await roleOf(HEIR)).toBe('owner');
+    // Not 'viewer', not a lingering share — no access at all, which the API
+    // answers as 404 rather than 403.
+    expect(await roleOf(OWNER)).toBeNull();
+    expect((await request(app).get(`/deployments/${deploymentId}`)).status).toBe(404);
+  });
+
+  it('leaves the previous owner with the role they asked to keep', async () => {
+    const res = await transfer({ email: HEIR.email, retainRole: 'admin' });
+    expect(res.body).toMatchObject({ ownerId: HEIR.id, retainedRole: 'admin' });
+    expect(await roleOf(OWNER)).toBe('admin');
+    // Stepped down for real: deleting is the owner's alone, and they are not it.
+    expect((await request(app).delete(`/deployments/${deploymentId}`)).status).toBe(403);
+  });
+
+  it('writes it to the audit trail', async () => {
+    await transfer({ email: HEIR.email, retainRole: 'viewer' });
+    const heirApp = buildApp(repo, [], HEIR);
+    const events = (await request(heirApp).get(`/deployments/${deploymentId}/events`)).body as Array<{ event: string; message: string }>;
+    const entry = events.find((e) => e.event === 'ownership-transferred');
+    expect(entry?.message).toContain(OWNER.email);
+    expect(entry?.message).toContain(HEIR.email);
+    expect(entry?.message).toContain('kept viewer');
+  });
+
+  it('refuses a server admin, who could otherwise hand the server to themselves', async () => {
+    await request(app).post(`/deployments/${deploymentId}/subusers`).send({ email: HEIR.email, role: 'admin' });
+    expect((await transfer({ email: HEIR.email }, buildApp(repo, [], HEIR))).status).toBe(403);
+  });
+
+  it('drops a share the recipient already held on their new server', async () => {
+    await request(app).post(`/deployments/${deploymentId}/subusers`).send({ email: HEIR.email, role: 'viewer' });
+    await transfer({ email: HEIR.email });
+    expect(await repo.getSubuserFor(deploymentId, HEIR.email)).toBeNull();
+    expect(await roleOf(HEIR)).toBe('owner');
+  });
+
+  it('needs an account that exists, and a valid address', async () => {
+    expect((await transfer({ email: 'nobody@example.com' })).status).toBe(404);
+    expect((await transfer({ email: 'not-an-address' })).status).toBe(400);
+    expect((await transfer({})).status).toBe(400);
+  });
+
+  it('refuses to hand the server to its current owner', async () => {
+    expect((await transfer({ email: OWNER.email })).status).toBe(400);
+  });
+});
