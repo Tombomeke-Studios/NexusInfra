@@ -14,6 +14,8 @@ import type {
   NodeRecord,
   RegisterNodeInput,
   SessionRecord,
+  ApiTokenRecord,
+  CreateApiTokenInput,
   CreateSessionInput,
   TransferOwnershipInput,
   UpdateServerConfigInput,
@@ -205,6 +207,47 @@ export class InMemoryRepository implements Repository {
   async touchSession(id: string, at: string): Promise<void> {
     const session = this.sessions.get(id);
     if (session) this.sessions.set(id, { ...session, lastSeenAt: at });
+  }
+
+  // ── API tokens (#228) ──────────────────────────────────────────────────────
+  private apiTokens = new Map<string, ApiTokenRecord>();
+
+  async createApiToken(input: CreateApiTokenInput): Promise<ApiTokenRecord> {
+    const token: ApiTokenRecord = {
+      id: randomUUID(),
+      userId: input.userId,
+      name: input.name,
+      tokenHash: input.tokenHash,
+      scopes: input.scopes,
+      createdAt: new Date().toISOString(),
+      lastUsedAt: null,
+      expiresAt: input.expiresAt ?? null,
+    };
+    this.apiTokens.set(token.id, token);
+    return token;
+  }
+
+  async getApiTokenByHash(tokenHash: string): Promise<ApiTokenRecord | null> {
+    return [...this.apiTokens.values()].find((t) => t.tokenHash === tokenHash) ?? null;
+  }
+
+  async listApiTokens(userId: string): Promise<ApiTokenRecord[]> {
+    return [...this.apiTokens.values()]
+      .filter((t) => t.userId === userId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async getApiToken(id: string): Promise<ApiTokenRecord | null> {
+    return this.apiTokens.get(id) ?? null;
+  }
+
+  async deleteApiToken(id: string): Promise<void> {
+    this.apiTokens.delete(id);
+  }
+
+  async touchApiToken(id: string, at: string): Promise<void> {
+    const token = this.apiTokens.get(id);
+    if (token) this.apiTokens.set(id, { ...token, lastUsedAt: at });
   }
 
   async registerNode(input: RegisterNodeInput): Promise<NodeRecord> {

@@ -5,7 +5,7 @@
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/next-Phase_5_·_Production-3b82f6?style=flat-square)
 ![Editions](https://img.shields.io/badge/editions-community_·_hosted-8b5cf6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-782_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-805_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -226,7 +226,7 @@ scrolling log lines describing events that never happened.
 - [x] Login is not rate limited on the orchestrator — nginx proxies past the gateway (#225) 🐛
 - [x] Password reset flow — admin-driven; the email variant waits on the notification service (#226)
 - [x] Sessions cannot be revoked — a deleted user's token stays valid (#227)
-- [ ] API tokens for scripted/CI access, scoped and revocable (#228)
+- [x] API tokens for scripted/CI access, scoped and revocable (#228)
 - [ ] Two-factor authentication (TOTP) + recovery codes (#229)
 - [x] Transfer server ownership — an owner who leaves orphans their servers (#230)
 

@@ -13,7 +13,7 @@ import { pipeSockets, toWsUrl, type DuplexSocket } from './wsProxy.js';
 import { createBillingProxyRouter } from './billingProxy.js';
 import { createMonitoringRouter } from './monitoring.js';
 import { createConfigRouter } from './config.js';
-import { createAccountRouter, createAuthRouter, createRequireAuth, createUserAdminRouter } from './auth.js';
+import { createAccountRouter, createAuthRouter, createRequireAuth, createUserAdminRouter, requireTokenScope } from './auth.js';
 import { createUserService } from './users.js';
 import { createTeamRouter } from './teams.js';
 import { createNodeRegistry } from './nodeRegistry.js';
@@ -116,6 +116,11 @@ app.use(catchAsync(createAuthRouter({ users, repo })));
 // Session-aware (#227): a valid signature is not enough, the session it names
 // must still exist — which is what makes signing out actually sign you out.
 app.use(createRequireAuth({ repo }));
+// Holds an API token to its scopes (#228). Mounted once, above every route, and
+// scoped by method rather than by a path table — a route added tomorrow is
+// covered without anyone remembering to add it. A person signing in has no
+// scopes and passes straight through.
+app.use(requireTokenScope);
 app.use(catchAsync(createAccountRouter({ users, repo })));
 app.use(catchAsync(createUserAdminRouter({ users, repo })));
 app.use(catchAsync(createTeamRouter({ repo })));
@@ -153,6 +158,11 @@ server.on('upgrade', async (req, socket, head) => {
 
   // Authentication: the JWT rides as a query param (browsers can't set WS
   // headers on the handshake).
+  //
+  // Only a JWT. An API token (#228) is not accepted here and is not meant to be:
+  // this opens an interactive root shell, the method-based scope rule would read
+  // the upgrade as a safe GET, and a script has `POST /exec` for the thing it
+  // actually needs.
   const token = url.searchParams.get('token');
   if (!token) return socket.destroy();
   let principal;

@@ -119,6 +119,37 @@ changing a password ends every *other* one, and a person can see where they are 
 of it. A token naming no session is refused outright, because an unrevocable token is what this
 replaced.
 
+### API tokens (#228)
+
+Everything required a JWT obtained by password login, so automating anything against the panel meant
+putting a person's password in a script. That is the worst credential available: it opens the whole
+account, it cannot be told apart from that person afterwards, and withdrawing it locks them out too.
+
+An API token is a second kind of bearer credential, presented the same way and resolving to the same
+account, with three properties the password did not have:
+
+- **It is stored as a digest only.** The secret is returned once, at creation, and never again; a
+  database that leaks yields nothing presentable. SHA-256 rather than bcrypt deliberately — the secret
+  is 256 random bits, so there is nothing to brute-force, and a slow hash on every request would be a
+  self-inflicted rate limit rather than a defence.
+- **It can be narrowed below the account.** Reading is always allowed; changing anything needs
+  `write`; and administering the panel needs `admin` on top of the account's platform role, because an
+  administrator's deploy token should not also be able to create accounts.
+- **It can be withdrawn on its own**, immediately, without touching the person's own access.
+
+Two decisions in that scoping are worth stating, because both were the alternative to something
+plausible and worse:
+
+- **Scope is enforced by HTTP method, not by a table of paths.** A path table is a second description
+  of the API that has to be kept in step with the first; the day it falls behind is the day a new
+  route is silently unscoped, and only for token callers. Every route is on one side of the safe/unsafe
+  line already, including routes nobody has written yet.
+- **A token cannot mint tokens.** One that could would not really be revocable — withdraw it and its
+  offspring keep working, which is the property the whole feature exists to provide.
+
+The interactive terminal WebSocket does not accept them at all: it opens a root shell, its handshake
+is a `GET`, and a script that needs to run a command has the exec route.
+
 ### Importing a host directory (#268)
 
 Mounting an existing directory into a server is the most dangerous capability in the panel, because

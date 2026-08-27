@@ -15,6 +15,8 @@ import type {
   NodeRecord,
   RegisterNodeInput,
   SessionRecord,
+  ApiTokenRecord,
+  CreateApiTokenInput,
   CreateSessionInput,
   TransferOwnershipInput,
   UpdateServerConfigInput,
@@ -111,6 +113,28 @@ function toSessionRecord(s: {
     lastSeenAt: s.lastSeenAt.toISOString(),
     userAgent: s.userAgent,
     ipAddress: s.ipAddress,
+  };
+}
+
+function toApiTokenRecord(t: {
+  id: string;
+  userId: string;
+  name: string;
+  tokenHash: string;
+  scopes: string;
+  createdAt: Date;
+  lastUsedAt: Date | null;
+  expiresAt: Date | null;
+}): ApiTokenRecord {
+  return {
+    id: t.id,
+    userId: t.userId,
+    name: t.name,
+    tokenHash: t.tokenHash,
+    scopes: t.scopes,
+    createdAt: t.createdAt.toISOString(),
+    lastUsedAt: iso(t.lastUsedAt),
+    expiresAt: iso(t.expiresAt),
   };
 }
 
@@ -382,6 +406,44 @@ export class PrismaRepository implements Repository {
 
   async touchSession(id: string, at: string): Promise<void> {
     await this.client.session.updateMany({ where: { id }, data: { lastSeenAt: new Date(at) } });
+  }
+
+  // ── API tokens (#228) ──────────────────────────────────────────────────────
+  async createApiToken(input: CreateApiTokenInput): Promise<ApiTokenRecord> {
+    const token = await this.client.apiToken.create({
+      data: {
+        id: randomUUID(),
+        userId: input.userId,
+        name: input.name,
+        tokenHash: input.tokenHash,
+        scopes: input.scopes,
+        expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
+      },
+    });
+    return toApiTokenRecord(token);
+  }
+
+  async getApiTokenByHash(tokenHash: string): Promise<ApiTokenRecord | null> {
+    const token = await this.client.apiToken.findUnique({ where: { tokenHash } });
+    return token ? toApiTokenRecord(token) : null;
+  }
+
+  async listApiTokens(userId: string): Promise<ApiTokenRecord[]> {
+    const rows = await this.client.apiToken.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } });
+    return rows.map(toApiTokenRecord);
+  }
+
+  async getApiToken(id: string): Promise<ApiTokenRecord | null> {
+    const token = await this.client.apiToken.findUnique({ where: { id } });
+    return token ? toApiTokenRecord(token) : null;
+  }
+
+  async deleteApiToken(id: string): Promise<void> {
+    await this.client.apiToken.deleteMany({ where: { id } });
+  }
+
+  async touchApiToken(id: string, at: string): Promise<void> {
+    await this.client.apiToken.updateMany({ where: { id }, data: { lastUsedAt: new Date(at) } });
   }
 
   async registerNode(input: RegisterNodeInput): Promise<NodeRecord> {

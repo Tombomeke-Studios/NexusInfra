@@ -220,3 +220,19 @@ model DeploymentEvent {
   message      String
   timestamp    DateTime   @default(now())
 }
+
+// A non-interactive credential belonging to one account (#228). The secret is
+// never stored — only its digest — so a stolen database yields no usable tokens.
+model ApiToken {
+  id         String    @id
+  userId     String
+  name       String
+  tokenHash  String    @unique
+  // Space-separated; absent write/admin means the token is read-only.
+  scopes     String    @default("")
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+
+  @@index([userId])
+}
