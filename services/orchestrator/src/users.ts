@@ -81,6 +81,8 @@ export interface PublicUser {
   displayName: string;
   platformRole: PlatformRole;
   createdAt: string;
+  /** Whether this account has confirmed a second factor (#229). Never the secret. */
+  twoFactorEnabled: boolean;
 }
 
 export function toPublicUser(user: UserRecord): PublicUser {
@@ -90,7 +92,21 @@ export function toPublicUser(user: UserRecord): PublicUser {
     displayName: user.displayName,
     platformRole: isPlatformRole(user.platformRole) ? user.platformRole : 'user',
     createdAt: user.createdAt,
+    // An allowlist, deliberately: totpSecret and passwordHash are on the record
+    // this is built from, and both are credentials.
+    twoFactorEnabled: Boolean(user.totpEnabledAt),
   };
+}
+
+/**
+ * Whether this installation insists on a second factor (#229).
+ *
+ * Off by default: a panel that suddenly demands a phone from everyone at upgrade
+ * time is a panel nobody can get into. Turning it on makes enrolment the only
+ * thing an un-enrolled account can do.
+ */
+export function isTotpRequired(): boolean {
+  return String(process.env.REQUIRE_TOTP ?? '').toLowerCase() === 'true';
 }
 
 export interface RegisterInput {
@@ -117,6 +133,13 @@ export interface UserService {
   resetPassword(userId: string, next: string): Promise<RegisterResult>;
   /** Seed or repair the first administrator. Safe to call on every start. */
   bootstrapOwner(input: { email: string; password: string; displayName?: string }): Promise<'created' | 'password-set' | 'exists'>;
+  /**
+   * Confirm the password of an already-signed-in account (#229).
+   *
+   * For the actions where holding the session is not enough — turning off a
+   * second factor with a stolen session would make the factor decorative.
+   */
+  confirmPassword(userId: string, password: string): Promise<boolean>;
 }
 
 export function createUserService(deps: { repo: Repository }): UserService {
@@ -199,5 +222,11 @@ export function createUserService(deps: { repo: Repository }): UserService {
     return { ok: true, user: updated };
   }
 
-  return { register, authenticate, changePassword, resetPassword, bootstrapOwner };
+  async function confirmPassword(userId: string, password: string): Promise<boolean> {
+    const user = await repo.getUser(userId);
+    if (!user || typeof password !== 'string' || !password) return false;
+    return verifyPassword(password, user.passwordHash);
+  }
+
+  return { register, authenticate, changePassword, resetPassword, bootstrapOwner, confirmPassword };
 }

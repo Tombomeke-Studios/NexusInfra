@@ -119,6 +119,45 @@ changing a password ends every *other* one, and a person can see where they are 
 of it. A token naming no session is refused outright, because an unrevocable token is what this
 replaced.
 
+### Two-factor authentication (#229)
+
+The panel hands out root shells inside containers and control over the Docker hosts behind them. A
+password was the whole defence, and a password is the credential people reuse.
+
+TOTP (RFC 6238) is implemented in `totp.ts` rather than taken as a dependency — it is HMAC-SHA1 over a
+counter, Node already has the HMAC, and the RFC publishes the test vectors the implementation is
+checked against. A dependency for forty lines is a dependency to keep current in an authentication
+path.
+
+- **Enrolment is two steps.** The secret is stored when enrolment starts and only *enabled* once the
+  person produces a code from it, so an abandoned enrolment leaves the account exactly as it was
+  rather than behind a code nobody ever scanned.
+- **Recovery codes come with it**, ten of them, shown once and stored as digests. Each works exactly
+  once. On a self-hosted panel there is no support desk and possibly no second administrator; without
+  these, turning 2FA on is a way to lose your own machines to a broken phone.
+- **Turning it off needs the password**, not just the session. A session is something someone else may
+  be holding; requiring the password is what makes the factor more than decoration.
+- **A code is accepted one step either side of now.** Phones drift and people type slowly; a zero
+  window rejects codes that were correct when they were read, which teaches people to distrust it.
+
+`REQUIRE_TOTP=true` makes it mandatory for the installation. That does **not** refuse the login of
+someone who has not enrolled — doing so would lock out everyone, including the only administrator, the
+moment the flag was switched on. They sign in and find every route but enrolment answering `403`, and
+enrolment hands back a fresh token. The claim rides on the token rather than being looked up, because
+it is a fact about *that login*: enrolling later must not retroactively bless a token minted before a
+code was ever asked for. The terminal WebSocket checks it too, since a root shell is the last place to
+honour such a token.
+
+Two consequences worth stating plainly:
+
+- **A missing code is answered differently from a wrong password.** That confirms the password was
+  correct — unavoidable, since the person has to be told to reach for their phone, and only ever said
+  to someone who already holds the password. A missing or wrong code still counts as a failed attempt
+  against the login limiter (#225), so the code field is not an unlimited guessing surface.
+- **API tokens are unaffected.** One was created by somebody who had already satisfied the
+  requirement, and blocking them would take CI down the moment the flag flips without adding a factor
+  any script could supply. A token cannot change how you sign in.
+
 ### API tokens (#228)
 
 Everything required a JWT obtained by password login, so automating anything against the panel meant

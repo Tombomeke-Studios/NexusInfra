@@ -30,6 +30,21 @@ model User {
   passwordHash String
   platformRole String   @default("user")
   createdAt    DateTime @default(now())
+  // Two-factor (#229). The secret is present from the moment enrolment starts;
+  // enabledAt is what says the person proved they can produce a code from it.
+  totpSecret    String?
+  totpEnabledAt DateTime?
+}
+
+// One unused recovery code (#229) — the answer to a lost phone. Stored as a
+// digest, deleted as it is used, so a code works exactly once.
+model RecoveryCode {
+  id       String   @id
+  userId   String
+  codeHash String   @unique
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 // One signed-in session (#227).

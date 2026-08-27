@@ -95,6 +95,8 @@ function toUserRecord(u: PrismaUser): UserRecord {
     passwordHash: u.passwordHash,
     platformRole: u.platformRole,
     createdAt: u.createdAt.toISOString(),
+    totpSecret: u.totpSecret,
+    totpEnabledAt: iso(u.totpEnabledAt),
   };
 }
 
@@ -444,6 +446,39 @@ export class PrismaRepository implements Repository {
 
   async touchApiToken(id: string, at: string): Promise<void> {
     await this.client.apiToken.updateMany({ where: { id }, data: { lastUsedAt: new Date(at) } });
+  }
+
+  // ── Two-factor (#229) ──────────────────────────────────────────────────────
+  async setUserTotp(id: string, totp: { secret: string | null; enabledAt: string | null }): Promise<UserRecord | null> {
+    try {
+      const user = await this.client.user.update({
+        where: { id },
+        data: { totpSecret: totp.secret, totpEnabledAt: totp.enabledAt ? new Date(totp.enabledAt) : null },
+      });
+      return toUserRecord(user);
+    } catch {
+      return null; // no such user
+    }
+  }
+
+  async replaceRecoveryCodes(userId: string, codeHashes: string[]): Promise<void> {
+    // One transaction: a person left with the old codes deleted and the new ones
+    // unwritten has no way back into their own account.
+    await this.client.$transaction([
+      this.client.recoveryCode.deleteMany({ where: { userId } }),
+      ...codeHashes.map((codeHash) => this.client.recoveryCode.create({ data: { id: randomUUID(), userId, codeHash } })),
+    ]);
+  }
+
+  async consumeRecoveryCode(userId: string, codeHash: string): Promise<boolean> {
+    // deleteMany rather than find-then-delete: the delete is the check, so two
+    // simultaneous logins cannot both spend the same code.
+    const { count } = await this.client.recoveryCode.deleteMany({ where: { userId, codeHash } });
+    return count > 0;
+  }
+
+  async countRecoveryCodes(userId: string): Promise<number> {
+    return this.client.recoveryCode.count({ where: { userId } });
   }
 
   async registerNode(input: RegisterNodeInput): Promise<NodeRecord> {
