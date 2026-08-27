@@ -10,8 +10,8 @@ import { principalOf, requirePlatformAdmin } from './auth.js';
 import { accessGuard, accessOf, requirePermission } from './accessGuard.js';
 import { isGrantableRole, resolveRole } from './access.js';
 import { createServerTeamRouter } from './teams.js';
-import { EGGS, getEgg, buildEggDeployment, EggValidationError } from './eggs.js';
-import { containerMemoryMb, heapBudgetProblem, parseMemoryMb } from './memory.js';
+import { EGGS, getEgg, buildEggDeployment, EggValidationError, type Egg } from './eggs.js';
+import { containerMemoryMb, derivedHeapMb, formatHeapMb, heapBudgetProblem, parseMemoryMb } from './memory.js';
 import { nodeCapacity, availableRamMb, availableCpuCores, isOverCommitted } from './capacity.js';
 import { containerNameFor } from './containerName.js';
 import { planTransfer } from './transfer.js';
@@ -226,9 +226,12 @@ export function createApiRouter(deps: ApiDeps): Router {
     // merged. An egg that could be overridden would be a suggestion, not a recipe
     // — you could run any image at all and still be labelled a Minecraft server.
     let spec: { dockerImage: string; ports: Record<string, string>; env: Record<string, string>; type: string; dataPath?: string };
+    // Kept in scope past the branch: the heap is derived from the memory cap
+    // below (#308), and only the egg knows which variable the heap is.
+    let egg: Egg | null = null;
     if (eggId !== undefined) {
       if (typeof eggId !== 'string') return res.status(400).json({ error: 'eggId must be a string' });
-      const egg = getEgg(eggId);
+      egg = getEgg(eggId);
       if (!egg) return res.status(400).json({ error: `unknown egg ${eggId}` });
       try {
         const built = buildEggDeployment(egg, (eggValues ?? {}) as Record<string, string>, ports as Record<string, string> | undefined);
@@ -310,6 +313,21 @@ export function createApiRouter(deps: ApiDeps): Router {
     // killed mid-save, reported only as "crashed". Checked here because the cap is
     // a percentage of *this* node, so the answer needs the node.
     const limits: ResourceLimits = resourceLimits && typeof resourceLimits === 'object' ? resourceLimits : {};
+
+    // The heap follows the cap unless somebody asked for a specific one (#308).
+    // Two fields for one pool of memory is the same question in two units, and
+    // the defaults collided: 50% of a 4 GB node is a 2048 MB cap, against a `2G`
+    // heap default that needs ~2560 MB — so an untouched form was refused on a
+    // small node and accepted on a large one.
+    //
+    // Derived server-side rather than in the form, so a caller that skips the
+    // panel gets a heap that fits too. That is why eggs.ts validates here at all.
+    if (egg?.memoryVariable) {
+      const askedFor = (eggValues as Record<string, string> | undefined)?.[egg.memoryVariable];
+      const derived = derivedHeapMb(containerMemoryMb(limits, node.ramTotalMb), askedFor);
+      if (derived != null) spec.env[egg.memoryVariable] = formatHeapMb(derived);
+    }
+
     const heapProblem = heapProblemFor(spec, limits, node);
     if (heapProblem) return res.status(400).json({ error: heapProblem });
 
@@ -465,8 +483,24 @@ export function createApiRouter(deps: ApiDeps): Router {
     const deployment = await repo.getDeployment(req.params.id);
     const node = deployment?.nodeId ? (await repo.listNodes()).find((n) => n.id === deployment.nodeId) : undefined;
     if (node) {
-      const nextEnv = patch.env ?? existing.env;
+      let nextEnv = patch.env ?? existing.env;
       const nextLimits = patch.resourceLimits ?? existing.resourceLimits;
+
+      // The same rule as at creation, and deliberately the same rule on *every*
+      // write (#308): the heap is derived from the cap unless this request names
+      // one. So raising the memory limit raises the heap with it, instead of
+      // being refused for a heap the person never chose — and an override has to
+      // be re-sent to survive, which keeps the intent in the request rather than
+      // in hidden state nobody can see or correct.
+      if (egg?.memoryVariable) {
+        const askedFor = (eggValues as Record<string, string> | undefined)?.[egg.memoryVariable];
+        const derived = derivedHeapMb(containerMemoryMb(nextLimits, node.ramTotalMb), askedFor);
+        if (derived != null) {
+          nextEnv = { ...nextEnv, [egg.memoryVariable]: formatHeapMb(derived) };
+          patch.env = nextEnv;
+        }
+      }
+
       const problem = heapProblemFor({ type: existing.type, env: nextEnv }, nextLimits, node);
       if (problem) return res.status(400).json({ error: problem });
     }
@@ -626,6 +660,24 @@ export function createApiRouter(deps: ApiDeps): Router {
 
   // Node health is what the Overview renders, so it stays readable to any
   // signed-in user; changing the fleet does not.
+  /**
+   * Which node an automatically-placed server would land on right now (#309).
+   *
+   * The form used to work this out itself, to turn "50% of RAM" into a number of
+   * megabytes. Its rule was not this rule — it filtered neither unhealthy nor
+   * draining nodes and scored unknown metrics differently — so with two or more
+   * nodes it could show the cap, the headroom and the heap check for a machine
+   * the server was never going to land on. A plausible number about the wrong
+   * host is worse than no number (#250).
+   *
+   * A preview, not a reservation: placement is decided again at creation, and
+   * between the two the fleet can move.
+   */
+  router.get('/placement', async (_req: Request, res: Response) => {
+    const node = selectNode(await repo.listNodes(), Date.now());
+    res.json({ nodeId: node?.id ?? null });
+  });
+
   router.get('/nodes', async (_req: Request, res: Response) => {
     const now = Date.now();
     const nodes = await repo.listNodes();

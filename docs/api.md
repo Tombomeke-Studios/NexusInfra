@@ -307,13 +307,25 @@ the **resolved real path** after symlinks, and the agent re-checks at start rath
 event. `403` for a non-administrator, `400` when the node refuses the path or when no egg says where
 to mount it.
 
-**Memory (#271):** an egg may name the variable that is its JVM heap. The container's `Memory` cap is
-`ramPercent%` of the node's total RAM and the kernel enforces it absolutely, while the JVM *commits*
-its heap — so a heap that does not fit is a container killed mid-save, not a slow server. A create or
-edit whose heap plus the JVM's own overhead (a quarter of the heap, floor 512 MB) exceeds the cap is
-refused with `400`, and the message is in MB: a percentage of a node you have not measured is not a
-number anyone can act on. The check is silent when anything is unknown — no cap, a node that has not
-reported its RAM, or a value that is not a memory size.
+**Memory (#271, #308):** an egg may name the variable that is its JVM heap. The container's `Memory`
+cap is `ramPercent%` of the node's total RAM and the kernel enforces it absolutely, while the JVM
+*commits* its heap — so a heap that does not fit is a container killed mid-save, not a slow server.
+
+**The heap is derived from the cap unless the request names one.** Asking for both is asking the same
+question twice in two different units, and the defaults collided: 50% of a 4 GB node is a 2048 MB cap
+against a `2G` heap default that needs ~2560 MB, so an untouched request was refused on a small node
+and accepted on a large one. Omitting the heap variable from `eggValues` yields the largest heap that
+leaves the JVM its overhead; sending one keeps that value. Note *omitting*, not blanking — an egg
+reads a blank value as "use my default", which is the constant this replaced.
+
+Deriving is skipped where there is nothing honest to derive from: an uncapped server, or a node that
+has never reported its RAM. A cap too small for any heap at all is refused with `400` saying exactly
+that, rather than suggesting a 0 MB heap.
+
+A create or edit whose heap plus the JVM's own overhead (a quarter of the heap, floor 512 MB) exceeds
+the cap is still refused with `400`, and the message is in MB: a percentage of a node you have not
+measured is not a number anyone can act on. The check is silent when anything is unknown — no cap, a
+node that has not reported its RAM, or a value that is not a memory size.
 
 `nodeId` pins the server to a specific node (#254); omit it to let the Orchestrator place it on the
 least-loaded healthy node. A pin is honoured or refused, never silently reassigned — `400` for an
@@ -387,12 +399,27 @@ A single deployment with its full `events` audit trail **and the runtime configu
 with** — `ports`, `env`, `resourceLimits` and `autoRestart` — which the panel's Network and Startup
 tabs render. `404` if unknown (also when the caller has no access, so ids cannot be probed).
 
+### `GET /placement`
+
+Which node an automatically-placed server would land on right now → `{ "nodeId": "node-a" }`, or
+`{ "nodeId": null }` when nothing is eligible (#309).
+
+A **preview, not a reservation**: placement is decided again at creation, and the fleet can move in
+between. It exists so the panel can turn "50% of RAM" into a number of megabytes without
+reimplementing `selectNode` — its own version filtered neither unhealthy nor draining nodes, so with
+two or more nodes it could describe a machine the server was never going to land on.
+
 ### `PATCH /deployments/:id`
 
 Change an existing server's configuration (#220). Body may carry any of `name`, `dockerImage`,
 `ports`, `env`, `resourceLimits`, `autoRestart`; **an omitted field is left alone**, so a partial
 edit never blanks the rest. Requires `server.edit` (server admin and up — an operator may run a
 server but not redefine it).
+
+For a server built from an egg with a heap (#308), the heap is **re-derived from the memory limit on
+every write unless the request names one**. So raising the memory limit raises the heap with it,
+rather than being refused for a heap the person never chose — and an override has to be re-sent to
+survive, which keeps the intent in the request instead of in hidden state nobody can see or correct.
 
 A server created from an egg is edited **through that egg** (#272): send `eggValues` instead of
 `env`, and the same rules apply as at creation — unknown keys dropped, values validated by the name

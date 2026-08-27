@@ -1,11 +1,11 @@
 import { useEffect, useState, type FormEvent, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createDeployment, listNodes, listEggs, type NodeView, type Egg, type EggVariable } from '../api';
+import { createDeployment, listNodes, listEggs, getPlacement, type NodeView, type Egg, type EggVariable } from '../api';
 import { IconPlus } from '../components/Icons';
 import { useToast } from '../components/Toast';
 import { InfoHint } from '../components/InfoHint';
 import { getDeploymentDefaults } from '../prefs';
-import { parseMemoryMb, jvmOverheadMb } from '../memory';
+import { parseMemoryMb, jvmOverheadMb, derivedHeapMb, formatHeapMb } from '../memory';
 
 // New Deployment — ported from the redesign. The deploy sends name, image, ports,
 // env, the resource limits + restart policy, the kind and the chosen placement,
@@ -23,6 +23,19 @@ const rowsToRecord = (rows: Row[]) => {
 };
 const limitColor = (v: number) => (v >= 85 ? 'var(--color-danger)' : v >= 65 ? 'var(--color-warning)' : 'var(--color-primary)');
 
+/**
+ * A copy without one key — used to *omit* the heap, which is what asks the API to
+ * derive it from the memory limit (#308).
+ *
+ * Omitted, not blanked: the egg reads an empty value as "use my default", which
+ * is the fixed `2G` this replaced.
+ */
+function withoutKey(values: Record<string, string>, key: string): Record<string, string> {
+  const copy = { ...values };
+  delete copy[key];
+  return copy;
+}
+
 export function NewDeployment() {
   // Seed the form from the user's saved defaults (#124); each field stays editable.
   const defaults = getDeploymentDefaults();
@@ -34,6 +47,12 @@ export function NewDeployment() {
   // Answers keyed by variable; a key absent here means "use the egg's default",
   // which is also how the API reads it.
   const [eggValues, setEggValues] = useState<Record<string, string>>({});
+  // The heap is a consequence of the memory limit, not a second setting for the
+  // same RAM (#308). Ticking this takes it back, and only then is a value sent —
+  // an absent one is what tells the API to derive.
+  const [ownHeap, setOwnHeap] = useState(false);
+  // Which node automatic placement would land on, as the orchestrator sees it.
+  const [autoNodeId, setAutoNodeId] = useState<string | null>(null);
   // Importing an existing directory (#268) — platform admins only; the node checks
   // the path and refuses anything outside its import root.
   const [dataPath, setDataPath] = useState('');
@@ -62,6 +81,10 @@ export function NewDeployment() {
     listNodes()
       .then(setNodes)
       .catch(() => {});
+    // Which node automatic placement would choose, from the orchestrator (#309).
+    getPlacement()
+      .then((p) => setAutoNodeId(p.nodeId))
+      .catch(() => {});
     listEggs()
       .then((list) => {
         setEggs(list);
@@ -72,6 +95,8 @@ export function NewDeployment() {
 
   const egg = eggs.find((e) => e.id === eggId) ?? null;
   const setEggValue = (key: string, value: string) => setEggValues((prev) => ({ ...prev, [key]: value }));
+  /** Which egg variable is the JVM heap, when this egg has one (#308). */
+  const heapVariable = egg?.memoryVariable;
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -84,7 +109,14 @@ export function NewDeployment() {
       await createDeployment({
         name,
         ...(fromEgg
-          ? { eggId: egg.id, eggValues, ports: rowsToRecord(ports), ...(dataPath.trim() ? { dataPath: dataPath.trim() } : {}) }
+          ? {
+              eggId: egg.id,
+              // Sending no heap is what asks the API to derive one from the limit
+              // (#308); sending one is how an override survives.
+              eggValues: heapVariable && !ownHeap ? withoutKey(eggValues, heapVariable) : eggValues,
+              ports: rowsToRecord(ports),
+              ...(dataPath.trim() ? { dataPath: dataPath.trim() } : {}),
+            }
           : { dockerImage, ports: rowsToRecord(ports), env: rowsToRecord(env), type: 'app' }),
         // 'auto' means "you pick"; anything else is a deliberate pin the API honours (#254).
         nodeId: placement === 'auto' ? undefined : placement,
@@ -109,23 +141,38 @@ export function NewDeployment() {
     }
   };
 
-  // Placement headroom (from the selected/emptiest node's live usage).
-  const usedCpu = (n: NodeView) => Math.round(n.cpuPercent ?? 0);
-  const usedRam = (n: NodeView) => (n.ramUsedMb != null && n.ramTotalMb ? Math.round((n.ramUsedMb / n.ramTotalMb) * 100) : 0);
-  const target = placement === 'auto' ? [...nodes].sort((a, b) => usedCpu(a) + usedRam(a) - (usedCpu(b) + usedRam(b)))[0] : nodes.find((n) => n.id === placement);
+  // Which node this will land on. Asked of the orchestrator rather than worked
+  // out here (#309): the form's own rule filtered neither unhealthy nor draining
+  // nodes and scored unknown metrics differently, so with two or more nodes every
+  // figure below — the cap in MB, the headroom, the heap — could be about a
+  // machine the server was never going to land on.
+  const target = placement === 'auto' ? nodes.find((n) => n.id === autoNodeId) : nodes.find((n) => n.id === placement);
 
   // The container's memory cap in MB on the node this will land on (#271).
   // `ramPercent` is a share of that node, so the same 50% is 2 GB on a small box
   // and 32 GB on a large one — showing the percentage alone tells nobody anything.
   const capMb = ramUnit === 'mb' ? ramMb : target?.ramTotalMb ? Math.round((ram / 100) * target.ramTotalMb) : null;
 
-  // Mirrors the orchestrator's rule so the clash is visible while you are setting
-  // it, not after the container is killed. The API is still the one that refuses.
-  const heapMb = egg?.memoryVariable ? parseMemoryMb(eggValues[egg.memoryVariable] ?? egg.variables.find((v) => v.key === egg.memoryVariable)?.default ?? '') : null;
+  // What the API will derive, mirrored so the number is visible while the slider
+  // moves rather than only after the server exists (#308). The API still decides.
+  const derivedHeap = heapVariable ? derivedHeapMb(capMb) : null;
+
+  // The heap actually in play: theirs when they took it over, otherwise ours.
+  const heapMb = egg?.memoryVariable
+    ? ownHeap
+      ? parseMemoryMb(eggValues[egg.memoryVariable] ?? egg.variables.find((v) => v.key === egg.memoryVariable)?.default ?? '')
+      : derivedHeap
+    : null;
+
+  // Only reachable with a heap somebody chose: a derived one fits by construction.
   const heapWarning =
-    kind === 'game' && heapMb != null && capMb != null && heapMb + jvmOverheadMb(heapMb) > capMb
+    kind === 'game' && ownHeap && heapMb != null && capMb != null && heapMb + jvmOverheadMb(heapMb) > capMb
       ? `A ${heapMb} MB heap will not fit a ${capMb} MB limit — Java claims the whole heap up front and needs roughly ${jvmOverheadMb(heapMb)} MB more for itself. Raise the RAM limit or lower the heap.`
       : null;
+
+  // A limit no JVM can run in at all — say that, rather than showing no heap and
+  // letting the create fail with an error about a heap nobody set.
+  const heapTooSmall = kind === 'game' && Boolean(egg?.memoryVariable) && !ownHeap && capMb != null && derivedHeap == null;
 
   // What is genuinely left to hand out, from the orchestrator (#275): total minus
   // what is already *committed* to other servers. The old figure here was live
@@ -241,9 +288,13 @@ export function NewDeployment() {
                 <>
                   <p className="subtle" style={{ margin: '0 0 16px', fontSize: '.84rem' }}>{egg.description}</p>
                   {/* Rendered from the egg, so a new egg needs no dashboard change. */}
-                  {egg.variables.map((v) => (
-                    <EggField key={v.key} variable={v} value={eggValues[v.key] ?? v.default} onChange={(val) => setEggValue(v.key, val)} />
-                  ))}
+                  {/* Every variable except the heap, which follows the memory
+                      limit further down rather than being asked for twice (#308). */}
+                  {egg.variables
+                    .filter((v) => v.key !== egg.memoryVariable)
+                    .map((v) => (
+                      <EggField key={v.key} variable={v} value={eggValues[v.key] ?? v.default} onChange={(val) => setEggValue(v.key, val)} />
+                    ))}
                   <span className="subtle" style={{ display: 'block', fontSize: '.8rem', marginBottom: 14 }}>
                     Publishes port {Object.keys(egg.ports)[0]} by default — override it under Ports below.
                   </span>
@@ -385,6 +436,44 @@ export function NewDeployment() {
                     : undefined
               }
             />
+            {kind === 'game' && egg?.memoryVariable && (
+              <div className="field" style={{ marginTop: 4 }}>
+                <span className="field__label">
+                  Java heap
+                  <InfoHint
+                    text="Java claims its heap up front, so it is taken whether the server needs it or not. It has to fit inside the memory limit above with room for Java itself — so it follows that limit instead of being a second number to keep in step."
+                    label="Java heap help"
+                  />
+                </span>
+
+                {ownHeap ? (
+                  <EggField
+                    variable={egg.variables.find((v) => v.key === egg.memoryVariable)!}
+                    value={eggValues[egg.memoryVariable] ?? formatHeapMb(derivedHeap ?? 0)}
+                    onChange={(val) => setEggValue(egg.memoryVariable!, val)}
+                  />
+                ) : heapTooSmall ? (
+                  <p role="alert" className="alert alert--error" style={{ margin: '0 0 8px', fontSize: '.82rem' }}>
+                    A {capMb} MB limit is too small to run a Java server at all — Java needs several hundred megabytes
+                    beyond its heap. Raise the memory limit above.
+                  </p>
+                ) : derivedHeap != null ? (
+                  <p className="subtle" style={{ margin: '0 0 8px', fontSize: '.84rem' }}>
+                    <strong className="mono">{derivedHeap} MB</strong>, from the {capMb} MB limit above. The remaining{' '}
+                    {capMb != null ? capMb - derivedHeap : 0} MB is for Java itself — metaspace, threads and buffers.
+                  </p>
+                ) : (
+                  <p className="subtle" style={{ margin: '0 0 8px', fontSize: '.84rem' }}>
+                    Set by the image, because this server has no memory limit to derive one from.
+                  </p>
+                )}
+
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '.82rem' }}>
+                  <input type="checkbox" checked={ownHeap} onChange={(e) => setOwnHeap(e.target.checked)} />
+                  Set the heap myself
+                </label>
+              </div>
+            )}
             {heapWarning && (
               <p role="alert" className="alert alert--error" style={{ margin: '4px 0 14px', fontSize: '.82rem' }}>
                 {heapWarning}

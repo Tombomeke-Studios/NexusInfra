@@ -1549,3 +1549,158 @@ describe('listing servers: search, filter and paging (#237)', () => {
     expect(res.body.items[0]).toMatchObject({ role: 'owner' });
   });
 });
+
+describe('the Java heap follows the memory limit (#308)', () => {
+  let repo: InMemoryRepository;
+  let app: express.Express;
+
+  /** A node with a known amount of RAM, so a percentage means something. */
+  async function nodeWithRam(ramTotalMb: number, id = 'node-local') {
+    await repo.upsertNode({ id, name: id, lastHeartbeat: new Date().toISOString(), cpuPercent: 5, cpuCores: 4, ramUsedMb: 500, ramTotalMb });
+  }
+
+  const create = (body: Record<string, unknown>) =>
+    request(app).post('/deployments').send({ name: 'mc', eggId: 'minecraft-java', ...body });
+
+  const heapOf = async (id: string) => (await repo.getDeploymentConfig(id))?.env.MEMORY;
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    app = buildApp(repo, []);
+    await seedUser(repo);
+  });
+
+  it('derives the heap from the cap instead of asking for it twice', async () => {
+    await nodeWithRam(8192);
+    const res = await create({ resourceLimits: { ramPercent: 50 } });
+
+    expect(res.status).toBe(201);
+    // 50% of 8 GB is a 4096 MB cap; the biggest heap that leaves the JVM its
+    // overhead inside that is 3276 MB.
+    expect(await heapOf(res.body.id)).toBe('3276M');
+  });
+
+  it('accepts the defaults on a node too small for the old fixed 2G heap', async () => {
+    // This is the bug in one line: 50% of 4 GB is a 2048 MB cap, and the egg's
+    // `2G` default needs ~2560 MB. An untouched form used to be refused here and
+    // accepted on a bigger node — the same form, a different answer.
+    await nodeWithRam(4096);
+    const res = await create({ resourceLimits: { ramPercent: 50 } });
+
+    expect(res.status).toBe(201);
+    expect(await heapOf(res.body.id)).toBe('1536M');
+  });
+
+  it('moves the heap with the limit, both ways', async () => {
+    await nodeWithRam(16384);
+    const small = await create({ resourceLimits: { ramPercent: 10 } });
+    const large = await create({ name: 'mc2', resourceLimits: { ramPercent: 75 } });
+
+    expect(await heapOf(small.body.id)).toBe('1126M');
+    expect(await heapOf(large.body.id)).toBe('9830M');
+  });
+
+  it('honours a heap somebody asked for, and still refuses one that cannot fit', async () => {
+    await nodeWithRam(8192);
+    const chosen = await create({ resourceLimits: { ramPercent: 50 }, eggValues: { MEMORY: '1G' } });
+    expect(await heapOf(chosen.body.id)).toBe('1G');
+
+    const impossible = await create({ name: 'mc3', resourceLimits: { ramPercent: 10 }, eggValues: { MEMORY: '4G' } });
+    expect(impossible.status).toBe(400);
+    expect(impossible.body.error).toMatch(/heap/i);
+  });
+
+  it('leaves the egg default alone when there is no cap to derive from', async () => {
+    // An uncapped server: there is no number to derive from, and inventing one
+    // would be #250 again.
+    await nodeWithRam(8192);
+    const res = await create({ resourceLimits: {} });
+    expect(await heapOf(res.body.id)).toBe('2G');
+  });
+
+  it('refuses a limit too small for any Java server, saying so plainly', async () => {
+    await nodeWithRam(4096);
+    const res = await create({ resourceLimits: { ramMb: 256 } });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('too small for a Java server');
+  });
+
+  it('re-derives the heap when the limit is raised later', async () => {
+    // Raising the memory used to be refused for a heap the person never chose.
+    await nodeWithRam(8192);
+    const created = await create({ resourceLimits: { ramPercent: 25 } });
+    // A 2048 MB cap: below the crossover the flat 512 MB floor binds, not the 25%.
+    expect(await heapOf(created.body.id)).toBe('1536M');
+
+    const edit = await request(app)
+      .patch(`/deployments/${created.body.id}`)
+      .send({ resourceLimits: { ramPercent: 75 } });
+
+    expect(edit.status).toBe(200);
+    expect(await heapOf(created.body.id)).toBe('4915M');
+  });
+
+  it('still lets an edit name its own heap', async () => {
+    await nodeWithRam(8192);
+    const created = await create({ resourceLimits: { ramPercent: 50 } });
+
+    const edit = await request(app)
+      .patch(`/deployments/${created.body.id}`)
+      .send({ eggValues: { MEMORY: '2G' } });
+
+    expect(edit.status).toBe(200);
+    expect(await heapOf(created.body.id)).toBe('2G');
+  });
+});
+
+describe('placement preview (#309)', () => {
+  let repo: InMemoryRepository;
+  let app: express.Express;
+
+  const beat = (over: Record<string, unknown> = {}) => ({
+    lastHeartbeat: new Date().toISOString(),
+    cpuPercent: 10,
+    ramUsedMb: 1000,
+    ramTotalMb: 8192,
+    ...over,
+  });
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    app = buildApp(repo, []);
+    await seedUser(repo);
+  });
+
+  it('names the node a new server would land on', async () => {
+    await repo.upsertNode({ id: 'node-busy', name: 'node-busy', ...beat({ cpuPercent: 90, ramUsedMb: 7000 }) });
+    await repo.upsertNode({ id: 'node-quiet', name: 'node-quiet', ...beat({ cpuPercent: 5, ramUsedMb: 500 }) });
+
+    expect((await request(app).get('/placement')).body).toEqual({ nodeId: 'node-quiet' });
+  });
+
+  it('agrees with where the server actually lands', async () => {
+    // The whole point of the route: one implementation, so the preview and the
+    // placement cannot drift apart.
+    await repo.upsertNode({ id: 'node-busy', name: 'node-busy', ...beat({ cpuPercent: 90, ramUsedMb: 7000 }) });
+    await repo.upsertNode({ id: 'node-quiet', name: 'node-quiet', ...beat({ cpuPercent: 5, ramUsedMb: 500 }) });
+
+    const preview = (await request(app).get('/placement')).body.nodeId;
+    const created = await request(app).post('/deployments').send({ name: 'x', dockerImage: 'nginx' });
+    expect(created.body.nodeId).toBe(preview);
+  });
+
+  it('skips a draining node, which the form’s own rule did not', async () => {
+    // An emptied host is the *most* attractive candidate to a load-based score,
+    // so this is exactly where the two rules disagreed (#258).
+    await repo.upsertNode({ id: 'node-draining', name: 'node-draining', ...beat({ cpuPercent: 1, ramUsedMb: 100 }) });
+    await repo.upsertNode({ id: 'node-normal', name: 'node-normal', ...beat({ cpuPercent: 50, ramUsedMb: 4000 }) });
+    await repo.registerNode({ id: 'node-draining', name: 'node-draining', maintenance: true });
+
+    expect((await request(app).get('/placement')).body).toEqual({ nodeId: 'node-normal' });
+  });
+
+  it('says so when there is nowhere to place anything', async () => {
+    expect((await request(app).get('/placement')).body).toEqual({ nodeId: null });
+  });
+});

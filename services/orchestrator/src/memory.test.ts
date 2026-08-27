@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { parseMemoryMb, containerMemoryMb, jvmOverheadMb, heapBudgetProblem, largestHeapForCap } from './memory.js';
+import {
+  parseMemoryMb,
+  containerMemoryMb,
+  jvmOverheadMb,
+  heapBudgetProblem,
+  largestHeapForCap,
+  derivedHeapMb,
+  formatHeapMb,
+} from './memory.js';
 
 // The two settings that control the same physical RAM (#271): the container cap
 // the kernel enforces, and the JVM heap the server actually commits.
@@ -99,5 +107,63 @@ describe('largestHeapForCap', () => {
   it('uses the flat floor for small caps and the proportional share for large ones', () => {
     expect(largestHeapForCap(2048)).toBe(1536); // 2048 - 512
     expect(largestHeapForCap(16384)).toBe(13107); // 4/5 of the cap
+  });
+});
+
+describe('derivedHeapMb (#308)', () => {
+  it('fills the cap, leaving the JVM its overhead', () => {
+    // The whole point: one number is chosen, the other follows from it.
+    expect(derivedHeapMb(8192)).toBe(6553);
+    expect(derivedHeapMb(2048)).toBe(1536);
+  });
+
+  it('always produces a heap that fits, for any cap it answers at all', () => {
+    for (let cap = 512; cap <= 65536; cap += 137) {
+      const heap = derivedHeapMb(cap);
+      if (heap == null) continue;
+      expect(heapBudgetProblem({ heapMb: heap, capMb: cap })).toBeNull();
+    }
+  });
+
+  it('leaves an explicitly chosen heap alone', () => {
+    // Their number stands; the budget check is what refuses it if it does not fit.
+    expect(derivedHeapMb(8192, '2G')).toBeNull();
+    expect(derivedHeapMb(8192, '512M')).toBeNull();
+  });
+
+  it('treats a blank value as no choice at all', () => {
+    // An empty field is somebody leaving it to us, not asking for nothing.
+    expect(derivedHeapMb(8192, '')).toBe(6553);
+    expect(derivedHeapMb(8192, '   ')).toBe(6553);
+    expect(derivedHeapMb(8192, null)).toBe(6553);
+  });
+
+  it('derives nothing when there is no cap to derive from', () => {
+    // An uncapped server, or a node that has never said how much RAM it has.
+    // Inventing a figure here is exactly what #250 was about.
+    expect(derivedHeapMb(null)).toBeNull();
+    expect(derivedHeapMb(0)).toBeNull();
+  });
+
+  it('derives nothing when the cap is too small to run a JVM at all', () => {
+    // Better to refuse with "raise the limit" than to hand out a 12 MB heap.
+    expect(derivedHeapMb(256)).toBeNull();
+    expect(derivedHeapMb(1023)).toBeNull();
+    expect(derivedHeapMb(1024)).toBe(512);
+  });
+});
+
+describe('formatHeapMb', () => {
+  it('writes what the JVM reads', () => {
+    expect(formatHeapMb(6553)).toBe('6553M');
+    expect(parseMemoryMb(formatHeapMb(6553))).toBe(6553);
+  });
+});
+
+describe('heapBudgetProblem on a cap too small for any heap', () => {
+  it('says the limit is the problem instead of suggesting a 0 MB heap', () => {
+    const problem = heapBudgetProblem({ heapMb: 2048, capMb: 256 });
+    expect(problem).toContain('too small for a Java server');
+    expect(problem).not.toMatch(/lower the heap to about 0 MB/);
   });
 });

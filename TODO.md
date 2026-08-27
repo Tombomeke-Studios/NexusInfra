@@ -5,7 +5,7 @@
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/next-Phase_5_·_Production-3b82f6?style=flat-square)
 ![Editions](https://img.shields.io/badge/editions-community_·_hosted-8b5cf6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-892_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-914_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -245,6 +245,9 @@ scrolling log lines describing events that never happened.
 - [ ] `nexusctl` — a CLI client for the panel (#240)
 
 ### 🐛 Bugs / fixes (open)
+
+- [x] The Java heap and the RAM limit are two settings for the same memory (#308)
+- [x] The New Deployment form guesses the placement node itself, and can guess wrong (#309) 🐛
 
 - [x] Delete server button is a no-op — wire `DELETE /deployments/:id` end to end (#156)
 - [x] Node Agent internal API was unauthenticated + host-published — token-guard it (#169)

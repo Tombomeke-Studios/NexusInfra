@@ -1314,14 +1314,28 @@ function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; o
               Reaches {containerPort} inside the container. Changing it takes effect on the next start.
             </span>
           </div>
-          {egg.variables.map((v) => (
-            <EggConfigField
-              key={v.key}
-              variable={v}
-              value={eggValues[v.key] ?? deployment.env?.[v.key] ?? v.default}
-              onChange={(val) => setEggValues((prev) => ({ ...prev, [v.key]: val }))}
-            />
-          ))}
+          {/*
+            The heap is not offered here (#308). It follows the memory limit, and
+            on every write the API derives it again unless one is sent — so a
+            field showing the stored value would look editable while quietly being
+            replaced. The limit is what to change, on the Settings tab.
+          */}
+          {egg.variables
+            .filter((v) => v.key !== egg.memoryVariable)
+            .map((v) => (
+              <EggConfigField
+                key={v.key}
+                variable={v}
+                value={eggValues[v.key] ?? deployment.env?.[v.key] ?? v.default}
+                onChange={(val) => setEggValues((prev) => ({ ...prev, [v.key]: val }))}
+              />
+            ))}
+          {egg.memoryVariable && (
+            <p className="subtle" style={{ margin: '0 0 14px', fontSize: '.82rem' }}>
+              Java heap: <strong className="mono">{deployment.env?.[egg.memoryVariable] ?? '—'}</strong>, derived from this
+              server&apos;s memory limit. Change the limit and the heap follows it.
+            </p>
+          )}
         </>
       ) : (
         <>
