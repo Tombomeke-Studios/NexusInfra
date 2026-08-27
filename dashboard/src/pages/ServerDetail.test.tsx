@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { ServerDetail } from './ServerDetail';
 import { ToastProvider } from '../components/Toast';
+import { DialogProvider } from '../components/Dialog';
 
 // The detail view offers only the actions the caller's role allows (#178). The
 // API enforces this regardless — these tests are about not presenting a button
@@ -42,9 +43,11 @@ function renderDetail(role?: string, overrides: Record<string, unknown> = {}) {
   render(
     <MemoryRouter initialEntries={['/servers/dep-1']}>
       <ToastProvider>
-        <Routes>
-          <Route path="/servers/:id" element={<ServerDetail />} />
-        </Routes>
+        <DialogProvider>
+          <Routes>
+            <Route path="/servers/:id" element={<ServerDetail />} />
+          </Routes>
+        </DialogProvider>
       </ToastProvider>
     </MemoryRouter>
   );
@@ -198,9 +201,11 @@ describe('ServerDetail Activity tab', () => {
     render(
       <MemoryRouter initialEntries={['/servers/dep-1']}>
         <ToastProvider>
-          <Routes>
-            <Route path="/servers/:id" element={<ServerDetail />} />
-          </Routes>
+          <DialogProvider>
+            <Routes>
+              <Route path="/servers/:id" element={<ServerDetail />} />
+            </Routes>
+          </DialogProvider>
         </ToastProvider>
       </MemoryRouter>
     );
@@ -274,9 +279,11 @@ describe('ServerDetail Settings tab', () => {
       render(
         <MemoryRouter initialEntries={['/servers/dep-1']}>
           <ToastProvider>
-            <Routes>
-              <Route path="/servers/:id" element={<ServerDetail />} />
-            </Routes>
+            <DialogProvider>
+              <Routes>
+                <Route path="/servers/:id" element={<ServerDetail />} />
+              </Routes>
+            </DialogProvider>
           </ToastProvider>
         </MemoryRouter>
       );
@@ -442,5 +449,38 @@ describe('ServerDetail ownership transfer (#230)', () => {
     renderDetail('admin');
     await screen.findByText('Your role: Admin');
     expect(screen.queryByRole('button', { name: /transfer server/i })).not.toBeInTheDocument();
+  });
+});
+
+describe('ServerDetail destructive actions ask first (#299)', () => {
+  beforeEach(() => vi.resetAllMocks());
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('does not delete until the dialog is confirmed, and names the server in it', async () => {
+    renderDetail('owner');
+    await userEvent.click(await screen.findByRole('button', { name: 'settings' }));
+    await userEvent.click(screen.getByRole('button', { name: /delete server/i }));
+
+    // The dialog names the server and what goes with it — the native one gave
+    // this the same single line as renaming a file.
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveAccessibleName(/shared-svc/);
+    expect(screen.getByText(/its files, its databases and its backups/i)).toBeInTheDocument();
+
+    const calls = () => (globalThis.fetch as unknown as { mock: { calls: [string, { method?: string }][] } }).mock.calls;
+    expect(calls().some(([, o]) => o?.method === 'DELETE')).toBe(false);
+
+    await userEvent.click(screen.getAllByRole('button', { name: /delete server/i }).pop()!);
+    expect(calls().some(([u, o]) => String(u).includes('/deployments/dep-1') && o?.method === 'DELETE')).toBe(true);
+  });
+
+  it('deletes nothing when the dialog is cancelled', async () => {
+    renderDetail('owner');
+    await userEvent.click(await screen.findByRole('button', { name: 'settings' }));
+    await userEvent.click(screen.getByRole('button', { name: /delete server/i }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+
+    const calls = (globalThis.fetch as unknown as { mock: { calls: [string, { method?: string }][] } }).mock.calls;
+    expect(calls.some(([, o]) => o?.method === 'DELETE')).toBe(false);
   });
 });

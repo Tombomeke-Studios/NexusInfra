@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { listNodes, listDeployments, deregisterNode, type NodeView, type DeploymentView } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
 import { useToast } from '../components/Toast';
+import { useDialog } from '../components/Dialog';
 
 // Node detail (#125): a per-node view with live CPU/RAM meters, a session-scoped
 // resource-history sparkline, the deployments hosted on it, and deregister. History
@@ -18,6 +19,7 @@ export function NodeDetail() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { confirm } = useDialog();
   const [node, setNode] = useState<NodeView | null>(null);
   const [deps, setDeps] = useState<DeploymentView[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -48,7 +50,13 @@ export function NodeDetail() {
   }, [load]);
 
   const deregister = async () => {
-    if (!window.confirm(`Deregister ${node?.name ?? id}? Its record is removed (the machine itself is untouched).`)) return;
+    const ok = await confirm({
+      title: `Deregister ${node?.name ?? id}?`,
+      message: 'Its record is removed from the panel. The machine itself is untouched, and it will reappear if its agent keeps sending heartbeats.',
+      confirmLabel: 'Deregister',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await deregisterNode(id);
       toast('Node deregistered', 'error', 'Node');

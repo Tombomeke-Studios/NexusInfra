@@ -5,7 +5,7 @@
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/next-Phase_5_·_Production-3b82f6?style=flat-square)
 ![Editions](https://img.shields.io/badge/editions-community_·_hosted-8b5cf6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-847_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-862_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -29,7 +29,7 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 | **5 · Production** | Multi-node, metrics, security hardening, Postgres, API Gateway | 📋 Backlog |
 | **6 · Sharing + releases** | Accounts · per-server authorization · invitations · teams · role-aware panel · per-edition release pipeline | ✅ Done (#173–#179) |
 | **7 · Say only what we do** | Close the gap between what the panel claims and what it does — mock tabs, dead buttons, unreachable APIs | ✅ Done (#217–#224) |
-| **8 · Accounts & security** | Login rate limit · password reset · session revocation · API tokens · 2FA · ownership transfer | 📋 Backlog (#225–#230) |
+| **8 · Accounts & security** | Login rate limit · password reset · session revocation · API tokens · 2FA · ownership transfer | ✅ Done (#225–#230) |
 | **9 · Depth** | Templates · backup retention · port pools · node migration · SFTP · notifications · list scale · CLI | 📋 Backlog (#231–#240) |
 
 ---
@@ -258,7 +258,7 @@ scrolling log lines describing events that never happened.
 
 ### Panel — replace the browser's own dialogs
 
-- [ ] Replace all 16 `window.confirm` / `window.prompt` calls with in-app dialogs (#299)
+- [x] Replace all 16 `window.confirm` / `window.prompt` calls with in-app dialogs (#299)
 
 ### 🏨 Hosted edition — what is missing (`edition:hosted`)
 
