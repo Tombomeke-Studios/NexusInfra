@@ -12,10 +12,12 @@ function jsonFor(url: string) {
       { id: 'node-local', name: 'node-local', health: 'healthy', cpuPercent: 12, ramUsedMb: 2000, ramTotalMb: 8000, lastHeartbeat: '', containerId: null, diskUsedGb: null, diskTotalGb: null },
     ];
   }
-  return [
+  // The list answers a page envelope now (#237); the overview walks the pages.
+  const items = [
     { id: 'd1', name: 'my-nginx', dockerImage: 'nginx', nodeId: 'node-local', containerId: 'abc', status: 'running', startedAt: '', stoppedAt: null, createdAt: '' },
     { id: 'd2', name: 'old', dockerImage: 'nginx', nodeId: 'node-local', containerId: null, status: 'stopped', startedAt: '', stoppedAt: '', createdAt: '' },
   ];
+  return { items, total: items.length, limit: 200, offset: 0 };
 }
 
 describe('Overview', () => {
@@ -48,10 +50,15 @@ describe('Overview', () => {
         json: async () =>
           String(url).includes('/nodes')
             ? [{ id: 'node-local', name: 'node-local', health: 'healthy', cpuPercent: 12, cpuCores: 6, ramUsedMb: 2000, ramTotalMb: 8000, lastHeartbeat: '', diskUsedGb: null, diskTotalGb: null }]
-            : [
-                { id: 'd1', name: 'a', dockerImage: 'nginx', nodeId: 'node-local', containerId: 'c', status: 'running', startedAt: '', stoppedAt: null, createdAt: '', resourceLimits: { cpuPercent: 30, ramPercent: 25 } },
-                { id: 'd2', name: 'b', dockerImage: 'nginx', nodeId: 'node-local', containerId: 'c', status: 'running', startedAt: '', stoppedAt: null, createdAt: '', resourceLimits: { cpuPercent: 10, ramPercent: 5 } },
-              ],
+            : {
+                items: [
+                  { id: 'd1', name: 'a', dockerImage: 'nginx', nodeId: 'node-local', containerId: 'c', status: 'running', startedAt: '', stoppedAt: null, createdAt: '', resourceLimits: { cpuPercent: 30, ramPercent: 25 } },
+                  { id: 'd2', name: 'b', dockerImage: 'nginx', nodeId: 'node-local', containerId: 'c', status: 'running', startedAt: '', stoppedAt: null, createdAt: '', resourceLimits: { cpuPercent: 10, ramPercent: 5 } },
+                ],
+                total: 2,
+                limit: 200,
+                offset: 0,
+              },
       } as Response)
     );
     render(<Overview />, { wrapper: MemoryRouter });

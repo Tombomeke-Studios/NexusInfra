@@ -15,6 +15,7 @@ import { containerMemoryMb, heapBudgetProblem, parseMemoryMb } from './memory.js
 import { nodeCapacity, availableRamMb, availableCpuCores, isOverCommitted } from './capacity.js';
 import { containerNameFor } from './containerName.js';
 import { planTransfer } from './transfer.js';
+import { pageOf, parseFilter, parsePage } from './deploymentQuery.js';
 import type { DeploymentDetail, NodeRecord, Repository, ServerConfigRecord, UpdateServerConfigInput } from './types.js';
 import type { ResourceLimits } from 'shared';
 
@@ -347,33 +348,51 @@ export function createApiRouter(deps: ApiDeps): Router {
 
   // Scoped to what the caller may see: their own servers plus the ones shared
   // with them. A platform administrator sees the whole installation.
+  /**
+   * The servers this caller may see, filtered and paged (#237).
+   *
+   * Answers an envelope — `{ items, total, limit, offset }` — rather than a bare
+   * array. A page of rows with no count beside it cannot tell a caller there is
+   * more, and a list that silently returns the first 25 of 200 is worse than the
+   * unbounded list it replaced.
+   */
   router.get('/deployments', async (req: Request, res: Response) => {
     const principal = principalOf(req);
+    const filter = parseFilter(req.query as Record<string, unknown>);
+    const page = parsePage(req.query as Record<string, unknown>);
+
     if (principal.platformRole === 'owner' || principal.platformRole === 'admin') {
-      return res.json((await repo.listDeployments()).map((d) => ({ ...d, role: 'owner' })));
+      const all = (await repo.listDeployments()).map((d) => ({ ...d, role: 'owner' as const }));
+      return res.json(pageOf(all, filter, page));
     }
+
     const caller = await repo.getUser(principal.id);
-    if (!caller) return res.json([]);
+    if (!caller) return res.json({ items: [], total: 0, limit: page.limit, offset: page.offset });
+
+    // Filter and cut the page *before* resolving roles: role resolution is two
+    // reads per row, and doing it for rows nobody is about to see is the kind of
+    // work that makes a list slow exactly when it is already long.
     const visible = await repo.listDeploymentsForUser(caller);
+    const selected = pageOf(visible, filter, page);
+
     // Each row carries the caller's role so the panel can offer only the actions
     // that will actually succeed (#178).
-    return res.json(
-      await Promise.all(
-        visible.map(async (d) => {
-          const share = await repo.getSubuserFor(d.id, caller.email);
-          return {
-            ...d,
-            role: resolveRole({
-              principal,
-              ownerId: d.userId,
-              teamId: d.teamId,
-              grant: share?.status === 'active' && share.userId === principal.id ? share : null,
-              membership: d.teamId ? await repo.getTeamMember(d.teamId, principal.id) : null,
-            }),
-          };
-        })
-      )
+    const items = await Promise.all(
+      selected.items.map(async (d) => {
+        const share = await repo.getSubuserFor(d.id, caller.email);
+        return {
+          ...d,
+          role: resolveRole({
+            principal,
+            ownerId: d.userId,
+            teamId: d.teamId,
+            grant: share?.status === 'active' && share.userId === principal.id ? share : null,
+            membership: d.teamId ? await repo.getTeamMember(d.teamId, principal.id) : null,
+          }),
+        };
+      })
     );
+    return res.json({ ...selected, items });
   });
 
   // Everything addressing one server passes through the guard, so a route added

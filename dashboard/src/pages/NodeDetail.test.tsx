@@ -38,7 +38,11 @@ describe('NodeDetail', () => {
       Promise.resolve({
         ok: true,
         status: 200,
-        json: async () => (typeof url === 'string' && url.includes('/nodes') ? [node] : deployments),
+        json: async () =>
+          typeof url === 'string' && url.includes('/nodes')
+            ? [node]
+            : // The list answers a page envelope now (#237).
+              { items: deployments, total: deployments.length, limit: 200, offset: 0 },
       } as Response)
     );
   });

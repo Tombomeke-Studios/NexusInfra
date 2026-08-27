@@ -353,8 +353,33 @@ lifts it. `400` if the body is not a boolean, `403` for non-administrators, `404
 
 ### `GET /deployments`
 
-List all deployments (newest first), each joined with its config name/image and current status
-(`pending | running | stopped | crashed | failed`).
+One page of the deployments the caller may see, newest first, each joined with its config name/image,
+current status (`pending | running | stopped | crashed | failed`) and the caller's `role` on it.
+
+**Answers an envelope, not an array** (#237):
+
+```
+{ "items": [ … ], "total": 137, "limit": 25, "offset": 0 }
+```
+
+`total` is the count *after* filtering, so a caller can always tell there is more. A bare page of rows
+cannot say that, and a list that silently returns the first 25 of 200 is worse than the unbounded one
+it replaced — which is why this is an envelope rather than a truncated array.
+
+| Query | Effect |
+|---|---|
+| `q` | Case-insensitive substring of the name |
+| `status` | Exact status |
+| `nodeId` | Exact node id, or `unassigned` for servers that landed nowhere |
+| `ownerId` | Exact owner account id |
+| `limit` | Page size — default `25`, capped at `200`, applied whether or not it is given |
+| `offset` | Where the page starts |
+
+Filters combine as "and". An unrecognised parameter is ignored rather than refused, so a stale
+bookmark still shows somebody their servers. Ordering is total (created time, then id), so paging
+never shows one row twice and hides another.
+
+Filtering happens after the caller's visibility is resolved, so it can never widen what they see.
 
 ### `GET /deployments/:id`
 
