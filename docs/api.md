@@ -181,6 +181,46 @@ somebody else has it — and leaves the one that made the change signed in, beca
 the page you just used is a punishment for doing the right thing. A token that names no session at all
 is refused: it cannot be revoked, which is the thing this replaced.
 
+### `GET /me/tokens` · `POST /me/tokens` · `DELETE /me/tokens/:id`
+
+API tokens for scripts and CI (#228). Automating anything used to mean storing a person's password in
+a script — a credential that opens the whole account, is indistinguishable from that person in a log,
+and cannot be withdrawn without locking them out too.
+
+A token is presented exactly like a JWT, as `Authorization: Bearer nxi_…`. It authenticates as the
+account that owns it, so per-server roles resolve exactly as they would for that person.
+
+| Method + path | Purpose |
+|---|---|
+| `GET /me/tokens` | Your tokens: name, scopes, created, last used, expiry. Never the secret or its digest |
+| `POST /me/tokens` | Mint one — body `{ name, scopes?, expiresAt? }` → `201` **including `secret`, the only time it is ever returned** |
+| `DELETE /me/tokens/:id` | Revoke → `204`, effective on the very next request |
+
+`scopes` is an array of `write` and/or `admin`:
+
+- **Reading is always allowed**; anything that changes state needs `write`. The rule is by HTTP
+  method, not by a table of paths — a path table is a second description of the API that has to be
+  kept in step with the first, and the day it falls behind is the day a new route is unscoped, only
+  for token callers.
+- **`admin` is separate** from the account's platform role. An administrator's CI token that deploys
+  should not also be able to create accounts, and whoever pastes it into a pipeline usually has no
+  idea it could.
+- A scope only ever narrows. A token can never do something its account cannot.
+
+Other rules worth stating:
+
+- **The secret is shown once.** Only its SHA-256 digest is stored, so a leaked database yields nothing
+  that can be presented at the door. (SHA-256, not bcrypt: the secret is 256 random bits, so there is
+  nothing to brute-force, and this runs on every request.)
+- **A token cannot mint tokens** (`403`) — one that could would not really be revocable, since its
+  offspring would outlive it.
+- **`expiresAt`** is optional; a token past it is refused without anyone deleting the row. A timestamp
+  already in the past is `400`.
+- Somebody else's token answers `404`, not `403`, so ids cannot be probed.
+- The token dies with its account, as a session does.
+- **The interactive terminal WebSocket does not accept API tokens** — it opens a root shell, the
+  handshake is a `GET`, and a script that needs to run a command has `POST /deployments/:id/exec`.
+
 ### `GET /users` · `POST /users`  *(platform administrators)*
 
 List accounts, and create one — the way people get access in the community edition. `POST` takes

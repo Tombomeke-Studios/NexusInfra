@@ -1,8 +1,20 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { canSelfRegister, isPlatformRole, toPublicUser, type PlatformRole, type UserService } from './users.js';
-import type { Repository } from './types.js';
+import type { ApiTokenRecord, Repository } from './types.js';
 import { createLoginLimiter, loginKeys, type LoginLimiter } from './loginLimiter.js';
+import {
+  formatScopes,
+  generateApiToken,
+  hashApiToken,
+  isApiScope,
+  isApiTokenSecret,
+  isExpired,
+  parseScopes,
+  scopeAllowsAdmin,
+  scopeAllowsMethod,
+  type ApiScope,
+} from './apiTokens.js';
 
 // Authentication for the panel (#174).
 //
@@ -30,6 +42,15 @@ export interface Principal {
    * token is exactly what this replaced.
    */
   sessionId?: string;
+  /**
+   * Set when the caller authenticated with an API token rather than a password
+   * login (#228). Its presence is what tells the scope guard there is anything
+   * to narrow: a person signing in has no scopes and is limited only by their
+   * roles.
+   */
+  tokenId?: string;
+  /** What this token may do, always a subset of what the account may do (#228). */
+  scopes?: ApiScope[];
 }
 
 /** Pluggable credential check — LocalAuthProvider today, FinVault later (#17). */
@@ -116,6 +137,21 @@ export function createRequireAuth(deps: { repo: Repository }) {
       return;
     }
 
+    // An API token is recognised by its prefix rather than by trying to verify it
+    // as a JWT and treating the failure as a hint (#228).
+    if (isApiTokenSecret(token)) {
+      const principal = await authenticateApiToken(deps.repo, token);
+      if (!principal) {
+        res.status(401).json({ error: 'invalid or expired API token' });
+        return;
+      }
+      const authed = req as AuthedRequest;
+      authed.principal = principal;
+      authed.userId = principal.id;
+      next();
+      return;
+    }
+
     let principal: Principal;
     try {
       principal = verifyToken(token);
@@ -151,6 +187,63 @@ export function createRequireAuth(deps: { repo: Repository }) {
   };
 }
 
+/** How often a token's last-used timestamp is written, for the same reason as sessions. */
+const TOKEN_TOUCH_INTERVAL_MS = 60_000;
+
+/**
+ * Resolve an API token into the account it belongs to (#228), or null.
+ *
+ * Looked up by digest, because the secret itself is never stored — a database
+ * that leaks yields nothing that can be presented at the door.
+ */
+export async function authenticateApiToken(repo: Repository, secret: string): Promise<Principal | null> {
+  const record = await repo.getApiTokenByHash(hashApiToken(secret));
+  if (!record) return null;
+  // An expiry makes a token die without anyone having to remember to delete it.
+  if (isExpired(record.expiresAt)) return null;
+
+  const user = await repo.getUser(record.userId);
+  // The account is gone, so the token is too — the same rule that makes a session
+  // stop working when its account does (#227).
+  if (!user) return null;
+
+  const now = Date.now();
+  if (!record.lastUsedAt || now - new Date(record.lastUsedAt).getTime() > TOKEN_TOUCH_INTERVAL_MS) {
+    await repo.touchApiToken(record.id, new Date(now).toISOString());
+  }
+
+  return {
+    id: user.id,
+    platformRole: isPlatformRole(user.platformRole) ? user.platformRole : 'user',
+    tokenId: record.id,
+    scopes: parseScopes(record.scopes),
+  };
+}
+
+/**
+ * Hold API tokens to their scopes (#228). Mount once, after authentication.
+ *
+ * Scoping is by method, not by a table of paths: a path table is a second
+ * description of the API that has to be kept in step with the first, and the day
+ * it falls behind is the day a new route is unscoped — silently, and only for
+ * the callers who use tokens. Every route is on one side of the safe/unsafe line
+ * already, including the ones nobody has written yet.
+ *
+ * A person signing in with a password has no scopes and is unaffected.
+ */
+export function requireTokenScope(req: Request, res: Response, next: NextFunction): void {
+  const { scopes } = principalOf(req);
+  if (!scopes) {
+    next();
+    return;
+  }
+  if (!scopeAllowsMethod(scopes, req.method)) {
+    res.status(403).json({ error: 'this API token is read-only; it needs the write scope' });
+    return;
+  }
+  next();
+}
+
 /** The caller of an authenticated request. Throws if used before `requireAuth`. */
 export function principalOf(req: Request): Principal {
   const principal = (req as AuthedRequest).principal;
@@ -160,9 +253,16 @@ export function principalOf(req: Request): Principal {
 
 /** Guards routes that administer the panel itself (nodes, accounts). */
 export function requirePlatformAdmin(req: Request, res: Response, next: NextFunction): void {
-  const { platformRole } = principalOf(req);
+  const { platformRole, scopes } = principalOf(req);
   if (platformRole !== 'owner' && platformRole !== 'admin') {
     res.status(403).json({ error: 'platform administrator role required' });
+    return;
+  }
+  // An administrator's token administers the panel only if it was asked to (#228).
+  // A CI token that deploys should not also be able to create accounts, and the
+  // account holding it usually has no idea it could.
+  if (scopes && !scopeAllowsAdmin(scopes)) {
+    res.status(403).json({ error: 'this API token does not have the admin scope' });
     return;
   }
   next();
@@ -319,7 +419,81 @@ export function createAccountRouter(deps: { users: UserService; repo: Repository
     res.status(204).end();
   });
 
+  // ── API tokens (#228) ──────────────────────────────────────────────────────
+
+  /**
+   * Your tokens. The digest never leaves the server — a list that returned it
+   * would make every one of these rows a credential again.
+   */
+  router.get('/me/tokens', async (req: Request, res: Response) => {
+    const principal = principalOf(req);
+    res.json((await repo.listApiTokens(principal.id)).map(toPublicToken));
+  });
+
+  /**
+   * Mint one. The secret is in this response and nowhere else, ever again.
+   *
+   * Only a password login may do this. A token that can mint tokens is a token
+   * that cannot really be revoked: withdraw it and its offspring keep working,
+   * which is the opposite of the property this feature exists to provide.
+   */
+  router.post('/me/tokens', async (req: Request, res: Response) => {
+    const principal = principalOf(req);
+    if (principal.tokenId) {
+      return res.status(403).json({ error: 'an API token cannot create API tokens; sign in to do this' });
+    }
+
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    if (!name) return res.status(400).json({ error: 'a name is required — it is how you recognise this token later' });
+
+    const requested: unknown = req.body?.scopes ?? [];
+    if (!Array.isArray(requested) || !requested.every(isApiScope)) {
+      return res.status(400).json({ error: 'scopes must be an array of "write" and/or "admin"' });
+    }
+
+    const expiresAt = req.body?.expiresAt;
+    if (expiresAt !== undefined && expiresAt !== null) {
+      if (typeof expiresAt !== 'string' || Number.isNaN(Date.parse(expiresAt))) {
+        return res.status(400).json({ error: 'expiresAt must be an ISO timestamp or null' });
+      }
+      if (isExpired(expiresAt)) return res.status(400).json({ error: 'expiresAt is already in the past' });
+    }
+
+    const { secret, hash } = generateApiToken();
+    const record = await repo.createApiToken({
+      userId: principal.id,
+      name,
+      tokenHash: hash,
+      scopes: formatScopes(requested as ApiScope[]),
+      expiresAt: typeof expiresAt === 'string' ? expiresAt : null,
+    });
+    return res.status(201).json({ ...toPublicToken(record), secret });
+  });
+
+  /** Revoke one. Effective on the very next request, like ending a session. */
+  router.delete('/me/tokens/:id', async (req: Request, res: Response) => {
+    const principal = principalOf(req);
+    const token = await repo.getApiToken(req.params.id);
+    // Somebody else's token answers 404 rather than 403, so ids cannot be probed
+    // — the same rule as sessions and servers.
+    if (!token || token.userId !== principal.id) return res.status(404).json({ error: 'token not found' });
+    await repo.deleteApiToken(token.id);
+    return res.status(204).end();
+  });
+
   return router;
+}
+
+/** A token as it may be shown: everything except the thing that authenticates. */
+function toPublicToken(token: ApiTokenRecord) {
+  return {
+    id: token.id,
+    name: token.name,
+    scopes: parseScopes(token.scopes),
+    createdAt: token.createdAt,
+    lastUsedAt: token.lastUsedAt,
+    expiresAt: token.expiresAt,
+  };
 }
 
 /**

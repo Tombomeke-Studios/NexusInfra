@@ -334,6 +334,32 @@ export interface CreateSessionInput {
   ipAddress?: string | null;
 }
 
+/**
+ * A non-interactive credential belonging to one account (#228).
+ *
+ * `tokenHash` is the only trace of the secret that is kept; the secret itself is
+ * shown once, at creation, and is not recoverable afterwards.
+ */
+export interface ApiTokenRecord {
+  id: string;
+  userId: string;
+  name: string;
+  tokenHash: string;
+  /** Space-separated; absent `write`/`admin` leaves the token read-only. */
+  scopes: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+}
+
+export interface CreateApiTokenInput {
+  userId: string;
+  name: string;
+  tokenHash: string;
+  scopes: string;
+  expiresAt?: string | null;
+}
+
 export interface RegisterNodeInput {
   id: string;
   name?: string;
@@ -378,6 +404,16 @@ export interface Repository {
   /** End every session for a user, optionally sparing the one making the request. */
   deleteSessionsForUser(userId: string, exceptId?: string): Promise<void>;
   touchSession(id: string, at: string): Promise<void>;
+
+  // ── API tokens (#228) — a credential a script may hold ────────────────────
+  createApiToken(input: CreateApiTokenInput): Promise<ApiTokenRecord>;
+  /** The authentication lookup: by digest, because the secret is never stored. */
+  getApiTokenByHash(tokenHash: string): Promise<ApiTokenRecord | null>;
+  listApiTokens(userId: string): Promise<ApiTokenRecord[]>;
+  getApiToken(id: string): Promise<ApiTokenRecord | null>;
+  deleteApiToken(id: string): Promise<void>;
+  /** Record that a token was used, so a list can show what is still in service. */
+  touchApiToken(id: string, at: string): Promise<void>;
 
   registerNode(input: RegisterNodeInput): Promise<NodeRecord>;
   /** Remove a node record; detaches it from any deployments first. */

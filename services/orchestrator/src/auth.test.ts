@@ -10,6 +10,7 @@ import {
   principalOf,
   createRequireAuth,
   requirePlatformAdmin,
+  requireTokenScope,
   signToken,
 } from './auth.js';
 import { createLoginLimiter } from './loginLimiter.js';
@@ -507,5 +508,184 @@ describe('password reset by an administrator', () => {
     expect(
       (await request(app).post('/users/nobody/password').set('authorization', `Bearer ${admin}`).send({ newPassword: 'a-fresh-start' })).status
     ).toBe(404);
+  });
+});
+
+// ── API tokens (#228) ────────────────────────────────────────────────────────
+//
+// The whole point is a credential a script can hold: it authenticates as the
+// account, can be narrowed below what the account may do, and can be withdrawn
+// on its own without locking the person out.
+
+describe('API tokens', () => {
+  let repo: InMemoryRepository;
+  let users: UserService;
+  let app: express.Express;
+
+  /** The real stack: auth, the scope guard, then a read and a write route. */
+  function buildTokenApp() {
+    const a = express();
+    a.use(express.json());
+    a.use(createAuthRouter({ users, repo, allowSelfRegistration: false }));
+    a.use(createRequireAuth({ repo }));
+    a.use(requireTokenScope);
+    a.use(createAccountRouter({ users, repo }));
+    a.use(createUserAdminRouter({ users, repo }));
+    a.get('/things', (req, res) => res.json({ userId: principalOf(req).id }));
+    a.post('/things', (_req, res) => res.status(201).json({ ok: true }));
+    return a;
+  }
+
+  async function signIn(email = 'admin@local', password = 'admin123!') {
+    const res = await request(app).post('/auth/login').send({ email, password });
+    return res.body.token as string;
+  }
+
+  /** Mint a token through the API, as a person would. */
+  async function mint(jwt: string, body: Record<string, unknown> = { name: 'ci' }) {
+    return request(app).post('/me/tokens').set('Authorization', `Bearer ${jwt}`).send(body);
+  }
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    users = createUserService({ repo });
+    await users.bootstrapOwner({ email: 'admin@local', password: 'admin123!' });
+    app = buildTokenApp();
+  });
+
+  it('shows the secret once, at creation, and never again', async () => {
+    const jwt = await signIn();
+    const created = await mint(jwt, { name: 'ci', scopes: ['write'] });
+    expect(created.status).toBe(201);
+    expect(created.body.secret).toMatch(/^nxi_/);
+
+    const list = await request(app).get('/me/tokens').set('Authorization', `Bearer ${jwt}`);
+    expect(list.body).toHaveLength(1);
+    expect(list.body[0]).toMatchObject({ name: 'ci', scopes: ['write'] });
+    // Neither the secret nor the digest — a list that returned either would make
+    // every row a credential again.
+    expect(JSON.stringify(list.body)).not.toContain(created.body.secret);
+    expect(list.body[0].tokenHash).toBeUndefined();
+  });
+
+  it('authenticates as the account that owns it', async () => {
+    const jwt = await signIn();
+    const secret = (await mint(jwt)).body.secret as string;
+
+    const me = await request(app).get('/things').set('Authorization', `Bearer ${secret}`);
+    expect(me.status).toBe(200);
+    const owner = await repo.getUserByEmail('admin@local');
+    expect(me.body.userId).toBe(owner!.id);
+  });
+
+  it('is read-only unless it was given the write scope', async () => {
+    const jwt = await signIn();
+    const readOnly = (await mint(jwt, { name: 'reader' })).body.secret as string;
+    const writer = (await mint(jwt, { name: 'writer', scopes: ['write'] })).body.secret as string;
+
+    expect((await request(app).get('/things').set('Authorization', `Bearer ${readOnly}`)).status).toBe(200);
+    expect((await request(app).post('/things').set('Authorization', `Bearer ${readOnly}`)).status).toBe(403);
+    expect((await request(app).post('/things').set('Authorization', `Bearer ${writer}`)).status).toBe(201);
+  });
+
+  it('does not administer the panel without the admin scope', async () => {
+    // The account here is the installation owner, so this is entirely about the
+    // token being narrower than the person behind it.
+    const jwt = await signIn();
+    const plain = (await mint(jwt, { name: 'ci', scopes: ['write'] })).body.secret as string;
+    const admin = (await mint(jwt, { name: 'ops', scopes: ['write', 'admin'] })).body.secret as string;
+
+    expect((await request(app).get('/users').set('Authorization', `Bearer ${plain}`)).status).toBe(403);
+    expect((await request(app).get('/users').set('Authorization', `Bearer ${admin}`)).status).toBe(200);
+  });
+
+  it('cannot mint another token', async () => {
+    // A token that mints tokens cannot really be revoked: withdraw it and its
+    // offspring keep working.
+    const jwt = await signIn();
+    const secret = (await mint(jwt, { name: 'ci', scopes: ['write', 'admin'] })).body.secret as string;
+
+    const res = await request(app).post('/me/tokens').set('Authorization', `Bearer ${secret}`).send({ name: 'child' });
+    expect(res.status).toBe(403);
+  });
+
+  it('stops working the moment it is revoked', async () => {
+    const jwt = await signIn();
+    const created = await mint(jwt);
+    const secret = created.body.secret as string;
+    expect((await request(app).get('/things').set('Authorization', `Bearer ${secret}`)).status).toBe(200);
+
+    expect((await request(app).delete(`/me/tokens/${created.body.id}`).set('Authorization', `Bearer ${jwt}`)).status).toBe(204);
+    expect((await request(app).get('/things').set('Authorization', `Bearer ${secret}`)).status).toBe(401);
+  });
+
+  it('hides another account’s token behind 404 rather than 403', async () => {
+    const jwt = await signIn();
+    const created = await mint(jwt);
+
+    const other = await users.register({ email: 'other@example.com', password: 'other12345', platformRole: 'user' });
+    if (!other.ok) throw new Error('expected registration to succeed');
+    const otherJwt = (await request(app).post('/auth/login').send({ email: 'other@example.com', password: 'other12345' })).body.token;
+
+    const res = await request(app).delete(`/me/tokens/${created.body.id}`).set('Authorization', `Bearer ${otherJwt}`);
+    expect(res.status).toBe(404);
+    // And it still works, since nothing was deleted.
+    expect((await request(app).get('/things').set('Authorization', `Bearer ${created.body.secret}`)).status).toBe(200);
+  });
+
+  it('lists only your own tokens', async () => {
+    const jwt = await signIn();
+    await mint(jwt, { name: 'mine' });
+    const other = await users.register({ email: 'other@example.com', password: 'other12345', platformRole: 'user' });
+    if (!other.ok) throw new Error('expected registration to succeed');
+    const otherJwt = (await request(app).post('/auth/login').send({ email: 'other@example.com', password: 'other12345' })).body.token;
+
+    expect((await request(app).get('/me/tokens').set('Authorization', `Bearer ${otherJwt}`)).body).toEqual([]);
+  });
+
+  it('refuses to mint a token that has already expired', async () => {
+    const jwt = await signIn();
+    expect((await mint(jwt, { name: 'stale', expiresAt: '2020-01-01T00:00:00.000Z' })).status).toBe(400);
+    expect((await mint(jwt, { name: 'stale', expiresAt: 'whenever' })).status).toBe(400);
+  });
+
+  it('refuses a token that has since expired, without anyone deleting it', async () => {
+    const jwt = await signIn();
+    const created = await mint(jwt, { name: 'short', expiresAt: new Date(Date.now() + 60_000).toISOString() });
+    expect((await request(app).get('/things').set('Authorization', `Bearer ${created.body.secret}`)).status).toBe(200);
+
+    // Reach past the API to age it, which is the one thing a test cannot wait for.
+    const owner = await repo.getUserByEmail('admin@local');
+    const record = (await repo.listApiTokens(owner!.id))[0];
+    await repo.deleteApiToken(record.id);
+    await repo.createApiToken({
+      userId: record.userId,
+      name: record.name,
+      tokenHash: record.tokenHash,
+      scopes: record.scopes,
+      expiresAt: '2020-01-01T00:00:00.000Z',
+    });
+
+    expect((await request(app).get('/things').set('Authorization', `Bearer ${created.body.secret}`)).status).toBe(401);
+  });
+
+  it('records that it was used, so a list can show what is still in service', async () => {
+    const jwt = await signIn();
+    const created = await mint(jwt);
+    await request(app).get('/things').set('Authorization', `Bearer ${created.body.secret}`);
+
+    const list = await request(app).get('/me/tokens').set('Authorization', `Bearer ${jwt}`);
+    expect(list.body[0].lastUsedAt).not.toBeNull();
+  });
+
+  it('needs a name, and refuses a scope it does not recognise', async () => {
+    const jwt = await signIn();
+    expect((await mint(jwt, { name: '  ' })).status).toBe(400);
+    expect((await mint(jwt, { name: 'ci', scopes: ['root'] })).status).toBe(400);
+    expect((await mint(jwt, { name: 'ci', scopes: 'write' })).status).toBe(400);
+  });
+
+  it('refuses a secret that was never issued', async () => {
+    expect((await request(app).get('/things').set('Authorization', 'Bearer nxi_madeup')).status).toBe(401);
   });
 });
