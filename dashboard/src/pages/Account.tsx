@@ -22,6 +22,7 @@ import {
 } from '../api';
 import { setToken } from '../session';
 import { useToast } from '../components/Toast';
+import { useDialog } from '../components/Dialog';
 import { InfoHint } from '../components/InfoHint';
 
 // Account (#221) — who you are signed in as, and the one thing you can change
@@ -466,6 +467,7 @@ function TokensCard() {
  */
 function SessionsCard({ sessions, onChanged }: { sessions: SessionView[] | null; onChanged: () => Promise<void> | void }) {
   const { toast } = useToast();
+  const { confirm } = useDialog();
   const [busy, setBusy] = useState(false);
 
   const others = (sessions ?? []).filter((s) => !s.current);
@@ -484,7 +486,13 @@ function SessionsCard({ sessions, onChanged }: { sessions: SessionView[] | null;
   };
 
   const endAll = async () => {
-    if (!window.confirm('Sign out everywhere else? Other devices will have to sign in again.')) return;
+    const ok = await confirm({
+      title: 'Sign out everywhere else?',
+      message: 'Every other device has to sign in again. This one stays signed in.',
+      confirmLabel: 'Sign them out',
+      danger: true,
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await endOtherSessions();

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { Account } from './Account';
 import { ToastProvider } from '../components/Toast';
+import { DialogProvider } from '../components/Dialog';
 
 // `GET /me` and `POST /me/password` shipped with accounts (#174) and no page ever
 // called them, so changing your own password meant curl (#221).
@@ -19,7 +20,9 @@ function renderAccount() {
   render(
     <MemoryRouter>
       <ToastProvider>
-        <Account />
+        <DialogProvider>
+          <Account />
+        </DialogProvider>
       </ToastProvider>
     </MemoryRouter>
   );
@@ -138,11 +141,11 @@ describe('Account sessions', () => {
   });
 
   it('ends every other session at once', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     renderAccount();
     await screen.findByText('Firefox on the laptop');
 
     await userEvent.click(screen.getByRole('button', { name: /Sign out everywhere else/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Sign them out' }));
 
     const call = fetchMock.mock.calls.find(
       ([u, o]) => String(u).endsWith('/me/sessions') && o?.method === 'DELETE'

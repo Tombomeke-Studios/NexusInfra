@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { listNodes, listDeployments, registerNode, deregisterNode, setNodeMaintenance, getMonitoring, type NodeView, type DeploymentView, type MonitoringSnapshot, type DeadLetterSnapshot } from '../api';
 import { CountUp } from '../components/CountUp';
 import { useToast } from '../components/Toast';
+import { useDialog } from '../components/Dialog';
 import { InfoHint } from '../components/InfoHint';
 import { formatRelative } from '../format';
 
@@ -27,6 +28,7 @@ export function Overview() {
   const [error, setError] = useState<string | null>(null);
   const [addingNode, setAddingNode] = useState(false);
   const { toast } = useToast();
+  const { confirm } = useDialog();
   const navigate = useNavigate();
 
   const refresh = useCallback(
@@ -79,7 +81,13 @@ export function Overview() {
     }
   };
   const removeNode = async (id: string, name: string) => {
-    if (!window.confirm(`Deregister ${name}? Its record is removed (the machine itself is untouched).`)) return;
+    const ok = await confirm({
+      title: `Deregister ${name}?`,
+      message: 'Its record is removed from the panel. The machine itself is untouched, and it will reappear if its agent keeps sending heartbeats.',
+      confirmLabel: 'Deregister',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await deregisterNode(id);
       toast(`${name} deregistered`, 'error', 'Node');

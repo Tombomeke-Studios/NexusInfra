@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { listUsers, createUser, getCurrentUser, resetUserPassword, ApiError, type CurrentUser, type PlatformRole } from '../api';
 import { useToast } from '../components/Toast';
+import { useDialog } from '../components/Dialog';
 import { InfoHint } from '../components/InfoHint';
 import { formatRelative } from '../format';
 
@@ -25,6 +26,7 @@ const ROLE_HELP: Record<PlatformRole, string> = {
 
 export function Users() {
   const { toast } = useToast();
+  const { prompt } = useDialog();
   const [users, setUsers] = useState<CurrentUser[] | null>(null);
   const [me, setMe] = useState<CurrentUser | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -60,7 +62,15 @@ export function Users() {
   // Resetting a password is how somebody gets back in when they have forgotten
   // theirs; there is no mail server to assume in the community edition (#226).
   const resetPassword = async (user: CurrentUser) => {
-    const next = window.prompt(`New password for ${user.email}. They will be signed out everywhere and should change it once they are back in.`);
+    const next = await prompt({
+      title: `Reset the password for ${user.email}`,
+      message: 'They are signed out everywhere and should change it once they are back in. Tell it to them yourself — the panel has no mail server to send it through.',
+      label: 'New password',
+      confirmLabel: 'Reset password',
+      // The API is the real gate; saying so here saves a round trip and tells
+      // them which rule they broke while they can still see the field.
+      validate: (value) => (value.length >= 8 ? null : 'At least 8 characters'),
+    });
     if (next === null) return;
     try {
       await resetUserPassword(user.id, next);

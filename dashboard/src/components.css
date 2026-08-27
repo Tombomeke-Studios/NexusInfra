@@ -1052,3 +1052,55 @@ input[type='range']::-moz-range-thumb {
     background-position: -100% 0;
   }
 }
+
+/* ── In-app confirm / prompt dialogs (#299) ─────────────────────────────────
+   Replaces window.confirm and window.prompt: OS chrome that announced the
+   origin, gave a deletion the same weight as a rename, and froze the page
+   thread against any automated run. */
+.dialog-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--color-bg) 55%, transparent);
+  backdrop-filter: blur(3px);
+  animation: fade-in 160ms var(--ease-out);
+}
+.dialog-panel {
+  width: 100%;
+  max-width: 420px;
+  padding: 24px;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
+  animation: rise 200ms var(--ease-out) both;
+}
+.dialog-title {
+  font-size: 1.02rem;
+  margin: 0 0 8px;
+}
+.dialog-message {
+  margin: 0 0 18px;
+  font-size: 0.86rem;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+/* A destructive confirmation should not look like a routine one. */
+.btn--danger-solid {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: #fff;
+}
+.btn--danger-solid:hover:not(:disabled) {
+  filter: brightness(1.08);
+}

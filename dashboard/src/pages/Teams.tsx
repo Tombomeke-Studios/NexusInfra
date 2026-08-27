@@ -15,6 +15,7 @@ import {
 } from '../api';
 import { InfoHint } from '../components/InfoHint';
 import { useToast } from '../components/Toast';
+import { useDialog } from '../components/Dialog';
 
 // Teams (#177) — sharing at the level of a group rather than one server at a
 // time. The server-side rules this page reflects: only the team owner may change
@@ -31,6 +32,7 @@ const ROLE_SUMMARY: Record<string, string> = {
 
 export function Teams() {
   const { toast } = useToast();
+  const { confirm } = useDialog();
   const [me, setMe] = useState<CurrentUser | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [selected, setSelected] = useState<TeamDetail | null>(null);
@@ -113,7 +115,15 @@ export function Teams() {
   const remove = async (userId: string, label: string) => {
     if (!selected) return;
     const leaving = userId === me?.id;
-    if (!window.confirm(leaving ? `Leave ${selected.name}?` : `Remove ${label} from ${selected.name}?`)) return;
+    const ok = await confirm({
+      title: leaving ? `Leave ${selected.name}?` : `Remove ${label} from ${selected.name}?`,
+      message: leaving
+        ? 'You lose access to every server shared with this team. The owner can add you back.'
+        : 'They lose access to every server shared with this team. Anything shared with them directly is untouched.',
+      confirmLabel: leaving ? 'Leave' : 'Remove',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await removeTeamMember(selected.id, userId);
       toast(leaving ? `You left ${selected.name}` : `${label} removed`, 'error', 'Teams');
@@ -130,7 +140,13 @@ export function Teams() {
 
   const destroy = async () => {
     if (!selected) return;
-    if (!window.confirm(`Delete the team "${selected.name}"? Its servers stay where they are — they are simply no longer shared with the team.`)) return;
+    const ok = await confirm({
+      title: `Delete the team “${selected.name}”?`,
+      message: 'Its servers stay where they are — they are simply no longer shared with the team, and everyone in it loses the access it granted.',
+      confirmLabel: 'Delete team',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await deleteTeam(selected.id);
       toast(`Team "${selected.name}" deleted`, 'error', 'Teams');

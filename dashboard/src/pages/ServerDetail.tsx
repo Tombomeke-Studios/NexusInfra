@@ -55,6 +55,7 @@ import {
 } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
 import { useToast } from '../components/Toast';
+import { useDialog } from '../components/Dialog';
 import { InfoHint } from '../components/InfoHint';
 import { permissionsFor, ROLE_LABELS, type ServerPermission, type ServerRole } from '../permissions';
 import { Terminal } from '../components/Terminal';
@@ -88,6 +89,7 @@ export function ServerDetail() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { confirm } = useDialog();
   const [d, setD] = useState<DeploymentDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('console');
@@ -120,12 +122,24 @@ export function ServerDetail() {
   // Kill is a force-terminate (SIGKILL), for a container that ignores Stop (#253).
   // It skips the graceful shutdown a server may need, so it asks first.
   const onKill = async () => {
-    if (!window.confirm(`Force kill ${d?.name}? The process is terminated immediately and unsaved state is lost. Try Stop first.`)) return;
+    const ok = await confirm({
+      title: `Force kill ${d?.name}?`,
+      message: 'The process is terminated immediately, with no chance to save. Try Stop first — it asks the server to shut down properly.',
+      confirmLabel: 'Force kill',
+      danger: true,
+    });
+    if (!ok) return;
     await act(killDeployment, 'kill');
   };
 
   const onDelete = async () => {
-    if (!window.confirm(`Delete ${d?.name}? This permanently removes the server and its files. This cannot be undone.`)) return;
+    const ok = await confirm({
+      title: `Delete ${d?.name}?`,
+      message: 'This permanently removes the server, its files, its databases and its backups. It cannot be undone.',
+      confirmLabel: 'Delete server',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await deleteDeployment(id);
       toast('Server deleted', 'success', 'Deleted');
@@ -453,6 +467,7 @@ const joinPath = (dir: string, name: string) => (dir === '/' ? `/${name}` : `${d
 // ── Files — real CRUD over the container filesystem (#108) ──────────────────
 function FilesTab({ id, running }: { id: string; running: boolean }) {
   const { toast } = useToast();
+  const { confirm, prompt } = useDialog();
   const [cwd, setCwd] = useState('/');
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -502,20 +517,38 @@ function FilesTab({ id, running }: { id: string; running: boolean }) {
     }
   };
 
-  const newFolder = () => {
-    const name = window.prompt('New folder name');
+  // The three prompts validate here rather than finding out server-side (#299):
+  // a name with a slash in it is a path, and one the person cannot see the
+  // problem with until the request comes back is a worse answer than saying so
+  // as they type.
+  const validateName = (value: string): string | null => {
+    const name = value.trim();
+    if (!name) return 'A name is required';
+    if (name === '.' || name === '..') return 'That name is reserved';
+    if (/[\\/]/.test(name)) return 'A name cannot contain a slash — use the tree to change folder';
+    return null;
+  };
+
+  const newFolder = async () => {
+    const name = await prompt({ title: 'New folder', label: 'Folder name', placeholder: 'config', confirmLabel: 'Create', validate: validateName });
     if (name?.trim()) void act(() => makeDir(id, joinPath(cwd, name.trim())), `Created ${name.trim()}`);
   };
-  const newFile = () => {
-    const name = window.prompt('New file name');
+  const newFile = async () => {
+    const name = await prompt({ title: 'New file', label: 'File name', placeholder: 'server.properties', confirmLabel: 'Create', validate: validateName });
     if (name?.trim()) setEditing({ path: joinPath(cwd, name.trim()), content: '' });
   };
-  const rename = (entry: FileEntry) => {
-    const name = window.prompt('Rename to', entry.name);
+  const rename = async (entry: FileEntry) => {
+    const name = await prompt({ title: `Rename ${entry.name}`, label: 'New name', initialValue: entry.name, confirmLabel: 'Rename', validate: validateName });
     if (name?.trim() && name.trim() !== entry.name) void act(() => renamePath(id, joinPath(cwd, entry.name), joinPath(cwd, name.trim())), 'Renamed');
   };
-  const remove = (entry: FileEntry) => {
-    if (window.confirm(`Delete ${entry.name}? This cannot be undone.`)) void act(() => deletePath(id, joinPath(cwd, entry.name)), `Deleted ${entry.name}`);
+  const remove = async (entry: FileEntry) => {
+    const ok = await confirm({
+      title: `Delete ${entry.name}?`,
+      message: entry.kind === 'dir' ? 'The folder and everything in it is removed. This cannot be undone.' : 'This cannot be undone.',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (ok) void act(() => deletePath(id, joinPath(cwd, entry.name)), `Deleted ${entry.name}`);
   };
   // Raw bytes, not text (#263): decoding an upload and re-encoding it corrupts
   // anything that is not UTF-8 — which is most of what people upload here.
@@ -614,6 +647,7 @@ const DB_ENGINES: DatabaseEngine[] = ['mysql', 'mariadb', 'postgres'];
 
 function DatabasesTab({ id, running }: { id: string; running: boolean }) {
   const { toast } = useToast();
+  const { confirm } = useDialog();
   const [dbs, setDbs] = useState<ServerDatabase[]>([]);
   const [engine, setEngine] = useState<DatabaseEngine>('mysql');
   const [busy, setBusy] = useState(false);
@@ -646,7 +680,13 @@ function DatabasesTab({ id, running }: { id: string; running: boolean }) {
   };
 
   const remove = async (db: ServerDatabase) => {
-    if (!window.confirm(`Delete database ${db.name}? This destroys its data.`)) return;
+    const ok = await confirm({
+      title: `Delete the database ${db.name}?`,
+      message: 'Its container and everything stored in it are destroyed. This cannot be undone.',
+      confirmLabel: 'Delete database',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await deleteDatabase(id, db.id);
       toast('Database deleted', 'error', 'Database');
@@ -696,6 +736,7 @@ function DatabasesTab({ id, running }: { id: string; running: boolean }) {
 // ── Backups — real tar snapshots of the server's data volume (#110) ─────────
 function BackupsTab({ id, running }: { id: string; running: boolean }) {
   const { toast } = useToast();
+  const { confirm } = useDialog();
   const [backups, setBackups] = useState<ServerBackup[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -727,7 +768,13 @@ function BackupsTab({ id, running }: { id: string; running: boolean }) {
   };
 
   const restore = async (b: ServerBackup) => {
-    if (!window.confirm(`Restore ${b.name}? This overwrites ${b.path} in the running server.`)) return;
+    const ok = await confirm({
+      title: `Restore ${b.name}?`,
+      message: `This overwrites ${b.path} in the running server with the contents of the backup. Anything changed since the snapshot is lost.`,
+      confirmLabel: 'Restore',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await restoreBackup(id, b.id);
       toast(`Restored ${b.name}`, 'success', 'Backup');
@@ -737,7 +784,13 @@ function BackupsTab({ id, running }: { id: string; running: boolean }) {
   };
 
   const remove = async (b: ServerBackup) => {
-    if (!window.confirm(`Delete ${b.name}? This cannot be undone.`)) return;
+    const ok = await confirm({
+      title: `Delete the backup ${b.name}?`,
+      message: 'The snapshot is removed from the node. This cannot be undone.',
+      confirmLabel: 'Delete backup',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await deleteBackup(id, b.id);
       toast('Backup deleted', 'error', 'Backup');
@@ -1008,6 +1061,7 @@ const ROLE_SUMMARY: Record<string, string> = {
 
 function SubusersTab({ id }: { id: string }) {
   const { toast } = useToast();
+  const { confirm } = useDialog();
   const [users, setUsers] = useState<ServerSubuser[]>([]);
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<SubuserRole>('viewer');
@@ -1049,7 +1103,13 @@ function SubusersTab({ id }: { id: string }) {
     }
   };
   const revoke = async (u: ServerSubuser) => {
-    if (!window.confirm(`Revoke access for ${u.email}?`)) return;
+    const ok = await confirm({
+      title: `Revoke access for ${u.email}?`,
+      message: 'They lose access to this server on their very next request. You can invite them again at any time.',
+      confirmLabel: 'Revoke',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await removeSubuser(id, u.id);
       toast('Access revoked', 'error', 'Subuser');

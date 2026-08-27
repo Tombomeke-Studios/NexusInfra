@@ -328,6 +328,7 @@ is the migrations directory.
 | `src/pages/NodeDetail.tsx` | Per-node view (`/nodes/:id`): live CPU/RAM meters + session sparkline, hosted deployments, deregister |
 | `src/routes.tsx` · `src/App.tsx` | Route table (public `/login`; the rest behind `RequireAuth` + `Layout`) wrapped in the router |
 | `src/components/{Layout,RequireAuth}.tsx` | Nav shell + auth-guard route wrapper |
+| `src/components/Dialog.tsx` | `DialogProvider` + `useDialog()` → promise-shaped `confirm`/`prompt` (#299), replacing 16 `window.confirm`/`prompt` calls. Native dialogs announce the origin, give a deletion the same weight as a rename, and **freeze the page thread**, so no automated run ever reached the other side of one. Destructive confirmations look destructive and focus **Cancel**, so a reflexive Enter does not delete; prompts validate as you type. Without a provider every dialog resolves *no* — these guard deletions |
 | `src/components/InfoHint.tsx` | Accessible "?" tooltip for contextual option help (hover/focus); used across the option forms |
 | `src/components/Terminal.tsx` | xterm.js interactive terminal (#71) — dynamically imports xterm, connects the exec WebSocket (`terminalWsUrl`); mounted by the server-detail Terminal tab |
 | `src/components/IntroTour.tsx` | First-run intro walkthrough (skippable, re-openable from the nav Help button) |

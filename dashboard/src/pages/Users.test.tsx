@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { Users } from './Users';
 import { ToastProvider } from '../components/Toast';
+import { DialogProvider } from '../components/Dialog';
 
 // `GET /users` and `POST /users` shipped with accounts (#174) and no page called
 // them, so onboarding a second person in the community edition — where people do
@@ -16,7 +17,9 @@ function renderUsers() {
   render(
     <MemoryRouter>
       <ToastProvider>
-        <Users />
+        <DialogProvider>
+          <Users />
+        </DialogProvider>
       </ToastProvider>
     </MemoryRouter>
   );
@@ -70,23 +73,39 @@ describe('Users', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/only platform administrators/i);
   });
   it('resets a password and warns that it signs the account out', async () => {
-    vi.spyOn(window, 'prompt').mockReturnValue('a-fresh-start');
     renderUsers();
     await screen.findByText('ada@example.com');
 
     await userEvent.click(screen.getByRole('button', { name: 'Reset the password for ada@example.com' }));
+    // The in-app dialog (#299), driven as a person would: the warning is part of
+    // the dialog now rather than a sentence squeezed into an OS prompt.
+    expect(await screen.findByText(/signed out everywhere/i)).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText('New password'), 'a-fresh-start');
+    await userEvent.click(screen.getByRole('button', { name: 'Reset password' }));
 
     const call = fetchMock.mock.calls.find(([u, o]) => String(u).includes('/users/u2/password') && o?.method === 'POST');
     expect(call).toBeDefined();
     expect(JSON.parse(call![1].body as string)).toEqual({ newPassword: 'a-fresh-start' });
   });
 
-  it('does nothing when the prompt is cancelled', async () => {
-    vi.spyOn(window, 'prompt').mockReturnValue(null);
+  it('does nothing when the dialog is cancelled', async () => {
     renderUsers();
     await screen.findByText('ada@example.com');
 
     await userEvent.click(screen.getByRole('button', { name: 'Reset the password for ada@example.com' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/password'))).toBe(false);
+  });
+
+  it('refuses a password the API would refuse, while the field is still on screen', async () => {
+    renderUsers();
+    await screen.findByText('ada@example.com');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reset the password for ada@example.com' }));
+    await userEvent.type(await screen.findByLabelText('New password'), 'short');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/at least 8 characters/i);
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/password'))).toBe(false);
   });
 });
