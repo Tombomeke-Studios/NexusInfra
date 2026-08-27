@@ -5,6 +5,7 @@ import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import { assertEditionIsRunnable, buildEnvelope, buildInfo, consumeRabbitQueue, getInternalToken, INTERNAL_TOKEN_HEADER, publishRabbitEvent, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
 import { PrismaRepository } from './db.js';
 import { agentFetch, createApiRouter, resolveContainerTarget } from './api.js';
+import { catchAsync, errorHandler, installProcessGuards } from './errorBoundary.js';
 import { resolveAgentUrl } from './agentUrl.js';
 import { verifyToken } from './auth.js';
 import { can, resolveRole } from './access.js';
@@ -36,6 +37,10 @@ try {
   console.error(`[Orchestrator] ${err instanceof Error ? err.message : err}`);
   process.exit(1);
 }
+
+// Nothing below should be able to end the process by rejecting (#294). Installed
+// before anything starts, so a failure during wiring is logged rather than fatal.
+installProcessGuards();
 
 const PORT = Number(process.env.PORT) || 9200;
 const NODE_AGENT_URL = process.env.NODE_AGENT_URL || 'http://node-agent:9100';
@@ -105,20 +110,22 @@ app.get('/health', (_req, res) => {
   res.json({ service: 'orchestrator', status: 'healthy', ...buildInfo(), uptimeSec: Math.round(process.uptime()) });
 });
 // Public runtime config (edition flag) — read by the dashboard before login.
-app.use(createConfigRouter());
+app.use(catchAsync(createConfigRouter()));
 // Public login/registration, then everything below requires a valid Bearer token.
-app.use(createAuthRouter({ users, repo }));
+app.use(catchAsync(createAuthRouter({ users, repo })));
 // Session-aware (#227): a valid signature is not enough, the session it names
 // must still exist — which is what makes signing out actually sign you out.
 app.use(createRequireAuth({ repo }));
-app.use(createAccountRouter({ users, repo }));
-app.use(createUserAdminRouter({ users, repo }));
-app.use(createTeamRouter({ repo }));
-app.use(createApiRouter({ repo, scheduleActions }));
+app.use(catchAsync(createAccountRouter({ users, repo })));
+app.use(catchAsync(createUserAdminRouter({ users, repo })));
+app.use(catchAsync(createTeamRouter({ repo })));
+app.use(catchAsync(createApiRouter({ repo, scheduleActions })));
 // Authenticated billing proxy → Billing Bridge (hosted edition; injects the JWT user id).
-app.use(createBillingProxyRouter());
+app.use(catchAsync(createBillingProxyRouter()));
 // Surfaces the Control Room's live service/node monitoring to the dashboard (#157).
-app.use(createMonitoringRouter());
+app.use(catchAsync(createMonitoringRouter()));
+// Last: turns anything the routes threw into a 500 for that caller only (#294).
+app.use(errorHandler);
 
 // ── WebSocket: interactive terminal proxy (#71) ───────────────────────────────
 // The dashboard opens ws://…/deployments/:id/terminal?token=<jwt>. We validate the

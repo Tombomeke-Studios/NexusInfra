@@ -5,7 +5,7 @@
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/next-Phase_5_·_Production-3b82f6?style=flat-square)
 ![Editions](https://img.shields.io/badge/editions-community_·_hosted-8b5cf6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-742_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-750_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -250,7 +250,32 @@ scrolling log lines describing events that never happened.
 - [x] Node Agent internal API was unauthenticated + host-published — token-guard it (#169)
 - [x] Control Room not surfaced/up in the running stack — verify it starts + show its health in the panel (#157)
 - [x] A server name with a space never starts — derive a Docker-safe container name (#286)
+- [x] One failing async route kills the whole Orchestrator process — add an error boundary (#294)
+- [x] Deleting a running server races its own stop event and violates a foreign key (#293)
+- [ ] Release bundles cannot start: `container_name` contains a slash (#291)
+- [ ] The hosted billing-bridge image contradicts its own edition stamp (#292)
 - [x] IO priority makes every container start fail on hosts without `io.weight` — detect and skip it (#288)
+
+### Panel — replace the browser's own dialogs
+
+- [ ] Replace all 16 `window.confirm` / `window.prompt` calls with in-app dialogs (#299)
+
+### 🏨 Hosted edition — what is missing (`edition:hosted`)
+
+Found while running the hosted release bundle live for the first time (2026-08-26). Community is in
+far better shape than hosted; these are the gaps between "the code exists" and "a customer could use
+it". Every item carries the `edition:hosted` label on GitHub.
+
+- [ ] The credit balance never refreshes on its own — a stale balance is a wrong answer stated with confidence (#296)
+- [ ] Creating a server is never charged and the form shows no plan entitlements (RAM ceiling, storage, backups, databases) (#297)
+- [ ] The FinVault integration has never been exercised end to end — written, not verified; a mismatched message key fails *silently* (#298)
+- [ ] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)
+- [ ] `docs/billing.md` is missing from the documentation ownership table (#248)
+
+> **Labels.** Issues now carry `edition:community`, `edition:hosted` or `edition:both` alongside
+> their `type:*` label, so it is clear at a glance which product an item belongs to. Almost
+> everything is `edition:both` — one codebase — which is exactly why the hosted-only gaps above were
+> easy to lose sight of.
 
 ### Small cleanups / follow-ups
 

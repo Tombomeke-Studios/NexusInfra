@@ -535,12 +535,23 @@ export class PrismaRepository implements Repository {
     if (!deployment) return;
     // Remove child rows first (FKs have no cascade), then the deployment and its
     // now-orphan server config.
-    await this.client.deploymentEvent.deleteMany({ where: { deploymentId: id } });
-    await this.client.serverDatabase.deleteMany({ where: { deploymentId: id } });
-    await this.client.serverBackup.deleteMany({ where: { deploymentId: id } });
-    await this.client.serverSchedule.deleteMany({ where: { deploymentId: id } });
-    await this.client.serverSubuser.deleteMany({ where: { deploymentId: id } });
-    await this.client.deployment.delete({ where: { id } });
+    //
+    // All of it in ONE transaction (#293). Deleting a *running* server also emits
+    // server.stop, and the agent's server.stopped/crashed comes back while this
+    // is still executing — the lifecycle consumer then appends a DeploymentEvent
+    // for the deployment being deleted, reopening a reference the deleteMany just
+    // closed, and the final delete fails on the foreign key. As separate
+    // statements there is a window for that; as a transaction the write either
+    // lands before this (and is deleted with the rest) or after it (and finds no
+    // deployment to attach to, which `lifecycle.ts` already handles).
+    await this.client.$transaction([
+      this.client.deploymentEvent.deleteMany({ where: { deploymentId: id } }),
+      this.client.serverDatabase.deleteMany({ where: { deploymentId: id } }),
+      this.client.serverBackup.deleteMany({ where: { deploymentId: id } }),
+      this.client.serverSchedule.deleteMany({ where: { deploymentId: id } }),
+      this.client.serverSubuser.deleteMany({ where: { deploymentId: id } }),
+      this.client.deployment.delete({ where: { id } }),
+    ]);
     await this.client.serverConfig.delete({ where: { id: deployment.serverConfigId } }).catch(() => {
       // Config may be shared/already gone; ignore.
     });
