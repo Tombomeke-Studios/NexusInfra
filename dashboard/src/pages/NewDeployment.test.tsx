@@ -44,6 +44,7 @@ describe('NewDeployment', () => {
     // The form fetches nodes on mount (placement options); answer that with [].
     fetchMock.mockImplementation((url: string) => {
       const path = String(url);
+      if (path.includes('/placement')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: null }) } as Response);
       if (path.includes('/nodes')) return Promise.resolve({ ok: true, status: 200, json: async () => [] } as Response);
       if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [MINECRAFT_EGG] } as Response);
       return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
@@ -136,6 +137,8 @@ describe('NewDeployment', () => {
   it('sends the pinned node when placement is not Auto', async () => {
     fetchMock.mockImplementation((url: string) => {
       const path = String(url);
+      if (path.includes('/placement'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: 'n1' }) } as Response);
       if (path.includes('/nodes'))
         return Promise.resolve({
           ok: true,
@@ -176,11 +179,15 @@ describe('NewDeployment', () => {
     expect(screen.queryByText(/feature limits/i)).not.toBeInTheDocument();
   });
 
-  // The container cap and the heap control the same physical RAM (#271); the form
-  // warns while you are setting it, and the API still refuses.
-  it('warns when the heap cannot fit the memory limit on the chosen node', async () => {
+  // The container cap and the heap control the same physical RAM (#271). Since
+  // #308 the heap is derived from the cap instead of being asked for separately,
+  // so the defaults cannot collide — and the warning only concerns a heap
+  // somebody chose themselves.
+  it('derives the heap from the limit instead of colliding with it', async () => {
     fetchMock.mockImplementation((url: string) => {
       const path = String(url);
+      if (path.includes('/placement'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: 'n1' }) } as Response);
       if (path.includes('/nodes'))
         return Promise.resolve({
           ok: true,
@@ -197,15 +204,76 @@ describe('NewDeployment', () => {
     await userEvent.click(screen.getByRole('button', { name: /Game server/ }));
     await screen.findByRole('button', { name: /Java Edition/ });
 
+    // 50% of a 4 GB node is a 2048 MB cap. The old fixed `2G` default needed
+    // ~2560 MB and was refused here while being accepted on a bigger node — the
+    // same untouched form, a different answer depending on where it landed.
+    expect(await screen.findByText(/1536 MB/)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    // And it is not asked for twice: no heap field unless you take it over.
+    expect(screen.queryByRole('textbox', { name: /Java heap size/i })).not.toBeInTheDocument();
+  });
+
+  it('sends no heap, which is what asks the API to derive one', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/placement')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: 'n1' }) } as Response);
+      if (path.includes('/nodes'))
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 'n1', name: 'small-box', health: 'healthy', cpuPercent: 10, ramUsedMb: 1000, ramTotalMb: 4096, diskUsedGb: null, diskTotalGb: null, lastHeartbeat: new Date().toISOString() }],
+        } as Response);
+      if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [MINECRAFT_EGG] } as Response);
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
+    });
+    renderForm();
+
+    await userEvent.click(screen.getByRole('button', { name: /Game server/ }));
+    await screen.findByRole('button', { name: /Java Edition/ });
+    await userEvent.type(screen.getByLabelText('Name'), 'mc');
+    await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+
+    const call = fetchMock.mock.calls.find(([u, o]) => String(u).includes('/deployments') && o?.method === 'POST');
+    const body = JSON.parse(call![1].body as string);
+    // Omitted, not blank: the egg reads blank as "use my default", which is the
+    // fixed 2G this replaced.
+    expect(body.eggValues.MEMORY).toBeUndefined();
+  });
+
+  it('hands the heap back when somebody asks for it, warning if it will not fit', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/placement')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: 'n1' }) } as Response);
+      if (path.includes('/nodes'))
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 'n1', name: 'small-box', health: 'healthy', cpuPercent: 10, ramUsedMb: 1000, ramTotalMb: 4096, diskUsedGb: null, diskTotalGb: null, lastHeartbeat: new Date().toISOString() }],
+        } as Response);
+      if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [MINECRAFT_EGG] } as Response);
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
+    });
+    renderForm();
+
+    await userEvent.click(screen.getByRole('button', { name: /Game server/ }));
+    await screen.findByRole('button', { name: /Java Edition/ });
+    await userEvent.click(screen.getByRole('checkbox', { name: /set the heap myself/i }));
+
+    const field = await screen.findByRole('textbox', { name: /Java heap size/i });
+    await userEvent.clear(field);
+    await userEvent.type(field, '2G');
+
     const warning = await screen.findByRole('alert');
     expect(warning).toHaveTextContent(/2048 MB heap will not fit a 2048 MB limit/);
-    // The number people can act on, not the percentage the setting is stored in.
     expect(warning).toHaveTextContent(/Java claims the whole heap up front/);
   });
 
   it('shows the memory limit in MB for the chosen node', async () => {
     fetchMock.mockImplementation((url: string) => {
       const path = String(url);
+      if (path.includes('/placement'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: 'n1' }) } as Response);
       if (path.includes('/nodes'))
         return Promise.resolve({
           ok: true,
@@ -252,6 +320,7 @@ describe('NewDeployment', () => {
     function renderWithCapacity() {
       fetchMock.mockImplementation((url: string) => {
         const path = String(url);
+        if (path.includes('/placement')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: 'n1' }) } as Response);
         if (path.includes('/nodes')) return Promise.resolve({ ok: true, status: 200, json: async () => [NODE_WITH_CAPACITY] } as Response);
         if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [MINECRAFT_EGG] } as Response);
         return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);

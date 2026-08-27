@@ -89,11 +89,19 @@ export function heapBudgetProblem({ heapMb, capMb }: HeapCheck): string | null {
   const needed = heapMb + overhead;
   if (needed <= capMb) return null;
 
-  return (
+  const preamble =
     `a ${heapMb} MB heap needs about ${needed} MB in total (the JVM uses roughly ${overhead} MB beyond the heap ` +
-    `for metaspace, threads and buffers), but this server is capped at ${capMb} MB. ` +
-    `Raise the memory limit or lower the heap to about ${largestHeapForCap(capMb)} MB.`
-  );
+    `for metaspace, threads and buffers), but this server is capped at ${capMb} MB. `;
+
+  // Below the usable floor there is no heap to suggest — "lower the heap to about
+  // 0 MB" is arithmetic, not advice. The honest answer is that the cap is too
+  // small to run a Java server at all.
+  const largest = largestHeapForCap(capMb);
+  if (largest < MIN_USABLE_HEAP_MB) {
+    return `${preamble}A ${capMb} MB limit is too small for a Java server whatever the heap — raise the memory limit.`;
+  }
+
+  return `${preamble}Raise the memory limit or lower the heap to about ${largest} MB.`;
 }
 
 /**
@@ -107,4 +115,40 @@ export function largestHeapForCap(capMb: number): number {
   const proportional = Math.floor((capMb * 4) / 5);
   if (jvmOverheadMb(proportional) > 512) return Math.max(0, proportional);
   return Math.max(0, capMb - 512);
+}
+
+/**
+ * Below this there is no heap worth running a Java server on: the JVM's own
+ * overhead has eaten the cap. Rounded to a number a person recognises rather than
+ * derived, because the honest answer here is "give it more memory", not a heap.
+ */
+export const MIN_USABLE_HEAP_MB = 512;
+
+/**
+ * The heap to give a server, or **null** to leave the caller's own value alone.
+ *
+ * This is what stops the heap being a second setting for the same RAM (#308).
+ * The container cap is the one number a person chooses; the heap is a
+ * consequence of it, and asking for both is asking the same question twice in
+ * two different units — one a percentage of a machine, the other an absolute
+ * size — and then refusing the answer when they disagree.
+ *
+ * Returns null in the two cases where deriving would be a lie:
+ *
+ * - the caller set a heap themselves, so their number stands (and the budget
+ *   check still refuses it if it does not fit);
+ * - there is no cap to derive from, because the server is uncapped or the node
+ *   has never reported how much memory it has. Inventing one would be #250 again.
+ */
+export function derivedHeapMb(capMb: number | null | undefined, explicit?: string | null): number | null {
+  if (explicit !== undefined && explicit !== null && String(explicit).trim() !== '') return null;
+  if (capMb == null || capMb <= 0) return null;
+
+  const heap = largestHeapForCap(capMb);
+  return heap >= MIN_USABLE_HEAP_MB ? heap : null;
+}
+
+/** A heap in the JVM-style string the egg's image expects (`-Xms`/`-Xmx`). */
+export function formatHeapMb(heapMb: number): string {
+  return `${heapMb}M`;
 }

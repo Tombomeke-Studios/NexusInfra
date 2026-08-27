@@ -418,6 +418,19 @@ export function topUp(amount: number): Promise<{ status: string; reference: stri
   return request('/billing/topup', { method: 'POST', body: JSON.stringify({ amount }) });
 }
 
+/**
+ * Which node an automatically-placed server would land on right now (#309).
+ *
+ * Asked rather than worked out here: the form used to reimplement the rule and
+ * got it wrong — it filtered neither unhealthy nor draining nodes — so with two
+ * or more nodes it could describe a machine the server never lands on.
+ *
+ * A preview, not a reservation: placement is decided again at creation.
+ */
+export function getPlacement(): Promise<{ nodeId: string | null }> {
+  return request('/placement');
+}
+
 export function listNodes(): Promise<NodeView[]> {
   return request('/nodes');
 }
