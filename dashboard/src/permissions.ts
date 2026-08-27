@@ -24,6 +24,7 @@ export type ServerPermission =
   | 'schedule.manage'
   | 'subuser.manage'
   | 'server.edit'
+  | 'server.transfer'
   | 'server.delete';
 
 const VIEWER: ServerPermission[] = ['server.view', 'server.logs', 'server.stats'];
@@ -40,7 +41,7 @@ const OPERATOR: ServerPermission[] = [
 
 const ADMIN: ServerPermission[] = [...OPERATOR, 'file.write', 'database.manage', 'backup.manage', 'schedule.manage', 'subuser.manage', 'server.edit'];
 
-const OWNER: ServerPermission[] = [...ADMIN, 'server.delete'];
+const OWNER: ServerPermission[] = [...ADMIN, 'server.transfer', 'server.delete'];
 
 export const ROLE_PERMISSIONS: Record<ServerRole, ServerPermission[]> = {
   viewer: VIEWER,
