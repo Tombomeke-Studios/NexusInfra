@@ -181,6 +181,30 @@ somebody else has it — and leaves the one that made the change signed in, beca
 the page you just used is a punishment for doing the right thing. A token that names no session at all
 is refused: it cannot be revoked, which is the thing this replaced.
 
+### `GET /me/totp` · `POST /me/totp` · `POST /me/totp/verify` · `DELETE /me/totp`
+
+Two-factor authentication (#229), TOTP with recovery codes.
+
+| Method + path | Purpose |
+|---|---|
+| `GET /me/totp` | `{ enabled, enabledAt, recoveryCodesRemaining }` |
+| `POST /me/totp` | Begin enrolment → `201 { secret, otpauthUrl }`. Nothing is enforced yet |
+| `POST /me/totp/verify` | Body `{ code }` → `201 { recoveryCodes, token }` — the codes are shown once, and the token replaces the one that predates the factor |
+| `DELETE /me/totp` | Body `{ password }` → `204`. `409` where the installation requires 2FA |
+
+`POST /auth/login` then takes `{ email, password, code }`, where `code` is either a six-digit TOTP
+code or one of the recovery codes (spent on use). Without it the reply is `401 { totpRequired: true }`
+— which does confirm the password was right, unavoidably, since the person has to be told to reach for
+their phone; it is only ever returned to someone who already holds it. A missing or wrong code counts
+as a failed attempt against the login limiter (#225).
+
+With `REQUIRE_TOTP=true`, an un-enrolled account still signs in — the reply carries
+`mustEnrolTotp: true` — but every route except `/me`, `/me/totp*` and `/auth/logout` answers
+`403 { enrolmentRequired: true }` until enrolment finishes. Refusing the login instead would lock out
+everyone, the only administrator included, the moment the flag was turned on. API tokens are exempt:
+one was created by somebody who had already satisfied the requirement. A token cannot enrol, disenrol,
+or mint another token.
+
 ### `GET /me/tokens` · `POST /me/tokens` · `DELETE /me/tokens/:id`
 
 API tokens for scripts and CI (#228). Automating anything used to mean storing a person's password in

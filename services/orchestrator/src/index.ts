@@ -13,8 +13,8 @@ import { pipeSockets, toWsUrl, type DuplexSocket } from './wsProxy.js';
 import { createBillingProxyRouter } from './billingProxy.js';
 import { createMonitoringRouter } from './monitoring.js';
 import { createConfigRouter } from './config.js';
-import { createAccountRouter, createAuthRouter, createRequireAuth, createUserAdminRouter, requireTokenScope } from './auth.js';
-import { createUserService } from './users.js';
+import { createAccountRouter, createAuthRouter, createRequireAuth, createUserAdminRouter, requireTokenScope, requireTotpEnrolment } from './auth.js';
+import { createUserService, isTotpRequired } from './users.js';
 import { createTeamRouter } from './teams.js';
 import { createNodeRegistry } from './nodeRegistry.js';
 import { createLifecycle } from './lifecycle.js';
@@ -121,6 +121,10 @@ app.use(createRequireAuth({ repo }));
 // covered without anyone remembering to add it. A person signing in has no
 // scopes and passes straight through.
 app.use(requireTokenScope);
+// Where this installation requires a second factor, an account that has not
+// enrolled can reach enrolment and nothing else (#229). Refusing to sign them
+// in instead would lock out everyone the moment the flag was turned on.
+app.use(requireTotpEnrolment);
 app.use(catchAsync(createAccountRouter({ users, repo })));
 app.use(catchAsync(createUserAdminRouter({ users, repo })));
 app.use(catchAsync(createTeamRouter({ repo })));
@@ -171,6 +175,11 @@ server.on('upgrade', async (req, socket, head) => {
   } catch {
     return socket.destroy();
   }
+
+  // A second factor, where the installation requires one (#229). This is the
+  // most dangerous surface in the panel — a root shell — so it is not a place to
+  // honour a token minted before the code was ever asked for.
+  if (isTotpRequired() && principal.mfa !== true) return socket.destroy();
 
   const detail = await repo.getDeployment(match[1]);
   const target = resolveContainerTarget(detail);

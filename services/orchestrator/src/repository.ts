@@ -250,6 +250,36 @@ export class InMemoryRepository implements Repository {
     if (token) this.apiTokens.set(id, { ...token, lastUsedAt: at });
   }
 
+  // ── Two-factor (#229) ──────────────────────────────────────────────────────
+  private recoveryCodes = new Map<string, { userId: string; codeHash: string }>();
+
+  async setUserTotp(id: string, totp: { secret: string | null; enabledAt: string | null }): Promise<UserRecord | null> {
+    const user = this.users.get(id);
+    if (!user) return null;
+    const updated = { ...user, totpSecret: totp.secret, totpEnabledAt: totp.enabledAt };
+    this.users.set(id, updated);
+    return updated;
+  }
+
+  async replaceRecoveryCodes(userId: string, codeHashes: string[]): Promise<void> {
+    for (const [key, code] of this.recoveryCodes) if (code.userId === userId) this.recoveryCodes.delete(key);
+    for (const codeHash of codeHashes) this.recoveryCodes.set(randomUUID(), { userId, codeHash });
+  }
+
+  async consumeRecoveryCode(userId: string, codeHash: string): Promise<boolean> {
+    for (const [key, code] of this.recoveryCodes) {
+      if (code.userId === userId && code.codeHash === codeHash) {
+        this.recoveryCodes.delete(key);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async countRecoveryCodes(userId: string): Promise<number> {
+    return [...this.recoveryCodes.values()].filter((c) => c.userId === userId).length;
+  }
+
   async registerNode(input: RegisterNodeInput): Promise<NodeRecord> {
     const existing = this.nodes.get(input.id);
     const node: NodeRecord = existing

@@ -5,6 +5,10 @@ import {
   listSessions,
   endSession,
   endOtherSessions,
+  getTotpStatus,
+  startTotpEnrolment,
+  confirmTotpEnrolment,
+  disableTotp,
   listApiTokens,
   createApiToken,
   revokeApiToken,
@@ -14,7 +18,9 @@ import {
   type CreatedApiToken,
   type CurrentUser,
   type SessionView,
+  type TotpStatus,
 } from '../api';
+import { setToken } from '../session';
 import { useToast } from '../components/Toast';
 import { InfoHint } from '../components/InfoHint';
 
@@ -113,6 +119,8 @@ export function Account() {
 
       <SessionsCard sessions={sessions} onChanged={loadSessions} />
 
+      <TwoFactorCard />
+
       <TokensCard />
 
       <div className="card" style={{ padding: 24 }}>
@@ -143,6 +151,179 @@ export function Account() {
           </button>
         </form>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Two-factor authentication (#229).
+ *
+ * Three states in one card: off, mid-enrolment, and on. The recovery codes are
+ * shown once and stay on screen until dismissed, for the same reason an API
+ * token's secret does — there is no second chance, and a toast that fades is not
+ * somewhere to put the thing that gets you back in when your phone is gone.
+ */
+function TwoFactorCard() {
+  const { toast } = useToast();
+  const [status, setStatus] = useState<TotpStatus | null>(null);
+  const [enrolling, setEnrolling] = useState<{ secret: string; otpauthUrl: string } | null>(null);
+  const [code, setCode] = useState('');
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setStatus(await getTotpStatus());
+    } catch {
+      setStatus({ enabled: false, enabledAt: null, recoveryCodesRemaining: 0 });
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const start = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setEnrolling(await startTotpEnrolment());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not start setting this up');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirm = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await confirmTotpEnrolment(code.trim());
+      // The token that made this request predates the factor, so the server
+      // hands back one that satisfies it. Using it keeps the session working
+      // where the installation requires 2FA.
+      setToken(result.token);
+      setRecoveryCodes(result.recoveryCodes);
+      setEnrolling(null);
+      setCode('');
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'That code was not accepted');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disable = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await disableTotp(password);
+      setPassword('');
+      toast('Two-factor authentication is off', 'success', 'Account');
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not turn this off');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ padding: 24, marginBottom: 18 }}>
+      <strong style={{ display: 'block', fontSize: '.95rem', marginBottom: 6 }}>
+        Two-factor authentication
+        <InfoHint text="A code from your phone, on top of your password. This panel can open a root shell inside your containers, so a password on its own is thin protection." label="Two-factor help" />
+      </strong>
+
+      {recoveryCodes && (
+        <div className="alert alert--info" role="status" style={{ marginBottom: 16 }}>
+          <strong style={{ display: 'block', marginBottom: 6 }}>Save these recovery codes — they are not shown again</strong>
+          <p className="subtle" style={{ margin: '0 0 8px', fontSize: '.82rem' }}>
+            Each one signs you in once if you lose your phone. Nobody can recover them for you.
+          </p>
+          <ul className="mono" style={{ listStyle: 'none', padding: 0, margin: '0 0 10px', columns: 2, fontSize: '.86rem' }}>
+            {recoveryCodes.map((c) => (
+              <li key={c}>{c}</li>
+            ))}
+          </ul>
+          <button className="btn btn--secondary btn--sm" data-ripple type="button" onClick={() => setRecoveryCodes(null)}>
+            I have saved them
+          </button>
+        </div>
+      )}
+
+      {error && <p role="alert" className="alert alert--error" style={{ marginBottom: 14 }}>{error}</p>}
+
+      {status === null ? (
+        <div className="empty">Loading…</div>
+      ) : status.enabled ? (
+        <>
+          <p className="subtle" style={{ margin: '0 0 14px', fontSize: '.84rem' }}>
+            On since {new Date(status.enabledAt ?? Date.now()).toLocaleDateString()} ·{' '}
+            {status.recoveryCodesRemaining} recovery {status.recoveryCodesRemaining === 1 ? 'code' : 'codes'} left.
+          </p>
+          <form onSubmit={disable} style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <input
+              className="input"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              placeholder="Your password"
+              aria-label="Password, to turn two-factor off"
+              style={{ width: 'auto', minWidth: 220 }}
+            />
+            <button className="btn btn--secondary btn--sm" data-ripple type="submit" disabled={busy || !password}>
+              Turn off
+            </button>
+          </form>
+          <p className="subtle" style={{ margin: '10px 0 0', fontSize: '.8rem' }}>
+            Your password is required — holding this session is not enough.
+          </p>
+        </>
+      ) : enrolling ? (
+        <>
+          <p className="subtle" style={{ margin: '0 0 12px', fontSize: '.84rem' }}>
+            Add this to your authenticator app, then type the code it shows. Nothing changes until you do.
+          </p>
+          <code className="mono" style={{ display: 'block', wordBreak: 'break-all', marginBottom: 6 }}>{enrolling.secret}</code>
+          <p className="subtle" style={{ margin: '0 0 14px', fontSize: '.8rem' }}>
+            Some apps take the whole link instead: <span className="mono" style={{ wordBreak: 'break-all' }}>{enrolling.otpauthUrl}</span>
+          </p>
+          <form onSubmit={confirm} style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <input
+              className="input"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              required
+              autoComplete="one-time-code"
+              placeholder="123456"
+              aria-label="Code from your authenticator app"
+              style={{ width: 'auto', minWidth: 160 }}
+            />
+            <button className="btn btn--primary btn--sm" data-ripple type="submit" disabled={busy || !code.trim()}>
+              Turn on
+            </button>
+          </form>
+        </>
+      ) : (
+        <>
+          <p className="subtle" style={{ margin: '0 0 14px', fontSize: '.84rem' }}>
+            Off. Turning it on asks for a code from your phone every time you sign in, and gives you recovery codes for
+            the day the phone is gone.
+          </p>
+          <button className="btn btn--primary btn--sm" data-ripple type="button" disabled={busy} onClick={() => void start()}>
+            Set up two-factor
+          </button>
+        </>
+      )}
     </div>
   );
 }

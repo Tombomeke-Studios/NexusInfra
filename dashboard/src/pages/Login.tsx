@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { login, register } from '../api';
+import { ApiError, login, register } from '../api';
 import { setToken } from '../session';
 import { useEdition } from '../edition';
 import { IconHexagon } from '../components/Icons';
@@ -14,6 +14,9 @@ export function Login({ mode = 'sign-in' }: { mode?: 'sign-in' | 'register' }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
+  // Only after the password has been accepted; see onSubmit (#229).
+  const [needsCode, setNeedsCode] = useState(false);
+  const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
@@ -24,11 +27,19 @@ export function Login({ mode = 'sign-in' }: { mode?: 'sign-in' | 'register' }) {
     setBusy(true);
     setError(null);
     try {
-      const { token } = registering ? await register(email, password) : await login(email, password);
+      const { token } = registering ? await register(email, password) : await login(email, password, code || undefined);
       setToken(token);
       navigate('/', { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : registering ? 'Could not create the account' : 'Login failed');
+      // The server says a code is needed only once the password is right (#229),
+      // so this is the moment to ask for one rather than showing the field to
+      // everybody up front.
+      if (err instanceof ApiError && err.body?.totpRequired === true) {
+        setNeedsCode(true);
+        setError(code ? 'That code is not valid — try the next one your app shows' : null);
+      } else {
+        setError(err instanceof Error ? err.message : registering ? 'Could not create the account' : 'Login failed');
+      }
     } finally {
       setBusy(false);
     }
@@ -97,6 +108,23 @@ export function Login({ mode = 'sign-in' }: { mode?: 'sign-in' | 'register' }) {
                   </button>
                 </span>
               </label>
+
+              {needsCode && !registering && (
+                <label className="field" style={{ display: 'block' }}>
+                  <span className="field__label">Two-factor code</span>
+                  <input
+                    className="input"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    autoFocus
+                    autoComplete="one-time-code"
+                    inputMode="text"
+                    placeholder="123456 or a recovery code"
+                    aria-label="Two-factor code"
+                  />
+                  <span className="field__hint">From your authenticator app — or one of the recovery codes you saved.</span>
+                </label>
+              )}
 
               {error && (
                 <p role="alert" className="alert alert--error" style={{ marginBottom: 'var(--space-4)' }}>

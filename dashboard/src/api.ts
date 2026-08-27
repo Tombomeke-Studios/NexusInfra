@@ -166,7 +166,15 @@ interface CreateDeploymentBase {
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
-    message: string
+    message: string,
+    /**
+     * The parsed error body, when there was one.
+     *
+     * Some refusals carry a flag as well as a message — `totpRequired` (#229),
+     * `enrolmentRequired` — and the panel has to act on them rather than only
+     * display the sentence.
+     */
+    public readonly body: Record<string, unknown> | null = null
   ) {
     super(message);
     this.name = 'ApiError';
@@ -186,13 +194,14 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     let message = res.statusText;
+    let parsed: Record<string, unknown> | null = null;
     try {
-      const body = (await res.json()) as { error?: string };
-      if (body?.error) message = body.error;
+      parsed = (await res.json()) as Record<string, unknown>;
+      if (typeof parsed?.error === 'string') message = parsed.error;
     } catch {
       // non-JSON error body; keep the status text
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, parsed);
   }
 
   if (res.status === 204) return undefined as T;
@@ -214,11 +223,45 @@ export interface CurrentUser {
   displayName: string;
   platformRole: PlatformRole;
   createdAt: string;
+  /** Whether this account has a second factor confirmed (#229). */
+  twoFactorEnabled?: boolean;
 }
 
-/** Accepts an email, or the legacy username for installs that predate accounts. */
-export function login(email: string, password: string): Promise<{ token: string }> {
-  return request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+/**
+ * Accepts an email, or the legacy username for installs that predate accounts.
+ *
+ * `code` is a six-digit TOTP code or a recovery code (#229) — one field, because
+ * the server tells them apart and asking someone which kind they are holding is
+ * a question about our implementation, not theirs.
+ */
+export function login(email: string, password: string, code?: string): Promise<{ token: string; mustEnrolTotp?: boolean }> {
+  return request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password, ...(code ? { code } : {}) }) });
+}
+
+// ── Two-factor authentication (#229) ────────────────────────────────────────
+export interface TotpStatus {
+  enabled: boolean;
+  enabledAt: string | null;
+  recoveryCodesRemaining: number;
+}
+
+export function getTotpStatus(): Promise<TotpStatus> {
+  return request('/me/totp');
+}
+
+/** Begin enrolment. Nothing is enforced until a code proves the secret was scanned. */
+export function startTotpEnrolment(): Promise<{ secret: string; otpauthUrl: string }> {
+  return request('/me/totp', { method: 'POST', body: JSON.stringify({}) });
+}
+
+/** Finish it. The recovery codes are shown once; the token replaces the current one. */
+export function confirmTotpEnrolment(code: string): Promise<{ recoveryCodes: string[]; token: string }> {
+  return request('/me/totp/verify', { method: 'POST', body: JSON.stringify({ code }) });
+}
+
+/** Turn it off. The password is required — a session alone is not enough. */
+export function disableTotp(password: string): Promise<void> {
+  return request('/me/totp', { method: 'DELETE', body: JSON.stringify({ password }) });
 }
 
 /** Self-registration — only reachable in the hosted edition; 403 otherwise. */

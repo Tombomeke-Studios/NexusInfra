@@ -106,6 +106,7 @@ it. Nothing else changes.
 | `JWT_SECRET` | yes | Signs login tokens. Anyone holding it can mint a token for any account — use 32 random bytes. |
 | `INTERNAL_API_TOKEN` | yes | Shared secret for reaching the node agent. Must match the agents'. |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | yes | The administrator seeded on first start. A warning is logged on every start while the default password is in place. |
+| `REQUIRE_TOTP` | no | `true` requires a second factor of every account (#229). Un-enrolled accounts can still sign in, but reach only enrolment — refusing the login would lock out everyone the moment it is switched on. |
 | `NODE_AGENT_URL` | no | Single-node fallback. Multi-node setups learn each agent's address from its heartbeat. |
 | `CONTROL_ROOM_URL` | no | For surfacing platform health in the panel. |
 | `TRUST_PROXY` | no | Number of reverse proxies in front (1 for the setup in [deployment.md](deployment.md#putting-it-behind-tls-245)). Makes per-IP rate limiting measure the caller rather than the proxy. Leave unset unless only the proxy can reach this process — `X-Forwarded-For` is caller-supplied. |

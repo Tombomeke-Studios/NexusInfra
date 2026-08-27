@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { InMemoryRepository } from './repository.js';
@@ -11,9 +11,11 @@ import {
   createRequireAuth,
   requirePlatformAdmin,
   requireTokenScope,
+  requireTotpEnrolment,
   signToken,
 } from './auth.js';
 import { createLoginLimiter } from './loginLimiter.js';
+import { counterFor, totpCode } from './totp.js';
 
 // A small app: public auth routes, the account routes, and one protected route
 // behind requireAuth — enough to exercise the whole login → token → identity path
@@ -95,7 +97,9 @@ describe('authentication', () => {
     const session = await repo.createSession({ userId: 'someone' });
     const token = signToken({ id: 'someone', platformRole: 'nonsense' as never, sessionId: session.id });
     const res = await request(app).get('/protected').set('authorization', `Bearer ${token}`);
-    expect(res.body.principal).toEqual({ id: 'someone', platformRole: 'user', sessionId: session.id });
+    // `mfa: false` because this token was minted without a second factor being
+    // satisfied — the claim is about that login, not about the account (#229).
+    expect(res.body.principal).toEqual({ id: 'someone', platformRole: 'user', sessionId: session.id, mfa: false });
   });
 });
 
@@ -687,5 +691,190 @@ describe('API tokens', () => {
 
   it('refuses a secret that was never issued', async () => {
     expect((await request(app).get('/things').set('Authorization', 'Bearer nxi_madeup')).status).toBe(401);
+  });
+});
+
+// ── Two-factor authentication (#229) ─────────────────────────────────────────
+//
+// The panel hands out root shells inside containers. These exercise the whole
+// path a person walks: enrol, prove a code, sign in with one, and get back in
+// with a recovery code when the phone is gone.
+
+describe('two-factor authentication', () => {
+  let repo: InMemoryRepository;
+  let users: UserService;
+  let app: express.Express;
+
+  function buildTotpApp() {
+    const a = express();
+    a.use(express.json());
+    a.use(createAuthRouter({ users, repo, allowSelfRegistration: false }));
+    a.use(createRequireAuth({ repo }));
+    a.use(requireTotpEnrolment);
+    a.use(createAccountRouter({ users, repo }));
+    a.get('/things', (_req, res) => res.json({ ok: true }));
+    return a;
+  }
+
+  const login = (body: Record<string, unknown>) => request(app).post('/auth/login').send(body);
+  const signIn = async (extra: Record<string, unknown> = {}) =>
+    (await login({ email: 'admin@local', password: 'admin123!', ...extra })).body.token as string;
+
+  /** Walk the real enrolment: start, read the secret, prove a code from it. */
+  async function enrol(jwt: string) {
+    const started = await request(app).post('/me/totp').set('Authorization', `Bearer ${jwt}`).send({});
+    const secret = started.body.secret as string;
+    const verified = await request(app)
+      .post('/me/totp/verify')
+      .set('Authorization', `Bearer ${jwt}`)
+      .send({ code: totpCode(secret, counterFor(Date.now())) });
+    return { secret, verified };
+  }
+
+  beforeEach(async () => {
+    delete process.env.REQUIRE_TOTP;
+    repo = new InMemoryRepository();
+    users = createUserService({ repo });
+    await users.bootstrapOwner({ email: 'admin@local', password: 'admin123!' });
+    app = buildTotpApp();
+  });
+
+  afterEach(() => {
+    delete process.env.REQUIRE_TOTP;
+  });
+
+  it('is off until someone turns it on', async () => {
+    const jwt = await signIn();
+    const status = await request(app).get('/me/totp').set('Authorization', `Bearer ${jwt}`);
+    expect(status.body).toMatchObject({ enabled: false, recoveryCodesRemaining: 0 });
+  });
+
+  it('hands out a secret and an otpauth URL an authenticator app can read', async () => {
+    const jwt = await signIn();
+    const started = await request(app).post('/me/totp').set('Authorization', `Bearer ${jwt}`).send({});
+    expect(started.status).toBe(201);
+    expect(started.body.otpauthUrl).toContain('otpauth://totp/NexusInfra:admin%40local');
+    expect(started.body.otpauthUrl).toContain(`secret=${started.body.secret}`);
+  });
+
+  it('changes nothing until a code proves the secret was actually scanned', async () => {
+    // An abandoned enrolment must leave the account exactly as it was, rather
+    // than behind a code nobody ever saw.
+    const jwt = await signIn();
+    await request(app).post('/me/totp').set('Authorization', `Bearer ${jwt}`).send({});
+
+    expect((await request(app).get('/me/totp').set('Authorization', `Bearer ${jwt}`)).body.enabled).toBe(false);
+    expect((await login({ email: 'admin@local', password: 'admin123!' })).status).toBe(200);
+  });
+
+  it('refuses a wrong code and turns it on for a right one, with recovery codes', async () => {
+    const jwt = await signIn();
+    await request(app).post('/me/totp').set('Authorization', `Bearer ${jwt}`).send({});
+    const wrong = await request(app).post('/me/totp/verify').set('Authorization', `Bearer ${jwt}`).send({ code: '000000' });
+    expect(wrong.status).toBe(400);
+
+    const user = await repo.getUserByEmail('admin@local');
+    const right = await request(app)
+      .post('/me/totp/verify')
+      .set('Authorization', `Bearer ${jwt}`)
+      .send({ code: totpCode(user!.totpSecret!, counterFor(Date.now())) });
+
+    expect(right.status).toBe(201);
+    expect(right.body.recoveryCodes).toHaveLength(10);
+    // A fresh token, since the one that made the request predates the factor.
+    expect(right.body.token).toBeTruthy();
+    expect((await request(app).get('/me/totp').set('Authorization', `Bearer ${jwt}`)).body).toMatchObject({
+      enabled: true,
+      recoveryCodesRemaining: 10,
+    });
+  });
+
+  it('then asks for a code at every login', async () => {
+    const jwt = await signIn();
+    const { secret } = await enrol(jwt);
+
+    const withoutCode = await login({ email: 'admin@local', password: 'admin123!' });
+    expect(withoutCode.status).toBe(401);
+    expect(withoutCode.body.totpRequired).toBe(true);
+    // Only ever said to someone who already has the password.
+    expect((await login({ email: 'admin@local', password: 'wrong' })).body.totpRequired).toBeUndefined();
+
+    expect((await login({ email: 'admin@local', password: 'admin123!', code: '000000' })).status).toBe(401);
+    const ok = await login({ email: 'admin@local', password: 'admin123!', code: totpCode(secret, counterFor(Date.now())) });
+    expect(ok.status).toBe(200);
+    expect(ok.body.token).toBeTruthy();
+  });
+
+  it('lets a recovery code in exactly once', async () => {
+    // The lost-phone case. On a self-hosted panel there is no support desk, so
+    // this is the difference between a setback and losing your own machines.
+    const jwt = await signIn();
+    const { verified } = await enrol(jwt);
+    const [code] = verified.body.recoveryCodes as string[];
+
+    expect((await login({ email: 'admin@local', password: 'admin123!', code })).status).toBe(200);
+    expect((await login({ email: 'admin@local', password: 'admin123!', code })).status).toBe(401);
+
+    const user = await repo.getUserByEmail('admin@local');
+    expect(await repo.countRecoveryCodes(user!.id)).toBe(9);
+  });
+
+  it('needs the password to turn off, not just the session', async () => {
+    // A session is a thing somebody else may be holding; the password says it is
+    // you. Otherwise a stolen session removes the factor and the factor is décor.
+    const jwt = await signIn();
+    await enrol(jwt);
+
+    expect((await request(app).delete('/me/totp').set('Authorization', `Bearer ${jwt}`).send({})).status).toBe(401);
+    expect((await request(app).delete('/me/totp').set('Authorization', `Bearer ${jwt}`).send({ password: 'nope' })).status).toBe(401);
+
+    const off = await request(app).delete('/me/totp').set('Authorization', `Bearer ${jwt}`).send({ password: 'admin123!' });
+    expect(off.status).toBe(204);
+    expect((await login({ email: 'admin@local', password: 'admin123!' })).status).toBe(200);
+
+    const user = await repo.getUserByEmail('admin@local');
+    expect(await repo.countRecoveryCodes(user!.id)).toBe(0);
+  });
+
+  describe('when the installation requires it', () => {
+    beforeEach(() => {
+      process.env.REQUIRE_TOTP = 'true';
+    });
+
+    it('still lets an un-enrolled account sign in, but only to enrol', async () => {
+      // Refusing the login would lock out everyone the moment the flag flips,
+      // including the only administrator, on a panel with no support desk.
+      const res = await login({ email: 'admin@local', password: 'admin123!' });
+      expect(res.status).toBe(200);
+      expect(res.body.mustEnrolTotp).toBe(true);
+
+      const jwt = res.body.token as string;
+      const blocked = await request(app).get('/things').set('Authorization', `Bearer ${jwt}`);
+      expect(blocked.status).toBe(403);
+      expect(blocked.body.enrolmentRequired).toBe(true);
+
+      // The doors that fix it stay open.
+      expect((await request(app).get('/me').set('Authorization', `Bearer ${jwt}`)).status).toBe(200);
+      expect((await request(app).post('/me/totp').set('Authorization', `Bearer ${jwt}`).send({})).status).toBe(201);
+    });
+
+    it('opens everything once enrolment finishes, on the token it hands back', async () => {
+      const jwt = (await login({ email: 'admin@local', password: 'admin123!' })).body.token as string;
+      const { verified } = await enrol(jwt);
+      const fresh = verified.body.token as string;
+
+      // The old token predates the factor and must not be blessed retroactively.
+      expect((await request(app).get('/things').set('Authorization', `Bearer ${jwt}`)).status).toBe(403);
+      expect((await request(app).get('/things').set('Authorization', `Bearer ${fresh}`)).status).toBe(200);
+    });
+
+    it('will not let it be turned off again', async () => {
+      const jwt = (await login({ email: 'admin@local', password: 'admin123!' })).body.token as string;
+      const { verified } = await enrol(jwt);
+      const fresh = verified.body.token as string;
+
+      const res = await request(app).delete('/me/totp').set('Authorization', `Bearer ${fresh}`).send({ password: 'admin123!' });
+      expect(res.status).toBe(409);
+    });
   });
 });

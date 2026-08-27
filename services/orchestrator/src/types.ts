@@ -18,6 +18,10 @@ export interface UserRecord {
   passwordHash: string;
   platformRole: string;
   createdAt: string;
+  /** Present from the moment TOTP enrolment starts (#229). Never leaves the server. */
+  totpSecret?: string | null;
+  /** Set once the person has proved they can produce a code from that secret. */
+  totpEnabledAt?: string | null;
 }
 
 export interface CreateUserInput {
@@ -414,6 +418,16 @@ export interface Repository {
   deleteApiToken(id: string): Promise<void>;
   /** Record that a token was used, so a list can show what is still in service. */
   touchApiToken(id: string, at: string): Promise<void>;
+
+  // ── Two-factor (#229) ──────────────────────────────────────────────────────
+  /** Store (or clear) a TOTP secret and whether it has been confirmed. */
+  setUserTotp(id: string, totp: { secret: string | null; enabledAt: string | null }): Promise<UserRecord | null>;
+  /** Replace every recovery code with a fresh set; the old ones stop working. */
+  replaceRecoveryCodes(userId: string, codeHashes: string[]): Promise<void>;
+  /** Spend one code if it exists. True when it did — a code works exactly once. */
+  consumeRecoveryCode(userId: string, codeHash: string): Promise<boolean>;
+  /** How many are left, so a person can be told before they run out. */
+  countRecoveryCodes(userId: string): Promise<number>;
 
   registerNode(input: RegisterNodeInput): Promise<NodeRecord>;
   /** Remove a node record; detaches it from any deployments first. */

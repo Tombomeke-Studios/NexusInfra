@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { canSelfRegister, isPlatformRole, toPublicUser, type PlatformRole, type UserService } from './users.js';
+import { canSelfRegister, isPlatformRole, isTotpRequired, toPublicUser, type PlatformRole, type UserService } from './users.js';
 import type { ApiTokenRecord, Repository } from './types.js';
 import { createLoginLimiter, loginKeys, type LoginLimiter } from './loginLimiter.js';
 import {
@@ -15,6 +15,14 @@ import {
   scopeAllowsMethod,
   type ApiScope,
 } from './apiTokens.js';
+import {
+  generateRecoveryCodes,
+  generateTotpSecret,
+  hashRecoveryCode,
+  looksLikeRecoveryCode,
+  otpauthUrl,
+  verifyTotp,
+} from './totp.js';
 
 // Authentication for the panel (#174).
 //
@@ -27,6 +35,9 @@ import {
 // token says *who* you are, never *what you may do*.
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
+
+/** What an authenticator app shows above the code. */
+const TOTP_ISSUER = 'NexusInfra';
 const TOKEN_TTL = '12h';
 
 /** Who a request is running as. `platformRole` is panel-wide standing. */
@@ -51,6 +62,14 @@ export interface Principal {
   tokenId?: string;
   /** What this token may do, always a subset of what the account may do (#228). */
   scopes?: ApiScope[];
+  /**
+   * Whether the second factor was satisfied when this token was issued (#229).
+   *
+   * On the token rather than looked up, because it is a fact about *this login*,
+   * not about the account: enrolling later must not retroactively bless a token
+   * minted before the code was ever asked for. Enrolment issues a fresh one.
+   */
+  mfa?: boolean;
 }
 
 /** Pluggable credential check — LocalAuthProvider today, FinVault later (#17). */
@@ -69,19 +88,22 @@ export function createLocalAuthProvider(users: UserService): AuthProvider {
 }
 
 export function signToken(principal: Principal): string {
-  return jwt.sign({ sub: principal.id, role: principal.platformRole, sid: principal.sessionId }, JWT_SECRET, {
-    expiresIn: TOKEN_TTL,
-  });
+  return jwt.sign(
+    { sub: principal.id, role: principal.platformRole, sid: principal.sessionId, mfa: principal.mfa === true },
+    JWT_SECRET,
+    { expiresIn: TOKEN_TTL }
+  );
 }
 
 /** Decode and validate a token into its Principal; throws when it isn't valid. */
 export function verifyToken(token: string): Principal {
-  const decoded = jwt.verify(token, JWT_SECRET) as { sub?: string; role?: string; sid?: string };
+  const decoded = jwt.verify(token, JWT_SECRET) as { sub?: string; role?: string; sid?: string; mfa?: boolean };
   if (!decoded.sub) throw new Error('token missing subject');
   return {
     id: decoded.sub,
     platformRole: isPlatformRole(decoded.role) ? decoded.role : 'user',
     sessionId: decoded.sid,
+    mfa: decoded.mfa === true,
   };
 }
 
@@ -244,6 +266,39 @@ export function requireTokenScope(req: Request, res: Response, next: NextFunctio
   next();
 }
 
+/**
+ * The routes an account that has not enrolled may still reach (#229).
+ *
+ * Enough to see who you are, enrol, and leave. Anything else would make the
+ * requirement advisory.
+ */
+const ENROLMENT_PATHS = ['/me', '/me/totp', '/me/totp/verify', '/auth/logout'];
+
+/**
+ * When this installation requires a second factor, hold un-enrolled accounts to
+ * enrolment and nothing else (#229).
+ *
+ * Refusing to *sign them in* would be worse: flipping `REQUIRE_TOTP` on would
+ * lock out everyone who had not already enrolled, including the only
+ * administrator, on a panel with no support desk. They get in, and the only door
+ * open is the one that fixes it.
+ *
+ * API tokens pass: a token was created by someone who had already satisfied the
+ * requirement, and blocking them would take CI down the moment the flag flips
+ * without adding a factor anyone could supply.
+ */
+export function requireTotpEnrolment(req: Request, res: Response, next: NextFunction): void {
+  if (!isTotpRequired()) return next();
+  const principal = principalOf(req);
+  if (principal.mfa === true || principal.tokenId) return next();
+  if (ENROLMENT_PATHS.includes(req.path)) return next();
+
+  res.status(403).json({
+    error: 'this panel requires two-factor authentication; set it up on your account first',
+    enrolmentRequired: true,
+  });
+}
+
 /** The caller of an authenticated request. Throws if used before `requireAuth`. */
 export function principalOf(req: Request): Principal {
   const principal = (req as AuthedRequest).principal;
@@ -315,6 +370,31 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       limiter.fail(keys);
       return res.status(401).json({ error: 'invalid credentials' });
     }
+
+    // Second factor (#229), checked before the password is forgiven: a wrong or
+    // missing code is still a failed attempt as far as the limiter is concerned,
+    // or the code field would be an unlimited guessing surface.
+    const account = await repo.getUser(principal.id);
+    let mfa = false;
+    if (account?.totpEnabledAt && account.totpSecret) {
+      const code = typeof req.body?.code === 'string' ? req.body.code : '';
+      if (!code) {
+        limiter.fail(keys);
+        // This does reveal that the password was right, which is unavoidable:
+        // the person has to be told to reach for their phone. It is only ever
+        // returned to someone who already holds the password.
+        return res.status(401).json({ error: 'a two-factor code is required', totpRequired: true });
+      }
+      const accepted = looksLikeRecoveryCode(code)
+        ? await repo.consumeRecoveryCode(account.id, hashRecoveryCode(code))
+        : verifyTotp(account.totpSecret, code, Date.now());
+      if (!accepted) {
+        limiter.fail(keys);
+        return res.status(401).json({ error: 'that two-factor code is not valid', totpRequired: true });
+      }
+      mfa = true;
+    }
+
     // A correct password means this was never an attack, so nothing is held
     // against the address or the account.
     limiter.succeed(keys);
@@ -326,7 +406,12 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       userAgent: req.headers['user-agent'] ?? null,
       ipAddress: req.ip ?? null,
     });
-    return res.json({ token: signToken({ ...principal, sessionId: session.id }) });
+    return res.json({
+      token: signToken({ ...principal, sessionId: session.id, mfa }),
+      // The panel needs to know to send the person to enrolment before anything
+      // else will answer (#229).
+      ...(isTotpRequired() && !mfa ? { mustEnrolTotp: true } : {}),
+    });
   });
 
   router.post('/auth/register', async (req: Request, res: Response) => {
@@ -417,6 +502,100 @@ export function createAccountRouter(deps: { users: UserService; repo: Repository
     const principal = principalOf(req);
     await repo.deleteSessionsForUser(principal.id, principal.sessionId);
     res.status(204).end();
+  });
+
+  // ── Two-factor authentication (#229) ───────────────────────────────────────
+
+  /**
+   * Begin enrolment: mint a secret and hand back what an authenticator app needs.
+   *
+   * Nothing is enforced yet — the secret is stored but not enabled, so an
+   * abandoned enrolment leaves the account exactly as it was rather than locking
+   * it behind a code nobody ever scanned.
+   */
+  router.post('/me/totp', async (req: Request, res: Response) => {
+    const principal = principalOf(req);
+    if (principal.tokenId) {
+      return res.status(403).json({ error: 'an API token cannot change how you sign in; sign in to do this' });
+    }
+    const user = await repo.getUser(principal.id);
+    if (!user) return res.status(404).json({ error: 'user not found' });
+    if (user.totpEnabledAt) return res.status(409).json({ error: 'two-factor authentication is already on' });
+
+    const secret = generateTotpSecret();
+    await repo.setUserTotp(user.id, { secret, enabledAt: null });
+    return res.status(201).json({ secret, otpauthUrl: otpauthUrl({ issuer: TOTP_ISSUER, account: user.email, secret }) });
+  });
+
+  /**
+   * Finish enrolment by proving a code can be produced from the secret.
+   *
+   * Returns the recovery codes, once. They are the answer to a lost phone, and
+   * on a self-hosted panel there is no support desk and possibly no second
+   * administrator — without them, enabling this is a way to lose your own
+   * machines. A fresh token comes back too, since the one making this request
+   * was minted before the factor existed.
+   */
+  router.post('/me/totp/verify', async (req: Request, res: Response) => {
+    const principal = principalOf(req);
+    if (principal.tokenId) {
+      return res.status(403).json({ error: 'an API token cannot change how you sign in; sign in to do this' });
+    }
+    const user = await repo.getUser(principal.id);
+    if (!user?.totpSecret) return res.status(409).json({ error: 'start enrolment first' });
+    if (user.totpEnabledAt) return res.status(409).json({ error: 'two-factor authentication is already on' });
+
+    const code = typeof req.body?.code === 'string' ? req.body.code : '';
+    if (!verifyTotp(user.totpSecret, code, Date.now())) {
+      return res.status(400).json({ error: 'that code is not valid — check your device’s clock and try the next one' });
+    }
+
+    await repo.setUserTotp(user.id, { secret: user.totpSecret, enabledAt: new Date().toISOString() });
+    const recoveryCodes = generateRecoveryCodes();
+    await repo.replaceRecoveryCodes(user.id, recoveryCodes.map(hashRecoveryCode));
+
+    return res.status(201).json({
+      recoveryCodes,
+      token: signToken({ id: user.id, platformRole: principal.platformRole, sessionId: principal.sessionId, mfa: true }),
+    });
+  });
+
+  /**
+   * Turn it off, or mint new recovery codes — both require the password.
+   *
+   * A session is a thing someone else may be holding; the password is the thing
+   * that says it is you. Removing a second factor with a stolen session would
+   * make the factor decorative.
+   */
+  router.delete('/me/totp', async (req: Request, res: Response) => {
+    const principal = principalOf(req);
+    if (principal.tokenId) {
+      return res.status(403).json({ error: 'an API token cannot change how you sign in; sign in to do this' });
+    }
+    const user = await repo.getUser(principal.id);
+    if (!user) return res.status(404).json({ error: 'user not found' });
+    if (!(await users.confirmPassword(user.id, String(req.body?.password ?? '')))) {
+      return res.status(401).json({ error: 'that is not your password' });
+    }
+    if (isTotpRequired()) {
+      return res.status(409).json({ error: 'this panel requires two-factor authentication; it cannot be turned off' });
+    }
+
+    await repo.setUserTotp(user.id, { secret: null, enabledAt: null });
+    await repo.replaceRecoveryCodes(user.id, []);
+    return res.status(204).end();
+  });
+
+  /** How many recovery codes are left, so someone can be told before they run out. */
+  router.get('/me/totp', async (req: Request, res: Response) => {
+    const principal = principalOf(req);
+    const user = await repo.getUser(principal.id);
+    if (!user) return res.status(404).json({ error: 'user not found' });
+    return res.json({
+      enabled: Boolean(user.totpEnabledAt),
+      enabledAt: user.totpEnabledAt ?? null,
+      recoveryCodesRemaining: user.totpEnabledAt ? await repo.countRecoveryCodes(user.id) : 0,
+    });
   });
 
   // ── API tokens (#228) ──────────────────────────────────────────────────────
