@@ -32,7 +32,15 @@ describe('Account', () => {
     vi.stubGlobal('fetch', fetchMock);
     fetchMock.mockReset();
     fetchMock.mockImplementation((url: string) =>
-      Promise.resolve({ ok: true, status: 200, json: async () => (String(url).includes('/me/sessions') ? SESSIONS : ME) } as Response)
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => {
+          const path = String(url);
+          if (path.includes('/me/tokens')) return [];
+          return path.includes('/me/sessions') ? SESSIONS : ME;
+        },
+      } as Response)
     );
   });
   afterEach(() => vi.unstubAllGlobals());
@@ -138,6 +146,76 @@ describe('Account sessions', () => {
     const call = fetchMock.mock.calls.find(
       ([u, o]) => String(u).endsWith('/me/sessions') && o?.method === 'DELETE'
     );
+    expect(call).toBeDefined();
+  });
+});
+
+// ── API tokens (#228) ────────────────────────────────────────────────────────
+
+describe('Account API tokens', () => {
+  const fetchMock = vi.fn();
+
+  const TOKENS = [
+    { id: 't1', name: 'deploy pipeline', scopes: ['write'], createdAt: new Date().toISOString(), lastUsedAt: null, expiresAt: null },
+  ];
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock.mockReset();
+    fetchMock.mockImplementation((url: string, opts?: { method?: string }) => {
+      const path = String(url);
+      const body = path.includes('/me/tokens')
+        ? opts?.method === 'POST'
+          ? { id: 't2', name: 'ci', scopes: ['write'], createdAt: new Date().toISOString(), lastUsedAt: null, expiresAt: null, secret: 'nxi_the-only-time' }
+          : TOKENS
+        : path.includes('/me/sessions')
+          ? SESSIONS
+          : ME;
+      return Promise.resolve({ ok: true, status: opts?.method === 'POST' ? 201 : 200, json: async () => body } as Response);
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('lists the account’s tokens with what they may do', async () => {
+    renderAccount();
+    expect(await screen.findByText('deploy pipeline')).toBeInTheDocument();
+    expect(screen.getByText(/read and write/i)).toBeInTheDocument();
+    expect(screen.getByText(/never used/i)).toBeInTheDocument();
+  });
+
+  it('creates one and sends the scopes the boxes describe', async () => {
+    renderAccount();
+    await screen.findByText('deploy pipeline');
+
+    await userEvent.type(screen.getByRole('textbox', { name: /token name/i }), 'ci');
+    await userEvent.click(screen.getByRole('checkbox', { name: /administer the panel/i }));
+    await userEvent.click(screen.getByRole('button', { name: /create token/i }));
+
+    const call = fetchMock.mock.calls.find(([u, o]) => String(u).includes('/me/tokens') && o?.method === 'POST');
+    expect(call).toBeDefined();
+    expect(JSON.parse(call![1].body as string)).toEqual({ name: 'ci', scopes: ['write', 'admin'], expiresAt: null });
+  });
+
+  it('shows the secret and keeps it on screen until it is dismissed', async () => {
+    // There is no second chance to read it, so it must not be a toast that fades.
+    renderAccount();
+    await screen.findByText('deploy pipeline');
+
+    await userEvent.type(screen.getByRole('textbox', { name: /token name/i }), 'ci');
+    await userEvent.click(screen.getByRole('button', { name: /create token/i }));
+
+    expect(await screen.findByText('nxi_the-only-time')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /i have copied it/i }));
+    expect(screen.queryByText('nxi_the-only-time')).not.toBeInTheDocument();
+  });
+
+  it('revokes one', async () => {
+    renderAccount();
+    await screen.findByText('deploy pipeline');
+
+    await userEvent.click(screen.getByRole('button', { name: /revoke/i }));
+
+    const call = fetchMock.mock.calls.find(([u, o]) => String(u).includes('/me/tokens/t1') && o?.method === 'DELETE');
     expect(call).toBeDefined();
   });
 });

@@ -1,5 +1,20 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { getCurrentUser, changePassword, listSessions, endSession, endOtherSessions, ApiError, type CurrentUser, type SessionView } from '../api';
+import {
+  getCurrentUser,
+  changePassword,
+  listSessions,
+  endSession,
+  endOtherSessions,
+  listApiTokens,
+  createApiToken,
+  revokeApiToken,
+  ApiError,
+  type ApiScope,
+  type ApiTokenView,
+  type CreatedApiToken,
+  type CurrentUser,
+  type SessionView,
+} from '../api';
 import { useToast } from '../components/Toast';
 import { InfoHint } from '../components/InfoHint';
 
@@ -98,6 +113,8 @@ export function Account() {
 
       <SessionsCard sessions={sessions} onChanged={loadSessions} />
 
+      <TokensCard />
+
       <div className="card" style={{ padding: 24 }}>
         <strong style={{ display: 'block', fontSize: '.95rem', marginBottom: 6 }}>Change password</strong>
         <p className="subtle" style={{ margin: '0 0 18px', fontSize: '.84rem' }}>
@@ -126,6 +143,135 @@ export function Account() {
           </button>
         </form>
       </div>
+    </div>
+  );
+}
+
+/**
+ * API tokens (#228) — a credential a script can hold instead of your password.
+ *
+ * The secret appears exactly once, in the response that creates it. The card
+ * keeps that one on screen until it is dismissed, because there is no second
+ * chance and a toast that fades is not somewhere to put a credential.
+ */
+function TokensCard() {
+  const { toast } = useToast();
+  const [tokens, setTokens] = useState<ApiTokenView[] | null>(null);
+  const [name, setName] = useState('');
+  const [write, setWrite] = useState(true);
+  const [admin, setAdmin] = useState(false);
+  const [created, setCreated] = useState<CreatedApiToken | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const list = await listApiTokens();
+      // An older panel talking to an installation without this route gets
+      // whatever that path does return; an empty card is a better answer than a
+      // page that fails to render.
+      setTokens(Array.isArray(list) ? list : []);
+    } catch {
+      setTokens([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const create = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const scopes: ApiScope[] = [...(write ? (['write'] as const) : []), ...(admin ? (['admin'] as const) : [])];
+      setCreated(await createApiToken(name.trim(), scopes));
+      setName('');
+      await load();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not create that token', 'error', 'API tokens');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revoke = async (token: ApiTokenView) => {
+    setBusy(true);
+    try {
+      await revokeApiToken(token.id);
+      toast(`“${token.name}” was revoked and stops working immediately`, 'success', 'API tokens');
+      await load();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not revoke that token', 'error', 'API tokens');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const describe = (scopes: ApiScope[]) =>
+    scopes.includes('admin') ? 'Read, write and panel administration' : scopes.includes('write') ? 'Read and write' : 'Read only';
+
+  return (
+    <div className="card" style={{ padding: 24, marginBottom: 18 }}>
+      <strong style={{ display: 'block', fontSize: '.95rem', marginBottom: 6 }}>
+        API tokens
+        <InfoHint text="A credential for scripts and CI, used in place of your password. It acts as you, can be limited to reading only, and can be revoked on its own without affecting how you sign in." label="API tokens help" />
+      </strong>
+      <p className="subtle" style={{ margin: '0 0 16px', fontSize: '.84rem' }}>
+        Send it as <code>Authorization: Bearer …</code>. A token can never do more than your account can.
+      </p>
+
+      {created && (
+        <div className="alert alert--info" role="status" style={{ marginBottom: 16 }}>
+          <strong style={{ display: 'block', marginBottom: 6 }}>Copy this now — it is not shown again</strong>
+          <code className="mono" style={{ display: 'block', wordBreak: 'break-all', marginBottom: 10 }}>{created.secret}</code>
+          <button className="btn btn--secondary btn--sm" data-ripple type="button" onClick={() => setCreated(null)}>
+            I have copied it
+          </button>
+        </div>
+      )}
+
+      {tokens === null ? (
+        <div className="empty">Loading…</div>
+      ) : tokens.length === 0 ? (
+        <div className="empty">No tokens yet.</div>
+      ) : (
+        <div style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', overflow: 'hidden', marginBottom: 16 }}>
+          {tokens.map((t) => (
+            <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: '1px solid var(--color-border)', flexWrap: 'wrap' }}>
+              <span style={{ flex: 1, minWidth: 180 }}>
+                <span style={{ display: 'block', fontSize: '.86rem' }}>{t.name}</span>
+                <span className="subtle" style={{ fontSize: '.78rem' }}>
+                  {describe(t.scopes)} · {t.lastUsedAt ? `last used ${new Date(t.lastUsedAt).toLocaleString()}` : 'never used'}
+                </span>
+              </span>
+              <button className="btn btn--secondary btn--sm" data-ripple disabled={busy} onClick={() => void revoke(t)}>
+                Revoke
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <form onSubmit={create} style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <input
+          className="input"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+          placeholder="What is it for? e.g. deploy pipeline"
+          aria-label="Token name"
+          style={{ width: 'auto', minWidth: 240 }}
+        />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '.84rem' }}>
+          <input type="checkbox" checked={write} onChange={(e) => setWrite(e.target.checked)} /> Can change things
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '.84rem' }}>
+          <input type="checkbox" checked={admin} onChange={(e) => setAdmin(e.target.checked)} /> Can administer the panel
+        </label>
+        <button className="btn btn--primary btn--sm" data-ripple type="submit" disabled={busy || !name.trim()}>
+          Create token
+        </button>
+      </form>
     </div>
   );
 }

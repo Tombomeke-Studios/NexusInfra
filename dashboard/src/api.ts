@@ -255,6 +255,36 @@ export function endOtherSessions(): Promise<void> {
   return request('/me/sessions', { method: 'DELETE' });
 }
 
+// ── API tokens (#228) — a credential a script can hold ──────────────────────
+/** `write` covers anything that changes state; `admin` covers the panel itself. */
+export type ApiScope = 'write' | 'admin';
+
+export interface ApiTokenView {
+  id: string;
+  name: string;
+  scopes: ApiScope[];
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+}
+
+/** The one response that carries the secret. It is not recoverable afterwards. */
+export interface CreatedApiToken extends ApiTokenView {
+  secret: string;
+}
+
+export function listApiTokens(): Promise<ApiTokenView[]> {
+  return request('/me/tokens');
+}
+
+export function createApiToken(name: string, scopes: ApiScope[], expiresAt?: string | null): Promise<CreatedApiToken> {
+  return request('/me/tokens', { method: 'POST', body: JSON.stringify({ name, scopes, expiresAt: expiresAt ?? null }) });
+}
+
+export function revokeApiToken(id: string): Promise<void> {
+  return request(`/me/tokens/${id}`, { method: 'DELETE' });
+}
+
 /** End this session server-side, so the token stops working immediately. */
 export function logoutSession(): Promise<void> {
   return request('/auth/logout', { method: 'POST' });
