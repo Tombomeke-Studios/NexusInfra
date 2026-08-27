@@ -15,6 +15,7 @@ import type {
   RegisterNodeInput,
   SessionRecord,
   CreateSessionInput,
+  TransferOwnershipInput,
   UpdateServerConfigInput,
   Repository,
   ServerBackupRecord,
@@ -370,6 +371,28 @@ export class InMemoryRepository implements Repository {
       autoRestart: patch.autoRestart ?? config.autoRestart,
     };
     this.configs.set(config.id, next);
+    return next;
+  }
+
+  async transferDeploymentOwner(input: TransferOwnershipInput): Promise<ServerConfigRecord | null> {
+    const deployment = this.deployments.get(input.deploymentId);
+    if (!deployment) return null;
+    const config = this.configs.get(deployment.serverConfigId);
+    if (!config) return null;
+
+    const next: ServerConfigRecord = { ...config, userId: input.newOwnerId };
+    this.configs.set(config.id, next);
+
+    if (input.dropShareId) this.subusers.delete(input.dropShareId);
+    if (input.retainedShare) {
+      await this.createSubuser({
+        deploymentId: input.deploymentId,
+        email: input.retainedShare.email,
+        userId: input.retainedShare.userId,
+        role: input.retainedShare.role,
+        status: 'active',
+      });
+    }
     return next;
   }
 

@@ -688,6 +688,21 @@ export function removeSubuser(id: string, sid: string): Promise<void> {
   return request(`/deployments/${id}/subusers/${sid}`, { method: 'DELETE' });
 }
 
+// ── Ownership transfer (#230) ─────────────────────────────────────────────────
+export interface TransferResult {
+  deploymentId: string;
+  ownerId: string;
+  retainedRole: SubuserRole | null;
+}
+
+/**
+ * Hand a server to another account. `retainRole` null means the current owner
+ * keeps nothing — they are not asked twice, so the form makes that explicit.
+ */
+export function transferOwnership(id: string, email: string, retainRole: SubuserRole | null): Promise<TransferResult> {
+  return request(`/deployments/${id}/transfer`, { method: 'POST', body: JSON.stringify({ email, retainRole }) });
+}
+
 // ── Console exec (#68) ────────────────────────────────────────────────────────
 export interface ExecResult {
   stdout: string;

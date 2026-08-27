@@ -16,6 +16,7 @@ import type {
   RegisterNodeInput,
   SessionRecord,
   CreateSessionInput,
+  TransferOwnershipInput,
   UpdateServerConfigInput,
   Repository,
   ResourceLimits,
@@ -519,6 +520,39 @@ export class PrismaRepository implements Repository {
         ...(provided(patch.autoRestart) ? { autoRestart: patch.autoRestart } : {}),
       },
     });
+    return toConfigRecord(updated);
+  }
+
+  async transferDeploymentOwner(input: TransferOwnershipInput): Promise<ServerConfigRecord | null> {
+    const d = await this.client.deployment.findUnique({ where: { id: input.deploymentId } });
+    if (!d) return null;
+
+    // One transaction (#230). A server whose owner moved but whose outgoing owner
+    // never received their retained share is a server that person has silently
+    // lost — and nothing outside can tell that is what happened.
+    const [updated] = await this.client.$transaction([
+      this.client.serverConfig.update({
+        where: { id: d.serverConfigId },
+        data: { userId: input.newOwnerId },
+      }),
+      ...(input.dropShareId ? [this.client.serverSubuser.delete({ where: { id: input.dropShareId } })] : []),
+      ...(input.retainedShare
+        ? [
+            this.client.serverSubuser.upsert({
+              where: { deploymentId_email: { deploymentId: input.deploymentId, email: input.retainedShare.email } },
+              create: {
+                id: randomUUID(),
+                deploymentId: input.deploymentId,
+                email: input.retainedShare.email,
+                userId: input.retainedShare.userId,
+                role: input.retainedShare.role,
+                status: 'active',
+              },
+              update: { userId: input.retainedShare.userId, role: input.retainedShare.role, status: 'active' },
+            }),
+          ]
+        : []),
+    ]);
     return toConfigRecord(updated);
   }
 

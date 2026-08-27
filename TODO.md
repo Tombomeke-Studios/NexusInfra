@@ -5,7 +5,7 @@
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/next-Phase_5_·_Production-3b82f6?style=flat-square)
 ![Editions](https://img.shields.io/badge/editions-community_·_hosted-8b5cf6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-750_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-782_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -28,7 +28,7 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 | **4 · Billing (2 editions)** | Open-core split (community vs hosted) + Billing Bridge ↔ FinVault, usage-based charging | ✅ Done (#144–#150) |
 | **5 · Production** | Multi-node, metrics, security hardening, Postgres, API Gateway | 📋 Backlog |
 | **6 · Sharing + releases** | Accounts · per-server authorization · invitations · teams · role-aware panel · per-edition release pipeline | ✅ Done (#173–#179) |
-| **7 · Say only what we do** | Close the gap between what the panel claims and what it does — mock tabs, dead buttons, unreachable APIs | 🔨 Active (#217–#224) |
+| **7 · Say only what we do** | Close the gap between what the panel claims and what it does — mock tabs, dead buttons, unreachable APIs | ✅ Done (#217–#224) |
 | **8 · Accounts & security** | Login rate limit · password reset · session revocation · API tokens · 2FA · ownership transfer | 📋 Backlog (#225–#230) |
 | **9 · Depth** | Templates · backup retention · port pools · node migration · SFTP · notifications · list scale · CLI | 📋 Backlog (#231–#240) |
 
@@ -228,7 +228,7 @@ scrolling log lines describing events that never happened.
 - [x] Sessions cannot be revoked — a deleted user's token stays valid (#227)
 - [ ] API tokens for scripted/CI access, scoped and revocable (#228)
 - [ ] Two-factor authentication (TOTP) + recovery codes (#229)
-- [ ] Transfer server ownership — an owner who leaves orphans their servers (#230)
+- [x] Transfer server ownership — an owner who leaves orphans their servers (#230)
 
 ### Phase 9 — Features that follow from what exists
 
@@ -252,8 +252,8 @@ scrolling log lines describing events that never happened.
 - [x] A server name with a space never starts — derive a Docker-safe container name (#286)
 - [x] One failing async route kills the whole Orchestrator process — add an error boundary (#294)
 - [x] Deleting a running server races its own stop event and violates a foreign key (#293)
-- [ ] Release bundles cannot start: `container_name` contains a slash (#291)
-- [ ] The hosted billing-bridge image contradicts its own edition stamp (#292)
+- [x] Release bundles cannot start: `container_name` contains a slash (#291)
+- [x] The hosted billing-bridge image contradicts its own edition stamp (#292)
 - [x] IO priority makes every container start fail on hosts without `io.weight` — detect and skip it (#288)
 
 ### Panel — replace the browser's own dialogs
@@ -269,7 +269,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [ ] The credit balance never refreshes on its own — a stale balance is a wrong answer stated with confidence (#296)
 - [ ] Creating a server is never charged and the form shows no plan entitlements (RAM ceiling, storage, backups, databases) (#297)
 - [ ] The FinVault integration has never been exercised end to end — written, not verified; a mismatched message key fails *silently* (#298)
-- [ ] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)
+- [x] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)
 - [ ] `docs/billing.md` is missing from the documentation ownership table (#248)
 
 > **Labels.** Issues now carry `edition:community`, `edition:hosted` or `edition:both` alongside

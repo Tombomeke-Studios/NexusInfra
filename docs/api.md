@@ -427,6 +427,27 @@ Inviting an address that already has an account binds and activates it immediate
 invitation is stored **pending** and grants nothing until that person registers or signs in with
 that address, at which point it is claimed automatically (#176).
 
+### `POST /deployments/:id/transfer` (#230)
+
+Hand a server to another account. Body `{ email, retainRole? }`, where `retainRole` ∈
+`viewer | operator | admin` or `null`/omitted for "the previous owner keeps nothing". Returns
+`{ deploymentId, ownerId, retainedRole }`.
+
+Requires `server.transfer`, which only the owner (or a platform administrator) holds: a server admin
+who could transfer could hand the server to themselves, which is the one thing their role withholds.
+
+- The recipient **must already have an account** (`404` otherwise). A per-server invitation may wait
+  for someone to sign up because it grants nothing meanwhile; a server with a pending owner is the
+  orphan this route exists to prevent.
+- Transferring to the current owner is `400`; asking the previous owner to retain `owner` is `400`,
+  since ownership is never a grant.
+- A share the recipient already held is dropped — they own the server now, and a leftover share would
+  read as though revoking it could take their access away.
+- If the previous owner's account no longer exists, the transfer still works (that is the case worth
+  rescuing) but asking for a retained role is `409` rather than silently ignored.
+- Recorded on the deployment's audit trail as `ownership-transferred`.
+- Hosted edition: usage accrues to whoever owns the server, so future charges follow the new owner.
+
 ### `POST /deployments/:id/stop`
 
 Request a running deployment be stopped — emits `infra.server.stop`; the agent stops **and removes**

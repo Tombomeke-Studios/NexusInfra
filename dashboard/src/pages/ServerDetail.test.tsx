@@ -395,3 +395,52 @@ describe('ServerDetail Startup tab', () => {
     expect(screen.getByText('itzg/minecraft-server:java21')).toBeInTheDocument();
   });
 });
+
+describe('ServerDetail ownership transfer (#230)', () => {
+  beforeEach(() => vi.resetAllMocks());
+  afterEach(() => vi.unstubAllGlobals());
+
+  const openSettings = async () => userEvent.click(await screen.findByRole('button', { name: 'settings' }));
+
+  it('offers the owner a transfer form', async () => {
+    renderDetail('owner');
+    await openSettings();
+    expect(await screen.findByRole('textbox', { name: /email of the new owner/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /transfer server/i })).toBeInTheDocument();
+  });
+
+  it('sends the address and what the outgoing owner keeps', async () => {
+    renderDetail('owner');
+    await openSettings();
+
+    await userEvent.type(await screen.findByRole('textbox', { name: /email of the new owner/i }), 'heir@example.com');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /what you keep/i }), 'viewer');
+    await userEvent.click(screen.getByRole('button', { name: /transfer server/i }));
+
+    const calls = (globalThis.fetch as unknown as { mock: { calls: [string, { method?: string; body?: string }][] } }).mock.calls;
+    const post = calls.find(([u, o]) => String(u).includes('/deployments/dep-1/transfer') && o?.method === 'POST');
+    expect(post).toBeDefined();
+    expect(JSON.parse(post![1].body as string)).toEqual({ email: 'heir@example.com', retainRole: 'viewer' });
+  });
+
+  it('sends a null retained role when the owner keeps nothing', async () => {
+    renderDetail('owner');
+    await openSettings();
+
+    await userEvent.type(await screen.findByRole('textbox', { name: /email of the new owner/i }), 'heir@example.com');
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /what you keep/i }), '');
+    await userEvent.click(screen.getByRole('button', { name: /transfer server/i }));
+
+    const calls = (globalThis.fetch as unknown as { mock: { calls: [string, { method?: string; body?: string }][] } }).mock.calls;
+    const post = calls.find(([u, o]) => String(u).includes('/deployments/dep-1/transfer') && o?.method === 'POST');
+    expect(JSON.parse(post![1].body as string).retainRole).toBeNull();
+  });
+
+  it('does not offer it to a server admin, who cannot transfer', async () => {
+    // The Settings tab itself is owner-only, so this is belt and braces — the
+    // panel must not present an action the API answers with 403.
+    renderDetail('admin');
+    await screen.findByText('Your role: Admin');
+    expect(screen.queryByRole('button', { name: /transfer server/i })).not.toBeInTheDocument();
+  });
+});

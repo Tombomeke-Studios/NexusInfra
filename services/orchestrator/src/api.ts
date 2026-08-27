@@ -14,6 +14,7 @@ import { EGGS, getEgg, buildEggDeployment, EggValidationError } from './eggs.js'
 import { containerMemoryMb, heapBudgetProblem, parseMemoryMb } from './memory.js';
 import { nodeCapacity, availableRamMb, availableCpuCores, isOverCommitted } from './capacity.js';
 import { containerNameFor } from './containerName.js';
+import { planTransfer } from './transfer.js';
 import type { DeploymentDetail, NodeRecord, Repository, ServerConfigRecord, UpdateServerConfigInput } from './types.js';
 import type { ResourceLimits } from 'shared';
 
@@ -962,6 +963,42 @@ export function createApiRouter(deps: ApiDeps): Router {
     if (!su || su.deploymentId !== req.params.id) return res.status(404).json({ error: 'subuser not found' });
     await repo.deleteSubuser(su.id);
     return res.status(204).end();
+  });
+
+  // Hand the server to another account (#230). Ownership used to be fixed at
+  // creation, so an owner who left orphaned their servers: `owner` is the only
+  // role that may delete one or manage its access, and nobody could ever hold it
+  // again. Owner-level permission, because a server admin who could transfer
+  // could hand the server to themselves.
+  router.post('/deployments/:id/transfer', requirePermission('server.transfer'), async (req: Request, res: Response) => {
+    const { deployment } = accessOf(req);
+
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    if (!isEmail(email)) return res.status(400).json({ error: 'a valid email is required' });
+
+    // The recipient must already have an account. An invitation may wait for
+    // someone to sign up (#176) because it grants nothing meanwhile; ownership
+    // cannot wait, since a server with a pending owner is the orphan again.
+    const newOwner = await repo.getUserByEmail(email);
+    if (!newOwner) return res.status(404).json({ error: 'no account with that email — ask them to sign up first' });
+
+    const planned = planTransfer({
+      currentOwner: await repo.getUser(deployment.userId),
+      newOwner,
+      retainRole: req.body?.retainRole,
+      existingShareForNewOwner: await repo.getSubuserFor(deployment.id, newOwner.email),
+    });
+    if (!planned.ok) return res.status(planned.status).json({ error: planned.error });
+
+    const config = await repo.transferDeploymentOwner({ deploymentId: deployment.id, ...planned.plan });
+    if (!config) return res.status(404).json({ error: 'deployment not found' });
+
+    await repo.appendDeploymentEvent(deployment.id, 'ownership-transferred', planned.plan.auditMessage);
+    return res.json({
+      deploymentId: deployment.id,
+      ownerId: config.userId,
+      retainedRole: planned.plan.retainedShare?.role ?? null,
+    });
   });
 
   return router;

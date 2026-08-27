@@ -76,7 +76,24 @@ immediately rather than whenever the holder's token happens to expire.
 | **viewer** | See the server, its logs and its resource usage |
 | **operator** | The above, plus start / stop / restart, the console, and reading files |
 | **admin** | The above, plus writing files, databases, backups, schedules, managing access, and editing the server's configuration (#220) |
-| **owner** | The above, plus deleting the server |
+| **owner** | The above, plus transferring (#230) and deleting the server |
+
+### Ownership can move (#230)
+
+Ownership used to be fixed at creation, which orphaned servers whenever an owner left: `owner` is the
+only role that may delete a server or manage its access, and nobody could ever hold it again. A
+transfer moves the server to another account, optionally leaving the outgoing owner an explicit
+lesser role, and is recorded on the audit trail.
+
+- **Owner-level permission**, not admin. A server admin who could transfer could hand the server to
+  themselves, which is exactly the escalation the role boundary exists to prevent.
+- **The recipient must already have an account.** An invitation may wait for someone to sign up
+  because it grants nothing meanwhile; a server whose owner is a pending invitation is the orphan
+  again, with the mailbox holder as its only route back.
+- **The outgoing owner can only step down.** Ownership is never a grant, so what they keep is a
+  grantable role or nothing at all.
+- A server whose owner account is already gone can still be rescued, which is the case the whole
+  feature is for.
 
 ### Credential checks are rate limited (#225)
 

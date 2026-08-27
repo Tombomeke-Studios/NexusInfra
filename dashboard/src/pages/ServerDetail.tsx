@@ -48,6 +48,7 @@ import {
   type ScheduleAction,
   listTeams,
   setServerTeam,
+  transferOwnership,
   type Team,
   type ServerSubuser,
   type SubuserRole,
@@ -1388,11 +1389,86 @@ function SettingsTab({
         back when there is something distinct to do — pulling a fresh image (#239)
         or rebuilding from a template (#231).
       */}
+      {allows('server.transfer') && <TransferCard deployment={deployment} onTransferred={onSaved} />}
       <div className="card" style={{ padding: '20px 22px', borderColor: 'var(--color-danger-soft)' }}>
         <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6, color: 'var(--color-danger)' }}>Delete server</strong>
         <p className="subtle" style={{ margin: '0 0 14px', fontSize: '.84rem' }}>Permanently removes this server and all of its files. This cannot be undone.</p>
         <button className="btn btn--primary btn--sm" data-ripple data-burst="danger" onClick={onDelete} style={{ background: 'var(--color-danger)' }}>Delete server</button>
       </div>
     </>
+  );
+}
+
+/**
+ * Hand this server to someone else (#230).
+ *
+ * Deliberately two deliberate steps rather than one button: the caller types the
+ * address and chooses what they keep, and only then does the action appear. What
+ * they keep is a real choice — staying on as an admin is the common case, and
+ * "nothing" has to be picked on purpose, because after this request the panel
+ * may not let them back in to fix a mistake.
+ */
+function TransferCard({ deployment, onTransferred }: { deployment: DeploymentDetail; onTransferred: () => Promise<void> | void }) {
+  const { toast } = useToast();
+  const [email, setEmail] = useState('');
+  const [retain, setRetain] = useState<SubuserRole | ''>('admin');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await transferOwnership(deployment.id, email.trim(), retain || null);
+      setEmail('');
+      toast(
+        retain ? `${email.trim()} now owns this server — you stay on as ${retain}` : `${email.trim()} now owns this server — you no longer have access`,
+        'success',
+        'Ownership'
+      );
+      await onTransferred();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not transfer this server', 'error', 'Ownership');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form className="card" style={{ padding: '20px 22px', marginBottom: 18 }} onSubmit={submit}>
+      <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6 }}>
+        Transfer ownership
+        <InfoHint text="Makes another account the owner of this server. They must already have an account. Only the owner can delete a server or manage who has access, so transferring is how a server outlives the person who created it." label="Ownership transfer help" />
+      </strong>
+      <p className="subtle" style={{ margin: '0 0 14px', fontSize: '.84rem' }}>
+        The new owner keeps every file, backup and database. Choose what you keep — you cannot undo this yourself afterwards.
+      </p>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <input
+          className="input"
+          type="email"
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="new-owner@example.com"
+          aria-label="Email of the new owner"
+          style={{ width: 'auto', minWidth: 240 }}
+        />
+        <select
+          className="select"
+          value={retain}
+          onChange={(e) => setRetain(e.target.value as SubuserRole | '')}
+          aria-label="What you keep after the transfer"
+          style={{ width: 'auto', minWidth: 220 }}
+        >
+          <option value="admin">I stay on as Admin</option>
+          <option value="operator">I stay on as Operator</option>
+          <option value="viewer">I stay on as Viewer</option>
+          <option value="">I keep no access</option>
+        </select>
+        <button className="btn btn--primary btn--sm" data-ripple type="submit" disabled={busy || !email.trim()}>
+          {busy ? 'Transferring…' : 'Transfer server'}
+        </button>
+      </div>
+    </form>
   );
 }

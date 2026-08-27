@@ -43,6 +43,7 @@ export type Permission =
   | 'schedule.manage'
   | 'subuser.manage'
   | 'server.edit'
+  | 'server.transfer'
   | 'server.delete';
 
 // Each tier adds to the one below it, so a role can never accidentally be
@@ -75,8 +76,10 @@ const ADMIN: readonly Permission[] = [
 ];
 
 // Deleting a server destroys its data and its backups, so it stays with the
-// owner (or a platform administrator) even for a server-level admin.
-const OWNER: readonly Permission[] = [...ADMIN, 'server.delete'];
+// owner (or a platform administrator) even for a server-level admin. So does
+// handing the server to someone else (#230) — a server admin who could transfer
+// would be able to give themselves the one thing their role withholds.
+const OWNER: readonly Permission[] = [...ADMIN, 'server.transfer', 'server.delete'];
 
 export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   viewer: VIEWER,
