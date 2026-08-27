@@ -163,6 +163,21 @@ a way to lose control of a server:
 - A team the caller doesn't belong to reads as **404**, for the same reason a server does — otherwise
   team identifiers become a directory of who works with whom.
 
+Since **#224** the team routes are authorized the same way the server routes are, rather than each
+handler checking ownership for itself: a guard on the whole `/teams/:id` subtree resolves the caller's
+standing once, and each route declares the permission it needs. The reason is the one that motivated
+#175 — authorization repeated in sixty places is authorization that eventually gets omitted in one of
+them, and nothing about the omission looks wrong at the call site.
+
+A team has **no role ladder of its own**: you either own it or you are in it. The role stored on a
+membership is a *server* role — what that member gets on the servers the team holds — and confers
+nothing over the team itself. Two consequences fall out of the same distinction:
+
+- **Leaving is not managing.** Removing someone else needs the owner; removing yourself never does.
+- **A platform administrator gets nothing on a team**, unlike on a server. Administering the
+  installation means reaching the hosts, and there is no operation on a team that an admin cannot
+  already perform on the servers it holds. A team is a private grouping of people, not infrastructure.
+
 ## Service-to-service auth (#169)
 
 The Node Agent's HTTP/WS surface drives Docker directly — `POST /exec/:id`, file writes, and a
