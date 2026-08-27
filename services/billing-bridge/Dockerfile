@@ -34,7 +34,9 @@ ENV APP_VERSION=$APP_VERSION
 RUN mkdir -p /etc/nexusinfra && printf '%s' "$NEXUS_EDITION" > /etc/nexusinfra/edition
 ENV PORT=9300
 ENV DATABASE_URL=file:./billing.db
-ENV NEXUS_EDITION=community
+# No ENV NEXUS_EDITION here, on purpose (#292). The stamp above is the only
+# source: baking the variable in made the hosted image contradict its own stamp
+# and refuse to start — in the only edition this service exists for.
 EXPOSE 9300
 # Apply migrations, then start. The SQLite file lives in the billing-bridge dir.
 WORKDIR /app/services/billing-bridge
