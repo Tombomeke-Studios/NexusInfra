@@ -38,6 +38,7 @@ describe('Account', () => {
         json: async () => {
           const path = String(url);
           if (path.includes('/me/tokens')) return [];
+          if (path.includes('/me/totp')) return { enabled: false, enabledAt: null, recoveryCodesRemaining: 0 };
           return path.includes('/me/sessions') ? SESSIONS : ME;
         },
       } as Response)
@@ -217,5 +218,76 @@ describe('Account API tokens', () => {
 
     const call = fetchMock.mock.calls.find(([u, o]) => String(u).includes('/me/tokens/t1') && o?.method === 'DELETE');
     expect(call).toBeDefined();
+  });
+});
+
+// ── Two-factor authentication (#229) ─────────────────────────────────────────
+
+describe('Account two-factor', () => {
+  const fetchMock = vi.fn();
+
+  /** Drive the card by saying what `GET /me/totp` currently reports. */
+  function mockWith(totp: { enabled: boolean; enabledAt: string | null; recoveryCodesRemaining: number }) {
+    fetchMock.mockImplementation((url: string, opts?: { method?: string }) => {
+      const path = String(url);
+      const method = opts?.method ?? 'GET';
+      let body: unknown = ME;
+      if (path.includes('/me/totp/verify')) body = { recoveryCodes: ['AAAAA-11111', 'BBBBB-22222'], token: 'fresh-token' };
+      else if (path.includes('/me/totp')) body = method === 'POST' ? { secret: 'JBSWY3DPEHPK3PXP', otpauthUrl: 'otpauth://totp/NexusInfra:ada' } : totp;
+      else if (path.includes('/me/tokens')) body = [];
+      else if (path.includes('/me/sessions')) body = SESSIONS;
+      return Promise.resolve({ ok: true, status: method === 'POST' ? 201 : 200, json: async () => body } as Response);
+    });
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock.mockReset();
+    mockWith({ enabled: false, enabledAt: null, recoveryCodesRemaining: 0 });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('offers to set it up when it is off', async () => {
+    renderAccount();
+    expect(await screen.findByRole('button', { name: /set up two-factor/i })).toBeInTheDocument();
+  });
+
+  it('shows the secret to scan, and enables it once a code is accepted', async () => {
+    renderAccount();
+    await userEvent.click(await screen.findByRole('button', { name: /set up two-factor/i }));
+
+    expect(await screen.findByText('JBSWY3DPEHPK3PXP')).toBeInTheDocument();
+    await userEvent.type(screen.getByRole('textbox', { name: /code from your authenticator/i }), '123456');
+    await userEvent.click(screen.getByRole('button', { name: /turn on/i }));
+
+    const call = fetchMock.mock.calls.find(([u]) => String(u).includes('/me/totp/verify'));
+    expect(call).toBeDefined();
+    expect(JSON.parse(call![1].body as string)).toEqual({ code: '123456' });
+  });
+
+  it('shows the recovery codes once and keeps them until they are dismissed', async () => {
+    // There is no second chance and nobody to recover them from, so they must
+    // not be a toast that fades.
+    renderAccount();
+    await userEvent.click(await screen.findByRole('button', { name: /set up two-factor/i }));
+    await userEvent.type(await screen.findByRole('textbox', { name: /code from your authenticator/i }), '123456');
+    await userEvent.click(screen.getByRole('button', { name: /turn on/i }));
+
+    expect(await screen.findByText('AAAAA-11111')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /i have saved them/i }));
+    expect(screen.queryByText('AAAAA-11111')).not.toBeInTheDocument();
+  });
+
+  it('asks for the password to turn it off, not just the session', async () => {
+    mockWith({ enabled: true, enabledAt: new Date().toISOString(), recoveryCodesRemaining: 7 });
+    renderAccount();
+
+    expect(await screen.findByText(/7 recovery codes left/i)).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText(/password, to turn two-factor off/i), 'my-password');
+    await userEvent.click(screen.getByRole('button', { name: /turn off/i }));
+
+    const call = fetchMock.mock.calls.find(([u, o]) => String(u).includes('/me/totp') && o?.method === 'DELETE');
+    expect(call).toBeDefined();
+    expect(JSON.parse(call![1].body as string)).toEqual({ password: 'my-password' });
   });
 });

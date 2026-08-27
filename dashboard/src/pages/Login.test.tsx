@@ -111,3 +111,81 @@ describe('Login', () => {
     });
   });
 });
+
+// ── Two-factor at the door (#229) ────────────────────────────────────────────
+
+describe('Login with two-factor', () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock.mockReset();
+    logout();
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('asks for a code only once the password has been accepted', async () => {
+    // The field is not shown up front: the server only says a code is needed to
+    // someone who already got the password right, so neither should the panel.
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: async () => ({ error: 'a two-factor code is required', totpRequired: true }),
+    } as Response);
+    renderLogin();
+
+    expect(screen.queryByLabelText('Two-factor code')).not.toBeInTheDocument();
+    await fillCredentials();
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(await screen.findByLabelText('Two-factor code')).toBeInTheDocument();
+  });
+
+  it('sends the code with the credentials and signs in', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({ error: 'code required', totpRequired: true }) } as Response)
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ token: 'tok-2fa' }) } as Response);
+    renderLogin();
+
+    await fillCredentials();
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await userEvent.type(await screen.findByLabelText('Two-factor code'), '123456');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(await screen.findByText('Overview page')).toBeInTheDocument();
+    expect(getToken()).toBe('tok-2fa');
+    const last = fetchMock.mock.calls[fetchMock.mock.calls.length - 1];
+    expect(JSON.parse(last[1].body as string)).toMatchObject({ code: '123456' });
+  });
+
+  it('takes a recovery code in the same field', async () => {
+    // One field for both kinds: which is which is a question about our
+    // implementation, not about the person holding the code.
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({ error: 'code required', totpRequired: true }) } as Response)
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ token: 'tok-recovery' }) } as Response);
+    renderLogin();
+
+    await fillCredentials();
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await userEvent.type(await screen.findByLabelText('Two-factor code'), 'AAAAA-11111');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(await screen.findByText('Overview page')).toBeInTheDocument();
+  });
+
+  it('says so when the code is wrong, keeping the field', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({ error: 'code required', totpRequired: true }) } as Response)
+      .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({ error: 'not valid', totpRequired: true }) } as Response);
+    renderLogin();
+
+    await fillCredentials();
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await userEvent.type(await screen.findByLabelText('Two-factor code'), '000000');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/not valid/i);
+    expect(screen.getByLabelText('Two-factor code')).toBeInTheDocument();
+  });
+});
