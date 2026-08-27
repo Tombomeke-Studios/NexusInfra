@@ -270,7 +270,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [ ] Creating a server is never charged and the form shows no plan entitlements (RAM ceiling, storage, backups, databases) (#297)
 - [ ] The FinVault integration has never been exercised end to end — written, not verified; a mismatched message key fails *silently* (#298)
 - [x] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)
-- [ ] `docs/billing.md` is missing from the documentation ownership table (#248)
+- [x] `docs/billing.md` is missing from the documentation ownership table (#248)
 
 > **Labels.** Issues now carry `edition:community`, `edition:hosted` or `edition:both` alongside
 > their `type:*` label, so it is clear at a glance which product an item belongs to. Almost
@@ -298,7 +298,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 
 ### Small cleanups / follow-ups (open)
 
-- [ ] `docs/billing.md` is missing from the documentation ownership table in CLAUDE.md (#248)
+- [x] `docs/billing.md` is missing from the documentation ownership table in CLAUDE.md (#248)
 
 ---
 

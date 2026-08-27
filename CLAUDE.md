@@ -176,6 +176,7 @@ is the migrations directory.
 | Docker, CI/CD, deployment | [docs/deployment.md](docs/deployment.md) |
 | A service's port, env vars or volumes | **also** [docs/images.md](docs/images.md) — people assemble stacks from it |
 | API endpoints, request/response formats, routing keys | [docs/api.md](docs/api.md) |
+| Pricing, quotas, the credit wallet, the billing cycle (hosted) | [docs/billing.md](docs/billing.md) |
 | New/moved/renamed files, new commands, new gotchas | **This file** (map in section 7) |
 | Setup / how-to-run instructions | README.md |
 | The installer's behaviour or prompts | [docs/installer.md](docs/installer.md) |
