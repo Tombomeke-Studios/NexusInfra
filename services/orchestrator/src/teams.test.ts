@@ -93,6 +93,28 @@ describe('teams', () => {
       expect((await request(memberApp).delete(`/teams/${teamId}/members/${OUTSIDER.id}`)).status).toBe(403);
     });
 
+    it('hides an unknown or invisible team behind 404 on every route (#224)', async () => {
+      // The guard runs before the handlers, so this holds for routes nobody has
+      // written yet as much as for these — which is the point of moving it there.
+      const routes = [
+        () => request(outsiderApp).get(`/teams/${teamId}`),
+        () => request(outsiderApp).delete(`/teams/${teamId}`),
+        () => request(outsiderApp).post(`/teams/${teamId}/members`).send({ email: MEMBER.email, role: 'viewer' }),
+        () => request(outsiderApp).patch(`/teams/${teamId}/members/${MEMBER.id}`).send({ role: 'viewer' }),
+        () => request(outsiderApp).delete(`/teams/${teamId}/members/${OUTSIDER.id}`),
+      ];
+      for (const call of routes) expect((await call()).status).toBe(404);
+      expect((await request(leadApp).get('/teams/no-such-team')).status).toBe(404);
+    });
+
+    it('refuses a member before the handler validates anything (#224)', async () => {
+      await addMember();
+      // A nonsense role would be a 400 if the request got as far as validation;
+      // authorization is settled first, so it never does.
+      const res = await request(memberApp).post(`/teams/${teamId}/members`).send({ email: OUTSIDER.email, role: 'nonsense' });
+      expect(res.status).toBe(403);
+    });
+
     it('lets a member remove themselves', async () => {
       await addMember();
       expect((await request(memberApp).delete(`/teams/${teamId}/members/${MEMBER.id}`)).status).toBe(204);

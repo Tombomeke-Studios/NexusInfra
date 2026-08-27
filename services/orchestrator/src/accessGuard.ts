@@ -7,8 +7,17 @@
 
 import type { NextFunction, Request, Response } from 'express';
 import { principalOf } from './auth.js';
-import { can, resolveRole, type Permission, type Role } from './access.js';
-import type { DeploymentDetail, Repository } from './types.js';
+import {
+  can,
+  canOnTeam,
+  resolveRole,
+  resolveTeamRelation,
+  type Permission,
+  type Role,
+  type TeamPermission,
+  type TeamRelation,
+} from './access.js';
+import type { DeploymentDetail, Repository, TeamRecord } from './types.js';
 
 /** What the guard leaves on the request for the handlers behind it. */
 export interface RequestAccess {
@@ -77,5 +86,92 @@ export function requirePermission(permission: Permission) {
       return;
     }
     next();
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The same shape, for teams (#224).
+//
+// The team routes used to check ownership and membership by hand in every
+// handler. That is exactly the pattern #175 replaced for servers: authorization
+// spread across handlers is authorization that is eventually forgotten in one of
+// them, and the one it is forgotten in is the one that matters.
+
+/** What the team guard leaves on the request for the handlers behind it. */
+export interface TeamRequestAccess {
+  relation: TeamRelation;
+  team: TeamRecord;
+}
+
+type TeamAccessRequest = Request & { teamAccess?: TeamRequestAccess };
+
+/** The resolved team access for the current request. Throws if used before the guard. */
+export function teamAccessOf(req: Request): TeamRequestAccess {
+  const access = (req as TeamAccessRequest).teamAccess;
+  if (!access) throw new Error('teamAccessOf called on a route that is not behind teamGuard');
+  return access;
+}
+
+/**
+ * Look up a team the caller has any business seeing, and how they stand to it.
+ *
+ * Also used where a team is named in a *body* rather than the path — attaching a
+ * server to one — so that "a team you can see" means one thing everywhere.
+ */
+export async function teamAccessFor(
+  repo: Repository,
+  teamId: string,
+  userId: string,
+): Promise<TeamRequestAccess | null> {
+  const team = await repo.getTeam(teamId);
+  if (!team) return null;
+  const membership = team.ownerId === userId ? null : await repo.getTeamMember(team.id, userId);
+  const relation = resolveTeamRelation({ principal: { id: userId }, ownerId: team.ownerId, membership });
+  return relation ? { relation, team } : null;
+}
+
+/** Resolve the caller's standing on the addressed team, or 404. */
+export function teamGuard(repo: Repository) {
+  return async function guard(req: Request, res: Response, next: NextFunction): Promise<void> {
+    const access = await teamAccessFor(repo, req.params.id, principalOf(req).id);
+    if (!access) {
+      res.status(404).json({ error: 'team not found' });
+      return;
+    }
+    (req as TeamAccessRequest).teamAccess = access;
+    next();
+  };
+}
+
+/** Require one permission on the already-resolved team. */
+export function requireTeamPermission(permission: TeamPermission, refusal = 'only the team owner can do this') {
+  return function check(req: Request, res: Response, next: NextFunction): void {
+    const { relation } = teamAccessOf(req);
+    if (!canOnTeam(relation, permission)) {
+      res.status(403).json({ error: refusal });
+      return;
+    }
+    next();
+  };
+}
+
+/**
+ * Require a team permission, unless the caller is acting on themselves.
+ *
+ * Leaving is not managing: a member may remove their own membership without
+ * being able to touch anyone else's.
+ */
+export function requireTeamPermissionOrSelf(
+  permission: TeamPermission,
+  subjectOf: (req: Request) => string,
+  refusal?: string,
+) {
+  const otherwise = requireTeamPermission(permission, refusal);
+  return function check(req: Request, res: Response, next: NextFunction): void {
+    if (subjectOf(req) === principalOf(req).id) {
+      next();
+      return;
+    }
+    otherwise(req, res, next);
   };
 }
