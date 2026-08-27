@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   can,
+  canOnTeam,
   GRANTABLE_ROLES,
+  resolveTeamRelation,
+  TEAM_PERMISSIONS,
   isGrantableRole,
   isRole,
   resolveRole,
@@ -150,5 +153,44 @@ describe('resolveRole', () => {
 
   it('does not treat an ordinary user as an administrator', () => {
     expect(resolveRole({ principal: principal(OTHER_ID, 'user'), ownerId: OWNER_ID })).toBeNull();
+  });
+});
+
+describe('the team permission matrix (#224)', () => {
+  it('gives a member sight of the team and nothing more', () => {
+    expect(canOnTeam('member', 'team.view')).toBe(true);
+    expect(canOnTeam('member', 'team.members.manage')).toBe(false);
+    expect(canOnTeam('member', 'team.delete')).toBe(false);
+  });
+
+  it('gives the owner everything a member has, and the rest', () => {
+    for (const permission of TEAM_PERMISSIONS.member) expect(canOnTeam('owner', permission)).toBe(true);
+    expect(canOnTeam('owner', 'team.members.manage')).toBe(true);
+    expect(canOnTeam('owner', 'team.delete')).toBe(true);
+  });
+
+  it('grants nothing without a relation', () => {
+    expect(canOnTeam(null, 'team.view')).toBe(false);
+    expect(canOnTeam(undefined, 'team.delete')).toBe(false);
+  });
+});
+
+describe('resolveTeamRelation', () => {
+  it('makes the creator the owner', () => {
+    expect(resolveTeamRelation({ principal: { id: OWNER_ID }, ownerId: OWNER_ID })).toBe('owner');
+  });
+
+  it('makes anyone with a membership a member', () => {
+    expect(resolveTeamRelation({ principal: { id: OTHER_ID }, ownerId: OWNER_ID, membership: { role: 'admin' } })).toBe('member');
+    // The role on a membership is a *server* role — it says nothing about the team.
+    expect(resolveTeamRelation({ principal: { id: OTHER_ID }, ownerId: OWNER_ID, membership: { role: 'viewer' } })).toBe('member');
+  });
+
+  it('gives an outsider nothing, which callers must answer as 404', () => {
+    // Deliberately blind to the platform role, unlike resolveRole: administering
+    // the installation is about reaching hosts, and a team is a private grouping
+    // of people rather than infrastructure.
+    expect(resolveTeamRelation({ principal: { id: OTHER_ID }, ownerId: OWNER_ID })).toBeNull();
+    expect(resolveTeamRelation({ principal: { id: OTHER_ID }, ownerId: OWNER_ID, membership: null })).toBeNull();
   });
 });
