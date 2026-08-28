@@ -9,6 +9,7 @@ import { resourceLimitsToHostConfig } from './limits.js';
 import { detectCgroupSupport, withCgroupSupport, type CgroupSupport } from './cgroupSupport.js';
 import { buildTarball, normalizeContainerPath, parseLsOutput, type FileEntry } from './files.js';
 import { collectDisk, resolveDiskPath, type DiskPathChoice } from './disk.js';
+import { publishPorts } from './ports.js';
 import type { TerminalSession } from './terminal.js';
 
 // NodeResources is the shared event-payload type (shared/src/events.ts) — the
@@ -125,15 +126,9 @@ export class DockerodeRuntime implements ContainerRuntime {
 
     const env = spec.env ? Object.entries(spec.env).map(([k, v]) => `${k}=${v}`) : undefined;
 
-    const portBindings: Record<string, Array<{ HostPort: string }>> = {};
-    const exposedPorts: Record<string, object> = {};
-    if (spec.ports) {
-      for (const [hostPort, containerPort] of Object.entries(spec.ports)) {
-        const key = `${containerPort}/tcp`;
-        exposedPorts[key] = {};
-        portBindings[key] = [{ HostPort: hostPort }];
-      }
-    }
+    // The protocol used to be hardcoded to tcp here, which published nothing at
+    // all for a UDP game — and three of the four eggs are UDP games (#313).
+    const { exposedPorts, portBindings } = publishPorts(spec.ports);
 
     // Enforce the server's resource caps / restart policy at start (#107),
     // converting the host-relative percentages against this node's capacity.

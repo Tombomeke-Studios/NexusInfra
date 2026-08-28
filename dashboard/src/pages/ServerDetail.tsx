@@ -838,7 +838,7 @@ function NetworkTab({ ports }: { ports: Record<string, string> }) {
     <>
       <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 12 }}>
         Port allocations
-        <InfoHint text="Each row maps a port on the node to a port inside the container. Reach the server on the node's address and the host port." label="Port allocations help" />
+        <InfoHint text="Each row maps a port on the node to a port inside the container, over the protocol shown. Reach the server on the node's address and the host port — and forward that protocol on your router, not just TCP: most game servers are UDP." label="Port allocations help" />
       </strong>
       {allocs.length === 0 ? (
         <div className="card" style={{ padding: '20px 22px' }}>
@@ -848,14 +848,25 @@ function NetworkTab({ ports }: { ports: Record<string, string> }) {
         </div>
       ) : (
         <div style={listCard}>
-          {allocs.map(([hostPort, containerPort]) => (
-            <div key={hostPort} style={rowCss}>
-              <span className="mono" style={{ flex: 'none', minWidth: 90, fontSize: '.86rem', fontWeight: 600 }}>{hostPort}</span>
-              <span className="muted" style={{ fontSize: '.84rem' }}>on the node →</span>
-              <span className="mono" style={{ flex: 1, fontSize: '.86rem' }}>{containerPort}</span>
-              <span className="muted" style={{ fontSize: '.84rem' }}>in the container</span>
-            </div>
-          ))}
+          {allocs.map(([hostPort, containerPort]) => {
+            // The protocol is part of the mapping (#313), and it is the thing
+            // somebody forwarding a port on their router has to get right — most
+            // game servers are UDP, and a TCP rule for them forwards nothing.
+            const [port, protocol] = containerPort.split('/');
+            return (
+              <div key={hostPort} style={rowCss}>
+                <span className="mono" style={{ flex: 'none', minWidth: 90, fontSize: '.86rem', fontWeight: 600 }}>{hostPort}</span>
+                <span className="muted" style={{ fontSize: '.84rem' }}>on the node →</span>
+                <span className="mono" style={{ fontSize: '.86rem' }}>{port}</span>
+                <span className="badge" style={{ fontSize: '.72rem' }}>
+                  {/* Uppercased here rather than in CSS, so the text a screen
+                      reader announces is the text on the screen. */}
+                  {(protocol ?? 'tcp').replace('+', ' + ').toUpperCase()}
+                </span>
+                <span className="muted" style={{ flex: 1, fontSize: '.84rem' }}>in the container</span>
+              </div>
+            );
+          })}
         </div>
       )}
     </>
@@ -1254,9 +1265,10 @@ function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; o
   // The published host port is what someone about to forward a port on their
   // router actually needs, so it gets its own control instead of living inside
   // the JSON blob.
-  const firstPort = Object.entries(deployment.ports ?? {})[0];
+  const [firstPort, ...restPorts] = Object.entries(deployment.ports ?? {});
   const [hostPort, setHostPort] = useState(firstPort?.[0] ?? '');
   const containerPort = firstPort?.[1] ?? '';
+  const otherPorts = Object.fromEntries(restPorts);
 
   const parseMap = (text: string, label: string): Record<string, string> => {
     const value: unknown = JSON.parse(text || '{}');
@@ -1284,7 +1296,11 @@ function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; o
         // An egg owns its image and environment; sending them would be ignored
         // anyway, and offering them would suggest otherwise.
         ...(egg ? { eggValues } : { dockerImage: image.trim(), env: parsedEnv }),
-        ports: egg && hostPort.trim() && containerPort ? { [hostPort.trim()]: containerPort } : parsedPorts,
+        // Only the first mapping has a control; the rest are carried through
+        // untouched. Rewriting the map from that one field would silently drop
+        // the others — Valheim publishes a second port for the Steam query, and
+        // losing it takes the server out of the browser (#313).
+        ports: egg && hostPort.trim() && containerPort ? { ...otherPorts, [hostPort.trim()]: containerPort } : parsedPorts,
         autoRestart,
       });
       toast('Configuration saved — it applies the next time this server starts', 'success', 'Settings');

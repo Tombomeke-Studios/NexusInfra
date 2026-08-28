@@ -285,6 +285,12 @@ Request:
 }
 ```
 
+**Ports carry their protocol (#313).** The container side of a mapping may be written in Docker's own
+notation — `"2456": "2456/udp"`, or `"27015/tcp+udp"` for a port a game needs on both. A bare number
+means TCP, exactly as before, so existing deployments are untouched. This matters more than it looks:
+Docker also defaults to TCP, so publishing a UDP game as TCP publishes nothing usable — the container
+runs, the panel shows it healthy, and nobody can connect.
+
 **Resource limits accept either unit (#275).** `ramMb` and `cpuCores` (fractional allowed) set an
 absolute amount; `ramPercent` and `cpuPercent` set a share of the node. The absolute value wins when
 both are present — it is the more specific instruction, and it keeps meaning the same if the server is
