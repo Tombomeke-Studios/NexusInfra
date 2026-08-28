@@ -62,7 +62,13 @@ export interface Egg {
   name: string;
   description: string;
   dockerImage: string;
-  /** Default host→container port mapping; the creator may override the host side. */
+  /**
+   * Default host→container port mapping; the creator may override the host side.
+   *
+   * The container side may name a protocol in Docker's notation — `2456/udp`,
+   * `7777/tcp+udp` — because most game servers are UDP and publishing them as
+   * TCP publishes nothing usable (#313). No suffix means TCP.
+   */
   ports: Record<string, string>;
   /**
    * Where this server keeps its own files inside the container. Backups target it,
@@ -177,7 +183,9 @@ const VALHEIM: Egg = {
   name: 'Valheim',
   description: 'A dedicated Valheim server (lloesche/valheim-server).',
   dockerImage: 'lloesche/valheim-server',
-  ports: { '2456': '2456' },
+  // UDP: 2456 carries the game, 2457 the Steam query that puts the server in the
+  // browser. Valheim needs no TCP at all for play.
+  ports: { '2456': '2456/udp', '2457': '2457/udp' },
   dataPath: '/config',
   variables: [
     { key: 'SERVER_NAME', label: 'Server name', description: 'Shown in the server browser.', kind: 'string', default: 'A NexusInfra server' },
@@ -198,7 +206,9 @@ const RUST: Egg = {
   name: 'Rust',
   description: 'A dedicated Rust server (didstopia/rust-server).',
   dockerImage: 'didstopia/rust-server',
-  ports: { '28015': '28015' },
+  // UDP 28015 is the game and the Steam query; TCP 28016 is RCON, which is the
+  // only part of Rust that wants TCP.
+  ports: { '28015': '28015/udp', '28016': '28016/tcp' },
   dataPath: '/steamcmd/rust',
   variables: [
     { key: 'RUST_SERVER_NAME', label: 'Server name', description: 'Shown in the server browser.', kind: 'string', default: 'A NexusInfra server' },
@@ -211,7 +221,8 @@ const CS2: Egg = {
   name: 'Counter-Strike 2',
   description: 'A dedicated CS2 server (joedwards32/cs2).',
   dockerImage: 'joedwards32/cs2',
-  ports: { '27015': '27015' },
+  // Source servers use the same number for gameplay (UDP) and RCON (TCP).
+  ports: { '27015': '27015/tcp+udp' },
   dataPath: '/home/steam/cs2-dedicated',
   variables: [
     { key: 'CS2_SERVERNAME', label: 'Server name', description: 'Shown in the server browser.', kind: 'string', default: 'A NexusInfra server' },

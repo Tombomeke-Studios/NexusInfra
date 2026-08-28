@@ -484,3 +484,33 @@ describe('ServerDetail destructive actions ask first (#299)', () => {
     expect(calls.some(([, o]) => o?.method === 'DELETE')).toBe(false);
   });
 });
+
+describe('ServerDetail Network tab shows the protocol (#313)', () => {
+  beforeEach(() => vi.resetAllMocks());
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('says UDP where the mapping is UDP, rather than implying TCP', async () => {
+    // The protocol is the thing somebody forwarding a port on their router has
+    // to get right: a TCP rule for a UDP game forwards nothing.
+    renderDetail('owner', { ports: { '2456': '2456/udp', '2457': '2457/udp' } });
+    await userEvent.click(await screen.findByRole('button', { name: 'network' }));
+
+    expect(await screen.findAllByText('UDP')).toHaveLength(2);
+    // Both the host side and the container side are still shown.
+    expect(screen.getAllByText('2456').length).toBeGreaterThan(0);
+  });
+
+  it('shows both protocols for a port published on each', async () => {
+    renderDetail('owner', { ports: { '27015': '27015/tcp+udp' } });
+    await userEvent.click(await screen.findByRole('button', { name: 'network' }));
+
+    expect(await screen.findByText('TCP + UDP')).toBeInTheDocument();
+  });
+
+  it('still reads a bare port as TCP, as it always did', async () => {
+    renderDetail('owner', { ports: { '25565': '25565' } });
+    await userEvent.click(await screen.findByRole('button', { name: 'network' }));
+
+    expect(await screen.findByText('TCP')).toBeInTheDocument();
+  });
+});

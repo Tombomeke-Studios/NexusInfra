@@ -229,6 +229,7 @@ is the migrations directory.
 |---|---|
 | `src/runtime.ts` | `ContainerRuntime` interface + `DockerodeRuntime` (real Docker via dockerode) + host resource collection + per-container log/stats streams |
 | `src/stats.ts` | `parseDockerStats` — pure derivation of `ContainerStats` (CPU%, mem, network) from a Docker stats sample |
+| `src/ports.ts` | Pure `publishPorts`/`parseContainerPort` (#313) — the container side of a mapping may name its protocol in Docker's notation (`2456/udp`, `27015/tcp+udp`); no suffix means TCP, as before. The protocol used to be hardcoded, and Docker *defaults* to TCP, so a UDP game published nothing at all: three of the four eggs are UDP games and Valheim and Rust need no TCP for play. The container ran, the panel showed it green, and nobody could join |
 | `src/limits.ts` | `resourceLimitsToHostConfig` — pure translation of a server's `ResourceLimits` (%) into Docker HostConfig caps (Memory, NanoCpus, RestartPolicy, …) enforced at start |
 | `src/cgroupSupport.ts` | What this host's cgroups actually accept (#288): pure `withCgroupSupport` drops HostConfig fields the kernel would reject, `detectCgroupSupport` probes for them. Setting `BlkioWeight` on a host with no `io.weight` fails **container init**, and the form defaults `ioPriority: normal` — so every server on Docker Desktop refused to start. `io` in `cgroup.controllers` is not the signal; the file's existence is |
 | `src/files.ts` | Pure file helpers: `normalizeContainerPath` (traversal guard), `parseLsOutput`, `buildTarball` |
