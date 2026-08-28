@@ -103,7 +103,13 @@ export interface ResourceLimits {
 }
 
 // ── Eggs (#231) — the recipes a server can be created from ────────────────────
-export type EggVariableKind = 'string' | 'integer' | 'boolean' | 'choice';
+export type EggVariableKind = 'string' | 'integer' | 'boolean' | 'choice' | 'version';
+
+/** When a variable applies at all — `NEOFORGE_VERSION` only to NeoForge (#311). */
+export interface EggVariableCondition {
+  key: string;
+  equals: string[];
+}
 
 export interface EggVariable {
   key: string;
@@ -111,9 +117,21 @@ export interface EggVariable {
   description: string;
   kind: EggVariableKind;
   default: string;
+  /**
+   * For `choice`, the allowed values. For `version`, the *suggestions* the
+   * orchestrator resolved — never a closed set, since the list can be stale or
+   * come from the offline fallback (#311).
+   */
   options?: string[];
   min?: number;
   max?: number;
+  showWhen?: EggVariableCondition;
+}
+
+/** Whether `variable` applies, given the answers so far. Mirrors eggs.ts (#311). */
+export function variableApplies(variable: EggVariable, values: Record<string, string>): boolean {
+  if (!variable.showWhen) return true;
+  return variable.showWhen.equals.includes(values[variable.showWhen.key] ?? '');
 }
 
 export interface Egg {

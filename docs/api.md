@@ -253,10 +253,18 @@ non-administrators.
 
 ### `GET /eggs`
 
-The egg catalogue (#231) — the recipes a server can be created from. Each egg carries its
-`dockerImage`, default `ports`, the `dataPath` where the server keeps its files, and a list of
-`variables` (key, label, description, kind, default, and options/bounds). The panel renders its
-creation form from this, so adding an egg needs no dashboard change.
+The catalogue the panel builds its form from: for each egg, the image, ports, data path and the
+variables a person may set, with kind, default, help text and validation.
+
+A `version` variable's `options` are **filled in when this is served** (#311) — the game versions come
+from Mojang's manifest, cached, with a baked fallback when the orchestrator has no internet. They are
+suggestions: a version is validated by *shape*, never against that list, so a stale or cold cache
+cannot refuse a version the image would happily install.
+
+A variable may carry `showWhen: { key, equals[] }`, meaning it only applies for certain answers to
+another variable — `NEOFORGE_VERSION` only to `TYPE=NEOFORGE`. A variable that does not apply is not
+asked for **and not sent to the container**: irrelevant environment is noise at best, and where two
+mod loaders read near-identical names it is a way to install the wrong one.
 
 ### `POST /deployments`
 

@@ -424,3 +424,126 @@ describe('NewDeployment', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('No healthy node available');
   });
 });
+
+// ── NeoForge and the version selector (#311) ─────────────────────────────────
+
+describe('NewDeployment egg options', () => {
+  const fetchMock = vi.fn();
+
+  /** The catalogue as the orchestrator serves it: version options already filled in. */
+  const EGG_WITH_VERSIONS = {
+    ...MINECRAFT_EGG,
+    variables: [
+      {
+        key: 'TYPE',
+        label: 'Server software',
+        description: 'Which server software to run.',
+        kind: 'choice',
+        default: 'VANILLA',
+        options: ['VANILLA', 'PAPER', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT'],
+      },
+      {
+        key: 'VERSION',
+        label: 'Game version',
+        description: 'Which Minecraft version to run.',
+        kind: 'version',
+        optionsSource: 'minecraft-versions',
+        default: 'LATEST',
+        options: ['LATEST', 'SNAPSHOT', '26.2', '1.21.11', '1.20.1'],
+      },
+      {
+        key: 'NEOFORGE_VERSION',
+        label: 'NeoForge build',
+        description: 'Which NeoForge build to install.',
+        kind: 'string',
+        default: 'latest',
+        showWhen: { key: 'TYPE', equals: ['NEOFORGE'] },
+      },
+      { key: 'MEMORY', label: 'Java heap size', description: 'Heap.', kind: 'string', default: '2G' },
+    ],
+  };
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock.mockReset();
+    fetchMock.mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/placement')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: 'n1' }) } as Response);
+      if (path.includes('/nodes'))
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 'n1', name: 'box', health: 'healthy', cpuPercent: 10, ramUsedMb: 1000, ramTotalMb: 16384, diskUsedGb: null, diskTotalGb: null, lastHeartbeat: new Date().toISOString() }],
+        } as Response);
+      if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [EGG_WITH_VERSIONS] } as Response);
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const openGameForm = async () => {
+    render(
+      <MemoryRouter initialEntries={['/new']}>
+        <Routes>
+          <Route path="/new" element={<NewDeployment />} />
+          <Route path="/servers" element={<div>Servers page</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Game server/ }));
+    await screen.findByRole('button', { name: /Java Edition/ });
+  };
+
+  it('offers NeoForge as server software', async () => {
+    await openGameForm();
+    expect(screen.getByRole('button', { name: 'NEOFORGE' })).toBeInTheDocument();
+  });
+
+  it('picks the version from a list rather than a text field', async () => {
+    await openGameForm();
+
+    const select = screen.getByRole('combobox', { name: /game version/i });
+    expect(select).toHaveValue('LATEST');
+    // The list the orchestrator resolved, not one baked into the panel.
+    expect(screen.getByRole('option', { name: '26.2' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: '1.20.1' })).toBeInTheDocument();
+
+    await userEvent.selectOptions(select, '1.21.11');
+    expect(select).toHaveValue('1.21.11');
+  });
+
+  it('still lets a version be typed, since the list can be stale or offline', async () => {
+    await openGameForm();
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /game version/i }), '__other__');
+    const typed = await screen.findByRole('textbox', { name: /game version/i });
+    await userEvent.type(typed, '1.21.11-rc1');
+
+    expect(typed).toHaveValue('1.21.11-rc1');
+  });
+
+  it('asks for the NeoForge build only once NeoForge is chosen', async () => {
+    await openGameForm();
+    expect(screen.queryByRole('textbox', { name: /neoforge build/i })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'NEOFORGE' }));
+    expect(await screen.findByRole('textbox', { name: /neoforge build/i })).toBeInTheDocument();
+
+    // And it goes away again when the software changes back.
+    await userEvent.click(screen.getByRole('button', { name: 'PAPER' }));
+    expect(screen.queryByRole('textbox', { name: /neoforge build/i })).not.toBeInTheDocument();
+  });
+
+  it('sends the chosen software and version', async () => {
+    await openGameForm();
+
+    await userEvent.type(screen.getByLabelText('Name'), 'modded');
+    await userEvent.click(screen.getByRole('button', { name: 'NEOFORGE' }));
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /game version/i }), '1.21.11');
+    await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+
+    const call = fetchMock.mock.calls.find(([u, o]) => String(u).includes('/deployments') && o?.method === 'POST');
+    const body = JSON.parse(call![1].body as string);
+    expect(body.eggValues).toMatchObject({ TYPE: 'NEOFORGE', VERSION: '1.21.11' });
+  });
+});

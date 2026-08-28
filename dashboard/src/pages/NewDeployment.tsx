@@ -1,9 +1,10 @@
 import { useEffect, useState, type FormEvent, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createDeployment, listNodes, listEggs, getPlacement, type NodeView, type Egg, type EggVariable } from '../api';
+import { createDeployment, listNodes, listEggs, getPlacement, variableApplies, type NodeView, type Egg, type EggVariable } from '../api';
 import { IconPlus } from '../components/Icons';
 import { useToast } from '../components/Toast';
 import { InfoHint } from '../components/InfoHint';
+import { VersionSelect } from '../components/VersionSelect';
 import { getDeploymentDefaults } from '../prefs';
 import { parseMemoryMb, jvmOverheadMb, derivedHeapMb, formatHeapMb } from '../memory';
 
@@ -97,6 +98,14 @@ export function NewDeployment() {
   const setEggValue = (key: string, value: string) => setEggValues((prev) => ({ ...prev, [key]: value }));
   /** Which egg variable is the JVM heap, when this egg has one (#308). */
   const heapVariable = egg?.memoryVariable;
+
+  /**
+   * Every answer with its default filled in — what a condition is evaluated
+   * against, and what the API will build from (#311). Reading straight from
+   * `eggValues` would hide a variable until its controlling one was touched.
+   */
+  const answeredEggValues: Record<string, string> = {};
+  for (const v of egg?.variables ?? []) answeredEggValues[v.key] = eggValues[v.key] ?? v.default;
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -292,6 +301,9 @@ export function NewDeployment() {
                       limit further down rather than being asked for twice (#308). */}
                   {egg.variables
                     .filter((v) => v.key !== egg.memoryVariable)
+                    // A variable that does not apply is not asked for and not
+                    // sent — NEOFORGE_VERSION means nothing to a Paper server (#311).
+                    .filter((v) => variableApplies(v, answeredEggValues))
                     .map((v) => (
                       <EggField key={v.key} variable={v} value={eggValues[v.key] ?? v.default} onChange={(val) => setEggValue(v.key, val)} />
                     ))}
@@ -543,7 +555,9 @@ function EggField({ variable, value, onChange }: { variable: EggVariable; value:
         {variable.label}
         <InfoHint text={variable.description} label={`${variable.label} help`} />
       </label>
-      {variable.kind === 'choice' ? (
+      {variable.kind === 'version' ? (
+        <VersionSelect id={id} value={value} options={variable.options ?? []} onChange={onChange} />
+      ) : variable.kind === 'choice' ? (
         <Seg options={(variable.options ?? []).map((o) => ({ value: o, label: o }))} value={value} onChange={onChange} />
       ) : variable.kind === 'boolean' ? (
         <Toggle on={value === 'true'} onToggle={() => onChange(value === 'true' ? 'false' : 'true')} />

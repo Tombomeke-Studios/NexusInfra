@@ -8,6 +8,7 @@ import {
   deleteDeployment,
   updateDeployment,
   listEggs,
+  variableApplies,
   killDeployment,
   streamLogs,
   streamStats,
@@ -57,6 +58,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { useToast } from '../components/Toast';
 import { useDialog } from '../components/Dialog';
 import { InfoHint } from '../components/InfoHint';
+import { VersionSelect } from '../components/VersionSelect';
 import { permissionsFor, ROLE_LABELS, type ServerPermission, type ServerRole } from '../permissions';
 import { Terminal } from '../components/Terminal';
 
@@ -1237,6 +1239,12 @@ function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; o
   // than a textarea of raw JSON with nothing to stop you deleting EULA.
   const [egg, setEgg] = useState<Egg | null>(null);
   const [eggValues, setEggValues] = useState<Record<string, string>>({});
+  /**
+   * Every answer with its stored value or default filled in — what a variable's
+   * condition is evaluated against, and what the API will build from (#311).
+   */
+  const answeredValues: Record<string, string> = {};
+  for (const v of egg?.variables ?? []) answeredValues[v.key] = eggValues[v.key] ?? deployment.env?.[v.key] ?? v.default;
   useEffect(() => {
     void listEggs()
       .then((list) => setEgg(list.find((e) => e.id === deployment.type) ?? null))
@@ -1322,6 +1330,9 @@ function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; o
           */}
           {egg.variables
             .filter((v) => v.key !== egg.memoryVariable)
+            // A variable that does not apply to the chosen software is not shown
+            // and not sent — the same rule the API builds by (#311).
+            .filter((v) => variableApplies(v, answeredValues))
             .map((v) => (
               <EggConfigField
                 key={v.key}
@@ -1376,7 +1387,9 @@ function EggConfigField({ variable, value, onChange }: { variable: EggVariable; 
         {variable.label}
         <InfoHint text={variable.description} label={`${variable.label} help`} />
       </label>
-      {variable.kind === 'choice' ? (
+      {variable.kind === 'version' ? (
+        <VersionSelect id={id} value={value} options={variable.options ?? []} onChange={onChange} />
+      ) : variable.kind === 'choice' ? (
         <select id={id} className="select" value={value} onChange={(e) => onChange(e.target.value)}>
           {(variable.options ?? []).map((o) => (
             <option key={o} value={o}>{o}</option>
