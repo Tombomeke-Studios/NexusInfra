@@ -203,3 +203,66 @@ describe('validating a version (#311)', () => {
     expect(buildEggDeployment(egg, { VERSION: '   ' }).env.VERSION).toBe('LATEST');
   });
 });
+
+describe('the eggs added in #315', () => {
+  it('offers Bedrock and Palworld alongside the rest', () => {
+    expect(EGGS.map((e) => e.id)).toEqual(
+      expect.arrayContaining(['minecraft-java', 'minecraft-bedrock', 'palworld', 'valheim', 'rust', 'cs2'])
+    );
+  });
+
+  it('does not offer Java versions for a Bedrock server', () => {
+    // Bedrock has its own numbering. Offering Java's releases would be a
+    // plausible list that is wrong for this server — the failure Phase 7 was
+    // about, not a missing one.
+    const bedrock = getEgg('minecraft-bedrock')!;
+    const version = bedrock.variables.find((v) => v.key === 'VERSION')!;
+
+    expect(version.optionsSource).toBeUndefined();
+    expect(version.options).toEqual(['LATEST', 'PREVIEW']);
+  });
+
+  it('accepts the Bedrock EULA on the creator’s behalf, as Java does', () => {
+    // Running the server at all is the acceptance, so it is not a question.
+    expect(getEgg('minecraft-bedrock')!.fixedEnv).toEqual({ EULA: 'TRUE' });
+    const built = buildEggDeployment(getEgg('minecraft-bedrock')!, {});
+    expect(built.env.EULA).toBe('TRUE');
+  });
+
+  it('publishes every game server on the protocol it actually needs', () => {
+    // All of these are UDP games; as TCP they publish nothing usable (#313).
+    expect(getEgg('minecraft-bedrock')!.ports).toEqual({ '19132': '19132/udp' });
+    expect(getEgg('palworld')!.ports).toEqual({ '8211': '8211/udp', '27015': '27015/udp' });
+    expect(getEgg('valheim')!.ports).toEqual({ '2456': '2456/udp', '2457': '2457/udp' });
+    expect(getEgg('rust')!.ports).toEqual({ '28015': '28015/udp', '28016': '28016/tcp' });
+    expect(getEgg('cs2')!.ports).toEqual({ '27015': '27015/tcp+udp' });
+    // Java Minecraft is the one that genuinely is TCP.
+    expect(getEgg('minecraft-java')!.ports).toEqual({ '25565': '25565' });
+  });
+
+  it('keeps Palworld’s documented casing rather than normalising it', () => {
+    // These are written straight into the game's settings file, and the image
+    // documents them capitalised. A boolean would lowercase them.
+    const built = buildEggDeployment(getEgg('palworld')!, {});
+    expect(built.env.IS_PVP).toBe('False');
+    expect(built.env.COMMUNITY).toBe('false');
+    expect(built.env.DEATH_PENALTY).toBe('Item');
+  });
+
+  it('validates Palworld’s answers against what the game accepts', () => {
+    const palworld = getEgg('palworld')!;
+    expect(() => buildEggDeployment(palworld, { DEATH_PENALTY: 'Everything' })).toThrow(EggValidationError);
+    expect(() => buildEggDeployment(palworld, { PLAYERS: '500' })).toThrow(EggValidationError);
+    expect(buildEggDeployment(palworld, { DEATH_PENALTY: 'All', PLAYERS: '8' }).env).toMatchObject({
+      DEATH_PENALTY: 'All',
+      PLAYERS: '8',
+    });
+  });
+
+  it('gives every new egg somewhere for its files to live', () => {
+    // Backups target the data path, and importing a directory mounts over it.
+    for (const id of ['minecraft-bedrock', 'palworld']) {
+      expect(getEgg(id)!.dataPath).toMatch(/^\//);
+    }
+  });
+});

@@ -5,7 +5,7 @@
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/next-Phase_5_·_Production-3b82f6?style=flat-square)
 ![Editions](https://img.shields.io/badge/editions-community_·_hosted-8b5cf6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-964_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-971_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -235,6 +235,7 @@ scrolling log lines describing events that never happened.
 - [x] Server templates ("eggs") — recipes with typed, validated variables; replaced `gameSpec.ts` (#231)
 - [x] Minecraft egg: NeoForge + pick the game version from a list instead of typing it (#311)
 - [x] Every published port was mapped as TCP, so the UDP game servers were unreachable (#313) 🐛
+- [x] Add Minecraft Bedrock and Palworld eggs (#315)
 - [x] Import an existing server directory into the panel (#268)
 - [ ] Backup retention, download, and off-site (S3) targets (#232)
 - [ ] Port allocation management per node — pool, conflicts, primary port (#233)
