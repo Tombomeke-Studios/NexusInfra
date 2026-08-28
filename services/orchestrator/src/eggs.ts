@@ -230,8 +230,167 @@ const CS2: Egg = {
   ],
 };
 
+const MINECRAFT_BEDROCK: Egg = {
+  id: 'minecraft-bedrock',
+  name: 'Minecraft (Bedrock Edition)',
+  description:
+    'A Bedrock Edition server (itzg/minecraft-bedrock-server) — the edition phones, consoles and the Windows app play. Bedrock and Java players cannot share a server, so pick the one your players use.',
+  dockerImage: 'itzg/minecraft-bedrock-server',
+  // UDP, like every Bedrock client. Published as TCP it answers nothing (#313).
+  ports: { '19132': '19132/udp' },
+  dataPath: '/data',
+  // Accepting the EULA is a condition of running the server at all, so it is not
+  // a question the form asks — creating the server is the acceptance.
+  fixedEnv: { EULA: 'TRUE' },
+  variables: [
+    {
+      key: 'VERSION',
+      label: 'Server version',
+      description:
+        'LATEST follows the newest release, so a restart moves the server forward. PREVIEW runs the preview build, which only preview clients can join.',
+      // Deliberately its own short list rather than the Java one (#315): Bedrock
+      // has separate numbering, and offering Java's releases here would be a
+      // plausible list that is wrong for this server.
+      kind: 'version',
+      default: 'LATEST',
+      options: ['LATEST', 'PREVIEW'],
+    },
+    {
+      key: 'SERVER_NAME',
+      label: 'Server name',
+      description: 'Shown on the play screen when players find this server on the local network.',
+      kind: 'string',
+      default: 'A NexusInfra server',
+    },
+    {
+      key: 'GAMEMODE',
+      label: 'Game mode',
+      description: 'What new players start in. Survival has health and hunger; creative gives unlimited blocks and flight.',
+      kind: 'choice',
+      default: 'survival',
+      options: ['survival', 'creative', 'adventure'],
+    },
+    {
+      key: 'DIFFICULTY',
+      label: 'Difficulty',
+      description: 'Peaceful spawns no hostile mobs; hard makes them tougher and lets hunger kill you.',
+      kind: 'choice',
+      default: 'easy',
+      options: ['peaceful', 'easy', 'normal', 'hard'],
+    },
+    {
+      key: 'MAX_PLAYERS',
+      label: 'Player slots',
+      description: 'How many people may be connected at once.',
+      kind: 'integer',
+      default: '10',
+      min: 1,
+      max: 100,
+    },
+    {
+      key: 'LEVEL_NAME',
+      label: 'World name',
+      description: 'The save this server loads and writes. Changing it starts a new world rather than renaming the old one.',
+      kind: 'string',
+      default: 'Bedrock level',
+    },
+    {
+      key: 'ALLOW_CHEATS',
+      label: 'Allow cheats',
+      description: 'Lets operators use commands such as /gamemode and /give. Off is the default for a survival world.',
+      kind: 'boolean',
+      default: 'false',
+    },
+    {
+      key: 'ONLINE_MODE',
+      label: 'Verify accounts with Xbox Live',
+      description:
+        'On means only signed-in accounts can join. Turn it off only on a server nobody outside your network can reach.',
+      kind: 'boolean',
+      default: 'true',
+    },
+  ],
+};
+
+const PALWORLD: Egg = {
+  id: 'palworld',
+  name: 'Palworld',
+  description: 'A dedicated Palworld server (thijsvanloef/palworld-server-docker).',
+  dockerImage: 'thijsvanloef/palworld-server-docker',
+  // 8211 carries the game and 27015 the Steam query that lists the server. Both
+  // UDP — as TCP they publish nothing usable (#313).
+  ports: { '8211': '8211/udp', '27015': '27015/udp' },
+  dataPath: '/palworld',
+  variables: [
+    {
+      key: 'SERVER_NAME',
+      label: 'Server name',
+      description: 'Shown in the server browser.',
+      kind: 'string',
+      default: 'A NexusInfra server',
+    },
+    {
+      key: 'SERVER_DESCRIPTION',
+      label: 'Server description',
+      description: 'The line shown under the name in the browser.',
+      kind: 'string',
+      default: 'Hosted on NexusInfra',
+    },
+    {
+      key: 'SERVER_PASSWORD',
+      label: 'Password',
+      description: 'Required to join. Leave it as the default only on a server nobody outside your network can reach.',
+      kind: 'string',
+      default: 'changeme',
+    },
+    {
+      key: 'ADMIN_PASSWORD',
+      label: 'Admin password',
+      description: 'Separate from the join password: it grants server commands, so it should not be the same one you hand to players.',
+      kind: 'string',
+      default: 'changeme-admin',
+    },
+    {
+      key: 'PLAYERS',
+      label: 'Player slots',
+      description: 'How many people may be connected at once. Palworld is heavy per player — the RAM limit matters more here than the number.',
+      kind: 'integer',
+      default: '16',
+      min: 1,
+      max: 32,
+    },
+    {
+      key: 'DEATH_PENALTY',
+      label: 'On death you lose',
+      description: 'What a player drops when they die. “All” includes their Pals, which is the harshest setting in the game.',
+      kind: 'choice',
+      default: 'Item',
+      options: ['None', 'Item', 'ItemAndEquipment', 'All'],
+    },
+    {
+      key: 'IS_PVP',
+      label: 'Player versus player',
+      description: 'Whether players can damage each other.',
+      // The image's documented values are capitalised, and this is written
+      // straight into the game's settings file — so the casing is kept as given
+      // rather than normalised to a boolean.
+      kind: 'choice',
+      default: 'False',
+      options: ['True', 'False'],
+    },
+    {
+      key: 'COMMUNITY',
+      label: 'List publicly',
+      description: 'Whether the server appears in the community server browser. A public server wants a password.',
+      kind: 'choice',
+      default: 'false',
+      options: ['true', 'false'],
+    },
+  ],
+};
+
 /** Every egg the panel can create a server from, in the order it offers them. */
-export const EGGS: readonly Egg[] = [MINECRAFT, VALHEIM, RUST, CS2];
+export const EGGS: readonly Egg[] = [MINECRAFT, MINECRAFT_BEDROCK, PALWORLD, VALHEIM, RUST, CS2];
 
 export function getEgg(id: string): Egg | null {
   return EGGS.find((e) => e.id === id) ?? null;
