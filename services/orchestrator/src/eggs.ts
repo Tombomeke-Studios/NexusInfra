@@ -11,7 +11,22 @@
 // the only behaviour, both unit-tested. The API serves the catalogue so the panel
 // renders its form from it rather than carrying a second copy.
 
-export type EggVariableKind = 'string' | 'integer' | 'boolean' | 'choice';
+export type EggVariableKind = 'string' | 'integer' | 'boolean' | 'choice' | 'version';
+
+/**
+ * When a variable applies at all (#311).
+ *
+ * `NEOFORGE_VERSION` means nothing to a Paper server. Without this the form
+ * would ask everyone for it and the container would receive it regardless —
+ * environment that does not apply is noise at best and, when two loaders read
+ * near-identical names, a way to install the wrong thing.
+ */
+export interface EggVariableCondition {
+  /** Another variable's key. */
+  key: string;
+  /** The values of that variable for which this one applies. */
+  equals: string[];
+}
 
 export interface EggVariable {
   /** The environment variable set on the container. */
@@ -26,6 +41,20 @@ export interface EggVariable {
   /** Inclusive bounds for `integer`; ignored otherwise. */
   min?: number;
   max?: number;
+  /**
+   * Where a `version` variable's suggestions come from. Resolved when the
+   * catalogue is served, not here — this file stays pure data (#311).
+   */
+  optionsSource?: 'minecraft-versions';
+  /** When this variable applies; always, when absent. */
+  showWhen?: EggVariableCondition;
+}
+
+/** Whether `variable` applies, given the answers chosen so far (#311). */
+export function variableApplies(variable: EggVariable, values: Record<string, string>): boolean {
+  const condition = variable.showWhen;
+  if (!condition) return true;
+  return condition.equals.includes(values[condition.key] ?? '');
 }
 
 export interface Egg {
@@ -62,7 +91,7 @@ const MINECRAFT: Egg = {
   id: 'minecraft-java',
   name: 'Minecraft (Java Edition)',
   description:
-    'A Java Edition server built on itzg/minecraft-server. Vanilla, Paper, Fabric, Forge and Purpur all come from the same image — pick the server software below.',
+    'A Java Edition server built on itzg/minecraft-server. Vanilla, the plugin servers and every mod loader come from the same image — pick the server software below.',
   dockerImage: 'itzg/minecraft-server',
   ports: { '25565': '25565' },
   dataPath: '/data',
@@ -75,17 +104,30 @@ const MINECRAFT: Egg = {
       key: 'TYPE',
       label: 'Server software',
       description:
-        'Vanilla is Mojang’s own server. Paper is a faster drop-in replacement that supports plugins. Fabric and Forge run mods. Purpur extends Paper with more configuration.',
+        'Vanilla is Mojang’s own server. Paper is a faster drop-in replacement that runs plugins, and Purpur and Spigot are variations on it. Fabric, Forge, NeoForge and Quilt run mods — NeoForge is where the Forge ecosystem moved from Minecraft 1.20.2 onwards, so a modern modpack usually wants that one.',
       kind: 'choice',
       default: 'VANILLA',
-      options: ['VANILLA', 'PAPER', 'FABRIC', 'FORGE', 'PURPUR'],
+      options: ['VANILLA', 'PAPER', 'PURPUR', 'SPIGOT', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT'],
     },
     {
       key: 'VERSION',
       label: 'Game version',
-      description: 'Which Minecraft version to run, e.g. 1.21.1. LATEST always takes the newest release.',
-      kind: 'string',
+      description:
+        'Which Minecraft version to run. LATEST always takes the newest release, so a restart moves the server forward; pick a number to stay put — which is what a modpack needs.',
+      kind: 'version',
+      optionsSource: 'minecraft-versions',
       default: 'LATEST',
+    },
+    {
+      key: 'NEOFORGE_VERSION',
+      label: 'NeoForge build',
+      description:
+        'Which NeoForge build to install for that Minecraft version. “latest” takes the newest stable one, “beta” allows pre-release builds, or name a build such as 21.1.208. Leave it on latest unless a modpack asks for a specific one.',
+      kind: 'string',
+      default: 'latest',
+      // Only NeoForge reads this, and it is deliberately not FORGE_VERSION:
+      // setting the wrong one of those installs the wrong loader build.
+      showWhen: { key: 'TYPE', equals: ['NEOFORGE'] },
     },
     {
       key: 'MAX_PLAYERS',
@@ -210,6 +252,19 @@ function coerce(variable: EggVariable, raw: string): string {
       if (!['true', 'false'].includes(value.toLowerCase())) throw new EggValidationError(`${variable.label} must be true or false`);
       return value.toLowerCase();
 
+    case 'version': {
+      // Deliberately a shape check, not a membership check (#311). The offered
+      // list comes from Mojang and can be stale, cold or unreachable; refusing a
+      // version the image would install, because our copy has not caught up,
+      // would be worse than the free-text field this replaced. What is rejected
+      // here is what could not be a version at all.
+      if (!value) throw new EggValidationError(`${variable.label} cannot be empty`);
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
+        throw new EggValidationError(`${variable.label} is not a valid version`);
+      }
+      return value;
+    }
+
     case 'string':
       if (!value) throw new EggValidationError(`${variable.label} cannot be empty`);
       return value;
@@ -237,10 +292,20 @@ export function buildEggDeployment(
   values: Record<string, string> = {},
   portOverrides?: Record<string, string>
 ): EggDeployment {
-  const env: Record<string, string> = {};
+  // Resolve in two passes: a condition may name a variable declared later, and
+  // "which type did they choose" has to be settled before asking what depends on
+  // it. The first pass answers every variable; the second drops the ones that do
+  // not apply, so the container never receives environment for a loader it is
+  // not running (#311).
+  const answered: Record<string, string> = {};
   for (const variable of egg.variables) {
     const raw = values[variable.key];
-    env[variable.key] = raw === undefined || String(raw).trim() === '' ? variable.default : coerce(variable, String(raw));
+    answered[variable.key] = raw === undefined || String(raw).trim() === '' ? variable.default : coerce(variable, String(raw));
+  }
+
+  const env: Record<string, string> = {};
+  for (const variable of egg.variables) {
+    if (variableApplies(variable, answered)) env[variable.key] = answered[variable.key];
   }
   const ports = portOverrides && Object.keys(portOverrides).length > 0 ? portOverrides : { ...egg.ports };
   return {

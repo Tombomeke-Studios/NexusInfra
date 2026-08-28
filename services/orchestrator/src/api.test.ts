@@ -5,6 +5,7 @@ import { readPayload, type EventEnvelope } from 'shared';
 import { InMemoryRepository } from './repository.js';
 import { createApiRouter } from './api.js';
 import { createUserService } from './users.js';
+import { FALLBACK_VERSIONS, offeredVersions } from './minecraftVersions.js';
 
 // API tests use a real Express app with the in-memory repo and a captured
 // publisher, so no broker or database is needed. The key assertion is that
@@ -1702,5 +1703,57 @@ describe('placement preview (#309)', () => {
 
   it('says so when there is nowhere to place anything', async () => {
     expect((await request(app).get('/placement')).body).toEqual({ nodeId: null });
+  });
+});
+
+describe('the egg catalogue fills in the version list (#311)', () => {
+  let repo: InMemoryRepository;
+
+  /** The version source is injected, so no test here reaches Mojang. */
+  function appWithVersions(versions: () => Promise<string[]>) {
+    const app = express();
+    app.use(express.json());
+    app.use(asPrincipal());
+    app.use(createApiRouter({ repo, checkQuota: allowQuota, publish: async () => true, minecraftVersions: versions }));
+    return app;
+  }
+
+  const versionVariable = async (app: express.Express) => {
+    const res = await request(app).get('/eggs');
+    const minecraft = (res.body as Array<{ id: string; variables: Array<{ key: string; kind: string; options?: string[] }> }>).find(
+      (e) => e.id === 'minecraft-java'
+    )!;
+    return minecraft.variables.find((v) => v.key === 'VERSION')!;
+  };
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    await seedUser(repo);
+  });
+
+  it('serves versions to choose from instead of a bare text field', async () => {
+    const app = appWithVersions(async () => ['LATEST', 'SNAPSHOT', '26.2', '1.21.11']);
+    const version = await versionVariable(app);
+
+    expect(version.kind).toBe('version');
+    expect(version.options).toEqual(['LATEST', 'SNAPSHOT', '26.2', '1.21.11']);
+  });
+
+  it('still serves a list when the version source falls back', async () => {
+    // No internet is a supported way to run this, not an error, so the field must
+    // not come back empty on a machine with no route out.
+    const app = appWithVersions(async () => offeredVersions(FALLBACK_VERSIONS));
+    expect((await versionVariable(app)).options).toContain('LATEST');
+  });
+
+  it('leaves the other variables exactly as the catalogue declares them', async () => {
+    const app = appWithVersions(async () => ['LATEST']);
+    const res = await request(app).get('/eggs');
+    const minecraft = (res.body as Array<{ id: string; variables: Array<{ key: string; options?: string[] }> }>).find(
+      (e) => e.id === 'minecraft-java'
+    )!;
+    expect(minecraft.variables.find((v) => v.key === 'TYPE')!.options).toContain('NEOFORGE');
+    // And nothing invented an options list for a variable that has none.
+    expect(minecraft.variables.find((v) => v.key === 'MOTD')!.options).toBeUndefined();
   });
 });

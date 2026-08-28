@@ -16,6 +16,7 @@ import { nodeCapacity, availableRamMb, availableCpuCores, isOverCommitted } from
 import { containerNameFor } from './containerName.js';
 import { planTransfer } from './transfer.js';
 import { pageOf, parseFilter, parsePage } from './deploymentQuery.js';
+import { getMinecraftVersions } from './minecraftVersions.js';
 import type { DeploymentDetail, NodeRecord, Repository, ServerConfigRecord, UpdateServerConfigInput } from './types.js';
 import type { ResourceLimits } from 'shared';
 
@@ -97,6 +98,12 @@ export interface ApiDeps {
   restoreBackup?: RestoreBackupFn;
   removeBackup?: RemoveBackupFn;
   scheduleActions?: ScheduleActions;
+  /**
+   * The Minecraft versions to offer (#311). Injected so tests never reach
+   * Mojang — the default caches, but a suite that fetches over the network is a
+   * suite that fails when the network does.
+   */
+  minecraftVersions?: () => Promise<string[]>;
   checkQuota?: CheckQuotaFn;
 }
 
@@ -193,6 +200,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   const { repo } = deps;
   const publish = deps.publish ?? publishRabbitEvent;
   const selectNode = deps.selectNode ?? defaultSelectNode;
+  const minecraftVersions = deps.minecraftVersions ?? getMinecraftVersions;
   const provisionDatabase = deps.provisionDatabase ?? defaultProvisionDatabase;
   const deprovisionDatabase = deps.deprovisionDatabase ?? defaultDeprovisionDatabase;
   const snapshotBackup = deps.snapshotBackup ?? defaultSnapshotBackup;
@@ -654,8 +662,24 @@ export function createApiRouter(deps: ApiDeps): Router {
   // The egg catalogue (#231) — what a server can be created from. Readable to any
   // signed-in user: it is a menu, and the panel builds its form from it rather
   // than carrying a second copy that could drift.
-  router.get('/eggs', (_req: Request, res: Response) => {
-    res.json(EGGS);
+  /**
+   * The egg catalogue, with a `version` variable's suggestions filled in (#311).
+   *
+   * Resolved here rather than in eggs.ts so the catalogue stays pure data, and
+   * here rather than in the panel so every caller sees the same list. The list is
+   * a *suggestion*: it is never what validates a version, because it can be stale
+   * or come from the offline fallback.
+   */
+  router.get('/eggs', async (_req: Request, res: Response) => {
+    const versions = await minecraftVersions();
+    res.json(
+      EGGS.map((egg) => ({
+        ...egg,
+        variables: egg.variables.map((v) =>
+          v.optionsSource === 'minecraft-versions' ? { ...v, options: versions } : v
+        ),
+      }))
+    );
   });
 
   // Node health is what the Overview renders, so it stays readable to any
