@@ -12,7 +12,7 @@ import {
 import { StatusBadge } from '../components/StatusBadge';
 import { IconStop, IconRestart, IconPlay } from '../components/Icons';
 import { useToast } from '../components/Toast';
-import { formatRelative, shortId } from '../format';
+import { formatLimits, formatRelative, isGameServer, shortId } from '../format';
 import { can, ROLE_LABELS, type ServerRole } from '../permissions';
 
 // Servers: the live list of deployments. It polls the Orchestrator so status
@@ -298,7 +298,7 @@ function ServerTable({
                         color: 'var(--color-text-subtle)',
                       }}
                     >
-                      {d.type === 'game' || d.dockerImage.startsWith('nexusinfra/') ? 'game' : 'app'}
+                      {isGameServer(d) ? 'game' : 'app'}
                     </span>
                   </span>
                 </td>
@@ -310,7 +310,7 @@ function ServerTable({
                 {showRole && <td className="subtle">{role ? ROLE_LABELS[role] : '—'}</td>}
                 <td className="mono subtle">{shortId(d.containerId)}</td>
                 <td className="mono subtle" style={{ fontSize: '.82rem', whiteSpace: 'nowrap' }}>
-                  cpu 50% · ram 50%
+                  {formatLimits(d.resourceLimits)}
                 </td>
                 <td className="subtle tnum">{formatRelative(d.createdAt)}</td>
                 <td>
