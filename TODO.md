@@ -307,7 +307,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [ ] Metrics: InfluxDB + Grafana dashboards
 - [x] Prometheus `/metrics` on every service — the cheap half of the above (#246)
 - [~] Security: service-to-service auth (#169 — **done**, token-guarded agent API) + rate limiting (done in the gateway, #20); secrets-at-rest, token rotation, mTLS/HTTPS still to do
-- [ ] Production docker-compose + deployment docs; migrate SQLite → PostgreSQL via Prisma (#241)
+- [x] Production docker-compose + deployment docs; migrate SQLite → PostgreSQL via Prisma (#241) — PostgreSQL supported beside SQLite (the default): both clients generated, chosen by `DATABASE_URL`; a `postgres` profile in every compose file; `sqlite-to-postgres.mjs` moves an installation; CI runs the database suite on both and replays the PostgreSQL migrations
 - [x] Integration tests: RabbitMQ / DB-backed end to end — a CI job with a broker service container (#242)
 - [x] Nothing watches the dead-letter queue — surfaces DLQ depth in the panel (#243)
 - [x] Node Agent does not reconcile containers after its own crash (#244)

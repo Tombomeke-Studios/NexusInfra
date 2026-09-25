@@ -115,7 +115,7 @@ scrape_configs:
 
 | Variable | Required | Notes |
 |---|---|---|
-| `DATABASE_URL` | yes | `file:/data/orchestrator.db`. Mount a volume at `/data`; migrations run automatically at start. |
+| `DATABASE_URL` | yes | `file:/data/orchestrator.db` (SQLite — mount a volume at `/data`), or `postgresql://user:pass@host:5432/db` (#241). The matching migrations run automatically at start. See [deployment.md](deployment.md#postgresql). |
 | `JWT_SECRET` | yes | Signs login tokens. Anyone holding it can mint a token for any account — use 32 random bytes. |
 | `INTERNAL_API_TOKEN` | yes | Shared secret for reaching the node agent. Must match the agents'. |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | yes | The administrator seeded on first start. A warning is logged on every start while the default password is in place. |
@@ -166,7 +166,7 @@ Requires the Docker socket: `-v /var/run/docker.sock:/var/run/docker.sock`.
 
 | Variable | Required | Notes |
 |---|---|---|
-| `DATABASE_URL` | yes | `file:/data/billing.db`; mount a volume at `/data`. |
+| `DATABASE_URL` | yes | `file:/data/billing.db` (mount a volume at `/data`), or PostgreSQL — its own schema if it shares the orchestrator's database, e.g. `postgresql://…/nexusinfra?schema=billing`. |
 | `BILLING_WALLET_ID` | no | NexusInfra's receiver wallet id on top-up requests to FinVault. |
 
 ### `dashboard`
