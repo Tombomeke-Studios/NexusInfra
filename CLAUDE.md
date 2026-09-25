@@ -156,7 +156,9 @@ A "unit" = one function, feature, fix, or refactor — the smallest shippable sl
 - **Dashboard (React):** Vitest for unit tests, colocated `*.test.ts(x)` files.
 - **New backend logic => unit tests required** (event handlers, node selection, billing calculations).
 - **Bug fixes:** when feasible, write the test that catches the bug first (TDD).
-- **Integration tests:** Docker Compose test target for RabbitMQ/database-dependent tests.
+- **Integration tests (#242):** `*.integration.test.ts`, run by `npm run test:integration` (never by
+  `npm test`) and by CI's `integration` job against a real RabbitMQ and a real Prisma database. Put a
+  test there when only the real thing can prove it — a binding, a unique index, a transaction.
 - **Wire compatibility with FinVault is test-guarded** — `shared/src/events.test.ts` locks the envelope
   shape and AES-256-GCM layout. Never change these without an equivalent change in FinVault.
 
@@ -189,7 +191,9 @@ is the migrations directory.
 |---|---|
 | Install workspace deps | `npm install` |
 | Build everything (shared first) | `npm run build` |
+| Build/run the CLI | `npm run build --workspace=cli` · `node cli/dist/index.js --help` |
 | Run all tests | `npm test` |
+| Integration tests (real broker + DB, #242) | `RABBITMQ_URL=amqp://guest:guest@localhost:5672 npm run test:integration` |
 | Lint all workspaces | `npm run lint` |
 | Dev watch: shared + control-room | `npm run dev` |
 | Start stack (RabbitMQ + services, Docker) | `docker-compose up` |
@@ -213,6 +217,7 @@ is the migrations directory.
 | `shared/src/edition.ts` | The open-core flag. **The image decides**: `getBuildEdition()` reads a stamp baked into the image, which outranks `NEXUS_EDITION`; `assertEditionIsRunnable()` exits on a mismatch. No stamp (running from source) → the env decides (#189) |
 | `shared/src/version.ts` | Build identity: `getVersion()` (reads `APP_VERSION`, baked by the release build) + `buildInfo()` → `{ version, edition }`, spread into every service's `/health` (#173) |
 | `shared/src/outbox.ts` | `PublishOutbox` + `startOutboxFlusher` — holds a failed publish and replays it **in order** when the broker returns; bounded (drop-oldest + `droppedCount`). Wrap publishers whose events carry state (#167) |
+| `shared/src/metrics.ts` | Prometheus metrics for every service (#246): dependency-free `MetricsRegistry` (counters, histograms, scrape-time gauges that fail soft), `httpMetrics` (labels by **route pattern**, never the raw path), `metricsHandler` (`METRICS_TOKEN`), `registerBuildInfo` |
 | `shared/src/internalToken.ts` | Service-to-service shared secret: `INTERNAL_TOKEN_HEADER`, `getInternalToken`, `tokensMatch` (constant-time). Guards the Node Agent's internal API (#169) |
 | `shared/src/events.test.ts` | Wire-compatibility guard tests (encryption round-trip, ciphertext layout, envelope shape) |
 
@@ -237,20 +242,24 @@ is the migrations directory.
 | `src/databases.ts` | `buildDatabaseSpec` (engine→image/env/port) + `pickDatabasePort` — pure, for provisioning a managed DB container |
 | `src/dbRoutes.ts` | `createDatabaseRouter` — internal DB provision/deprovision HTTP (starts/stops an engine container) |
 | `src/backups.ts` | Pure backup helpers: `backupRef`, `isSafeRef`, `backupFilePath` (traversal-safe tar paths) |
-| `src/bkRoutes.ts` | `createBackupRouter` — internal backup HTTP: tar snapshot/restore/delete of a container path (stored on the node) |
+| `src/bkRoutes.ts` | `createBackupRouter` — internal backup HTTP: tar snapshot/restore/delete/**download** of a container path (stored on the node, and off-site when configured — restore/download fall back to it, #232) |
+| `src/s3.ts` | Off-site backups (#232): `signV4` (hand-rolled SigV4, pinned to AWS's published example; matches botocore byte-for-byte), `S3Target` put/get/delete, `offsiteFromEnv` (`BACKUP_S3_*`, off unless bucket + keys are set) |
 | `src/disk.ts` | Pure disk reporting (#276): `diskUsageFrom` (statfs blocks → GB, counting the root reserve as used) + `collectDisk`, which reports **nothing** when it cannot measure. The agent used to return `0`, which the panel rendered as an empty disk beside real meters |
 | `src/imports.ts` | Directory imports (#268): pure `isContained`/`resolveImportPath` (symlink-resolved containment against `IMPORT_ROOT`) + the internal validate router. **A bind mount is a host-escape primitive** — admin-only, off unless `IMPORT_ROOT` is set, and re-checked by the agent at start |
+| `src/volumes.ts` | Server data (#324): pure `volumeNameFor` (deterministic per deployment + path), `pathsToPersist` (requested ∪ image `VOLUME`s, minus an imported bind) and `createDataRouter` — internal `DELETE /deployments/:id/data`, which removes only what carries the `nexusinfra.deployment` label. **Stop removes the container, so anything not in one of these volumes is gone on the next start** |
+| `src/images.ts` | Image updates (#239): pure `imageUpdateStatus` (registry vs node vs container → `current`/`update-available`/`pulled-not-applied`/`unknown` — never "current" when the registry could not be asked) + internal `GET /images/status`. The `server.update` command pulls **before** it recreates, so a failed pull never takes a server down |
+| `src/migrateRoutes.ts` | Moving a server (#234), node side: list/export/import/remove a server's volumes (tar streams through a created-never-started carrier container) + receive a backup tar. **Both imports refuse to overwrite** — two agents on one daemon share volumes, and an import "into" the source followed by the source clean-up would delete the only copy |
 | `src/execRoutes.ts` | `createExecRouter` — internal console HTTP: one-shot `sh -c` command exec in a container (#68) |
 | `src/terminal.ts` | `attachTerminal` — pure bridge wiring a WebSocket to an interactive TTY session (`runtime.execInteractive`); JSON `input`/`resize` frames in, raw output out (#71) |
 | `src/internalAuth.ts` | `requireInternalToken` (Express) + `upgradeAuthorized` (WS handshake) — every internal route/upgrade needs the shared token; `/health` stays open (#169) |
-| `src/agent.ts` | Command handling: consumes server.start/stop/restart for this node, publishes server.started/stopped/crashed; dependency-injected for testing (index.ts injects the outbox-backed publisher) |
+| `src/agent.ts` | Command handling: consumes server.start/stop/restart/update for this node, publishes server.started/stopped/crashed; dependency-injected for testing (index.ts injects the outbox-backed publisher). `handleContainerEvent` (#332) reports containers that die or come back **without being asked** — fed by `runtime.watchContainers` (Docker events); a container the agent removed is gone when it looks, and its own restarts are marked only while they run |
 | `src/agent.test.ts` | Unit tests with a fake runtime + captured publisher (no Docker/broker needed) |
 | `src/index.ts` | Entry: DockerodeRuntime + agent, binds `nexusinfra.node-agent.{nodeId}`, HTTP `/health` + internal SSE `/logs/:containerId` · `/stats/:containerId` + file CRUD + internal WS `/terminal/:containerId` (PTY shell, #71) |
 
 ### services/orchestrator (deployment control plane)
 | Path | Contents |
 |---|---|
-| `prisma/schema.prisma` | Prisma + SQLite schema: `Node`, `ServerConfig`, `Deployment`, `DeploymentEvent`, `ServerDatabase`, `ServerBackup`, `ServerSchedule`, `ServerSubuser`. `prisma/migrations` is the schema source of truth |
+| `prisma/schema.prisma` | Prisma + SQLite schema: `Node`, `ServerConfig`, `Deployment`, `DeploymentEvent`, `ServerDatabase`, `ServerBackup`, `ServerSchedule`, `ServerSubuser`, `PortAllocation` (#233). `prisma/migrations` is the schema source of truth |
 | `src/types.ts` | Domain records + the `Repository` interface (decouples logic from the DB) |
 | `src/repository.ts` | `InMemoryRepository` — backs unit tests and a DB-less local mode |
 | `src/db.ts` | `getPrisma()` + `PrismaRepository` (SQLite-backed `Repository`) |
@@ -264,20 +273,32 @@ is the migrations directory.
 | `src/containerName.ts` | Pure `containerNameFor` (#286) — display name + deployment id → a Docker-valid container name. The display name used to be passed through verbatim, so a space meant Docker refused the create and the panel showed a crash with no container. Deterministic (a restart reuses the name) **and** id-suffixed, because `start` force-removes whatever holds the name — two servers called the same thing used to delete each other |
 | `src/capacity.ts` | Pure node capacity (#275): total vs **committed** vs used, and what is left to hand out. Committed is the sum of the caps already given to servers there — the form used to answer "how much can I give away" with live usage, which is wrong twice (idle servers still hold their cap; page cache makes an empty node look full) |
 | `src/memory.ts` | Pure memory budgeting (#271, #308): `parseMemoryMb`, `containerMemoryMb`, `jvmOverheadMb`, `heapBudgetProblem`, `largestHeapForCap`, **`derivedHeapMb`**. The container cap and the JVM heap were two settings for the same RAM — the kernel enforces the cap and the JVM *commits* the heap, so a heap that does not fit is a container killed mid-save. Since #308 the heap is **derived** from the cap on every write unless the request names one, so there is one number to set; the collision was in the defaults too (50% of 4 GB vs a fixed `2G`). Mirrored by `dashboard/src/memory.ts` |
+| `src/startCommand.ts` | The one builder for `server.start` (#324): `startCommandFor` (+ `dataMountFor`, `persistPathsFor`, `parsePersistPaths`). Creation, start and reconciliation all use it — reconciliation's hand-written copy had dropped an imported server's mount. **Never build a start payload by hand** |
+| `src/imageUpdate.ts` | `requestImageUpdate` (#239) — the one path for the update button and the `update` schedule action: emits `server.update` (recreate only when running) on the node the server is on |
+| `src/retention.ts` | Pure backup retention (#232): `expiredBackups` (keepLast / keepDays are both limits; the newest backup is never expired) + `parseRetention` + `withPlanCeiling` (a plan's backups-per-server ceiling tightens `keepLast`, never loosens it, #297) |
+| `src/backups.ts` | `takeBackup` / `enforceRetention` / `sweepRetention` (#232) — the one path for the Backups tab, the `backup` schedule action and the hourly sweep. Defaults the snapshot to the server's own data directory, not `/data` |
+| `src/migrate.ts` | `planMigration` (#234): validates synchronously, returns the work to run in the background; copy volumes → copy backups → switch node → clean source. A failure before the switch removes only what it created. `isMigrating` is the lock start/update/delete check |
+| `src/portPool.ts` | Pure host-port planning (#233): `planPorts` (`auto` from the node's range, explicit ports held to it, conflicts named, 400 vs 409) + `parsePortRange`, `rangeOf`, `PortConflictError` |
+| `src/portAllocation.ts` | The repository side of host ports: `takenPorts`, `checkPorts`, `allocatePorts` (plan + write; the unique (node, port) index is the real guard), `backfillPortAllocations` (servers from before #233, once at start) |
+| `src/notify.ts` | Notifications, pure (#236): events, `webhookBody` (json/discord/slack), `signBody` (HMAC), `nextAttemptDelayMs`, `isPrivateAddress`, `parseChannelInput` (email only to your own address; node events admin-only), `nodeTransitions` |
+| `src/notifier.ts` | `createNotifier` — recipients (owner, shares, team; admins for node events), durable delivery rows, atomic claim, retry/give-up; `defaultTransports` (node http with `guardedLookup`, which refuses private addresses **at connect time**, and nodemailer) |
+| `src/notificationRoutes.ts` | `/me/notifications` CRUD + test + deliveries. A webhook secret is returned once |
 | `src/cron.ts` | Pure 5-field cron matcher (`cronMatches`, `isValidCron`) for the schedule runner |
 | `src/scheduler.ts` | Schedule runner: pure `selectDue`/`tickSchedules` + `startScheduler` (1-min poll); actions injected |
 | `src/users.ts` | Account domain: bcrypt hashing, email normalisation, password rules, edition-derived signup policy, and `createUserService` (register / authenticate / change password / first-run bootstrap) (#174) |
 | `src/auth.ts` | `AuthProvider` seam (`createLocalAuthProvider`; FinVault JWT swaps in at #17) + `signToken`/`verifyToken` → `Principal`, `requireAuth`, `principalOf`, `requirePlatformAdmin`, and the auth/account/admin routers. **No anonymous fallback** — no token means 401. `createRequireAuth(repo)` additionally checks the session the token names still exists (#227), which is what makes signing out actually sign you out, and accepts an `nxi_` API token as the same account (#228) — `requireTokenScope` (mounted once in index.ts) then holds it to its scopes. A token cannot mint tokens |
+| `src/passwordReset.ts` | Self-service reset by email (#344): mint/hash (the secret is only stored as a digest), `parsePanelUrl`, and the public `POST /auth/password-reset` (+ `/confirm`) router. On only with `SMTP_URL` **and** `PANEL_URL` — the link is never built from the Host header. Same `202` for every address, mail sent after the response; the password is checked *before* the link is spent |
 | `src/totp.ts` | Pure TOTP + recovery codes (#229): RFC 6238 in ~40 lines over Node's HMAC, checked against the RFC's own vectors — a dependency for that much code is a dependency to keep current in an auth path. `REQUIRE_TOTP=true` makes it mandatory, but never by refusing a login: an un-enrolled account signs in and finds only enrolment open, because refusing would lock out the one administrator the moment the flag flips |
 | `src/apiTokens.ts` | Pure API-token core (#228): mint/hash (`nxi_` prefix, SHA-256 — the secret is 256 random bits, so bcrypt would only rate-limit us) + scopes. **Scope is by HTTP method, not a path table** — a path table falls behind and silently unscopes the next new route, for token callers only. `admin` is separate from the account's platform role |
 | `src/loginLimiter.ts` | Pure per-IP **and** per-account login throttle (#225). The gateway's limiter is bypassed by the dashboard's nginx, so credential checks were unlimited. A lockout answers the same 401 as a wrong password — anything else confirms the account exists |
 | `src/access.ts` | **Pure** authorization core: `Role`/`Permission`, `ROLE_PERMISSIONS`, `can`, `resolveRole`, `strongestRole` — plus the team half (#224): `TeamRelation`/`TeamPermission`, `canOnTeam`, `resolveTeamRelation`. A team has no role ladder; the role on a membership is a *server* role. No Express, no DB — the whole matrix is unit-tested (#175) |
-| `src/accessGuard.ts` | `accessGuard(repo)` (mounted once on `/deployments/:id`; **404 for no access**, never 403) + `requirePermission(p)` per route + `accessOf(req)`; and the same shape for teams (#224): `teamGuard(repo)` on `/teams/:id`, `requireTeamPermission(p)`, `requireTeamPermissionOrSelf(p, subject)` (leaving is not managing), `teamAccessOf(req)`, `teamAccessFor(repo, id, userId)` for when a team is named in a body |
+| `src/accessGuard.ts` | `accessGuard(repo)` (mounted once on `/deployments/:id`; **404 for no access**, never 403) + `requirePermission(p)` per route + `accessOf(req)` + `resolveAccess(repo, principal, id)` — the guard's own resolver, for routes that address several servers (#238); and the same shape for teams (#224): `teamGuard(repo)` on `/teams/:id`, `requireTeamPermission(p)`, `requireTeamPermissionOrSelf(p, subject)` (leaving is not managing), `teamAccessOf(req)`, `teamAccessFor(repo, id, userId)` for when a team is named in a body |
 | `src/teams.ts` | Teams (#177): `createTeamRouter` (`/teams`, membership) + `createServerTeamRouter` (`PATCH /deployments/:id/team`). Deleting a team **detaches** its servers, never deletes them. Routes declare a team permission and sit behind `teamGuard` — no handler resolves membership by hand (#224) |
 | `src/deploymentQuery.ts` | Pure search/filter/paging for the server list (#237): `parseFilter`, `parsePage` (limit always applied, capped at 200), `pageOf` (total order on createdAt **then id**, or paging shows one row twice and hides another). `GET /deployments` answers `{ items, total, limit, offset }` — a page with no count cannot say there is more, and silent truncation is worse than the unbounded list it replaced |
+| `src/entitlements.ts` | Hosted plan entitlements (#297): pure `usageFor` (memory in MB on each server's own node), `ramProblem`/`ramChangeProblem` + `fetchEntitlements` (fail-open, logged). Measured against the **owner's** plan, whoever edits; the platform role buys no exemption. Under a memory ceiling an uncapped server is refused — it could take the whole node. Lowering is always allowed, so an account over its plan has a way back |
 | `src/transfer.ts` | Pure `planTransfer` (#230) — who owns the server next, what the outgoing owner keeps, and the audit line. Ownership was fixed at creation, so an owner who left orphaned their servers: only `owner` may delete one or manage its access. Owner-level permission, because an admin who could transfer could hand the server to themselves; the repository applies the plan in **one transaction**, since an owner who moved without the retained share landing is access silently lost |
 | `src/config.ts` | `createConfigRouter` — public `GET /config` → `{ edition }` (edition flag, mounted before auth) |
-| `src/api.ts` | Express deployment API: create/list/get deployments, stop/start/restart/**delete**, node health; enforces plan quotas via the Billing Bridge (hosted) |
+| `src/api.ts` | Express deployment API: create/list/get deployments, stop/start/restart/**delete**, node health; enforces plan quotas via the Billing Bridge (hosted). Control actions live in one `controls` table shared by the single routes and `POST /deployments/bulk` (#238), which is mounted **before** the per-server guard — anything under `/deployments/<word>` that is not an id must be, or the guard claims it as a server id and answers 404 |
 | `src/reconcile.ts` | Pure `reconcileNode` (records vs what a node actually runs) + the `infra.node.inventory` handler (#244). The outbox (#167) protects reports from a *broker* outage; nothing protected them from the agent process dying, after which a stopped server kept showing green — and nobody investigates a green light |
 | `src/lifecycle.ts` | Consumes `infra.server.started/stopped/crashed`, updates deployment status + audit |
 | `src/suspend.ts` | `createSuspendHandler` — consumes `billing.server.suspend` (hosted), stops each named running deployment + audits it |
@@ -291,7 +312,7 @@ is the migrations directory.
 ### services/billing-bridge (usage billing — hosted edition only)
 | Path | Contents |
 |---|---|
-| `src/pricing.ts` | Pure pricing: `BillingPlan` + `resourceFactor` (CPU/RAM → multiplier) + `billableHours`/`computeCharge` + `roundCurrency` |
+| `src/pricing.ts` | Pure pricing: `BillingPlan` (incl. the #297 entitlements `maxRamMb`/`maxBackupsPerServer`, null = no ceiling) + `resourceFactor` (CPU/RAM → multiplier) + `billableHours`/`computeCharge` + `roundCurrency` + `chargingModel` (the model as data, so the panel states what the charge does) |
 | `src/quotas.ts` | Pure plan quota checks (`quotaLimit`, `withinQuota`) for servers/databases |
 | `src/tracking.ts` | Pure runtime math: `hoursBetween` + `accruedHours` (open interval counts up to now) |
 | `src/wallet.ts` | Pure credit-wallet math: `applyTopUp`/`applyCharge`/`canCover` |
@@ -311,8 +332,10 @@ is the migrations directory.
 | `src/routes.ts` | Pure routing table + `matchRoute` (longest-prefix, public/protected) |
 | `src/auth.ts` | `verifyToken`/`bearerToken` — validates the same JWTs the orchestrator issues (FinVault JWT later, #17) |
 | `src/rateLimit.ts` | Pure token-bucket `RateLimiter` (per-IP/user, injected clock) |
-| `src/gateway.ts` | `createGatewayApp` — CORS → rate limit → JWT (protected routes) → reverse proxy (fetch) to the matched backend; injectable seams for tests |
-| `src/index.ts` | Entry: builds the app for `ORCHESTRATOR_URL`, heartbeat, listens `:9400`. WS terminal proxy pending (#69/#71) |
+| `src/gateway.ts` | `createGateway` → `{ app, upgrade }` (and `createGatewayApp` for just the app) — CORS → rate limit → token (protected routes) → **streaming** reverse proxy to the matched backend. One `gate` decides for HTTP and WebSocket upgrades alike, so a socket is no way around the limiter. A JWT is verified; an `nxi_` API token is opaque here and passed through for the orchestrator to judge. A client disconnect aborts the backend request — a log tail never ends on its own |
+| `src/upgrade.ts` | `proxyUpgrade`/`refuseUpgrade` — the WebSocket proxy (#69), at the byte level: the handshake is replayed, the 101 relayed, the sockets piped. No frame parsing, so no WS library at runtime |
+| `src/live.test.ts` | Real sockets on both sides: SSE arrives before the stream ends, disconnects propagate, terminal frames round-trip, refusals answer before dialing |
+| `src/index.ts` | Entry: builds the gateway for `ORCHESTRATOR_URL`, wires `upgrade` on the HTTP server, heartbeat, listens `:9400` |
 | `Dockerfile` | Multi-stage build |
 
 ### dashboard (React web panel)
@@ -326,20 +349,31 @@ is the migrations directory.
 | `src/permissions.ts` | The panel's copy of the server permission matrix (#178) — `can`/`permissionsFor`/`ROLE_LABELS`. **Mirrors `orchestrator/src/access.ts`; change both together.** An absent role means full access, so an owner is never locked out of their own server |
 | `src/prefs.ts` | Persisted client preferences (localStorage): first-run intro flag + customisable New Deployment defaults (`getDeploymentDefaults`) |
 | `src/pages/Preferences.tsx` | Preferences page — edit/save/reset the New Deployment defaults |
+| `src/pages/ResetPassword.tsx` | Where the mailed reset link lands (#344) — public, checks length and the repeat before spending the link |
 | `src/pages/Account.tsx` | Account page (#221) — who you are signed in as + change your own password. Platform role is read-only: your own standing is not yours to raise |
 | `src/pages/Users.tsx` | Accounts page (#222) — platform admins list and create accounts. The only way in for the community edition, where nobody self-registers. Nav link hidden for non-admins; `/users` answers 403 regardless |
 | `src/pages/NodeDetail.tsx` | Per-node view (`/nodes/:id`): live CPU/RAM meters + session sparkline, hosted deployments, deregister |
 | `src/routes.tsx` · `src/App.tsx` | Route table (public `/login`; the rest behind `RequireAuth` + `Layout`) wrapped in the router |
-| `src/components/{Layout,RequireAuth}.tsx` | Nav shell + auth-guard route wrapper |
+| `src/components/{Layout,RequireAuth}.tsx` | Nav shell + auth-guard route wrapper. Below 900px the nav and the bar's actions fold behind a Menu button (`aria-expanded`, closes on Escape and on navigation); on a wide screen the wrapper is `display: contents`, so nothing moves (#247) |
 | `src/components/Dialog.tsx` | `DialogProvider` + `useDialog()` → promise-shaped `confirm`/`prompt` (#299), replacing 16 `window.confirm`/`prompt` calls. Native dialogs announce the origin, give a deletion the same weight as a rename, and **freeze the page thread**, so no automated run ever reached the other side of one. Destructive confirmations look destructive and focus **Cancel**, so a reflexive Enter does not delete; prompts validate as you type. Without a provider every dialog resolves *no* — these guard deletions |
+| `src/focusTrap.ts` | `useFocusTrap` + pure `nextFocus` (#247): Tab stays inside a modal and focus returns to what opened it. Used by `Dialog`, `DeploymentDrawer` and `IntroTour`. Remembers the last focus *outside* any modal, because an `autoFocus` inside one takes focus before an effect can read the opener |
 | `src/components/InfoHint.tsx` | Accessible "?" tooltip for contextual option help (hover/focus); used across the option forms |
 | `src/components/Terminal.tsx` | xterm.js interactive terminal (#71) — dynamically imports xterm, connects the exec WebSocket (`terminalWsUrl`); mounted by the server-detail Terminal tab |
 | `src/components/IntroTour.tsx` | First-run intro walkthrough (skippable, re-openable from the nav Help button) |
 | `src/pages/{Login,Overview,NewDeployment,Servers}.tsx` | Login, node health/overview (+ Platform-services strip from Control Room monitoring, #157), deployment form, live server list + stop |
+| `src/components/PlanPanel.tsx` · `src/plan.ts` | The plan beside the size being chosen in New Deployment (#297): ceilings, what is spent, whether this server fits (with a one-click "use what is left"), and the charging model in words. **Hosted-only** — aliased to `PlanPanel.stub.tsx` in a community build and marked in `verify-edition.mjs` |
 | `src/pages/Billing.tsx` | Billing page (hosted only): credit balance, top-up via FinVault, cycle usage/cost, payment history — route + nav link gated on `useEdition().isHosted` |
 | `src/health.ts` | Status → colour helpers shared across pages |
 | `src/test/setup.ts` · `vitest.config.ts` | jsdom + Testing Library setup; in-memory localStorage |
 | `Dockerfile` · `nginx.conf` | Static build served by nginx, which proxies `/api` to the orchestrator |
+
+### cli (`nexusctl`, #240)
+| Path | Contents |
+|---|---|
+| `cli/src/commands.ts` | Every command, dependency-injected (`run(argv, deps)` → exit code) so the CLI is tested with a fake fetch. Servers are resolved by id or **exact** name — an ambiguous name is refused with the ids. Start/stop/restart/kill go through `POST /deployments/bulk` |
+| `cli/src/client.ts` | `Client` — JSON requests, binary download, SSE stream; bearer API token |
+| `cli/src/config.ts` | `~/.config/nexusctl/config.json` (mode 600), `NEXUSCTL_URL`/`NEXUSCTL_TOKEN` win |
+| `cli/src/index.ts` | The `nexusctl` bin |
 
 ### Infrastructure
 | Path | Contents |
@@ -406,9 +440,18 @@ is the migrations directory.
 - **Anything that runs inside a container needs LF line endings** — see `.gitattributes`. CRLF makes
   the kernel read the carriage return as part of the interpreter path (`bad interpreter`), and it
   only shows up on a fresh clone on Windows.
+- **Colour tokens are measured, not picked (#247).** Every text token clears WCAG AA on every surface
+  it sits on, in both themes — checked with axe across the whole panel. `--color-primary` is for text,
+  borders and marks; **`--color-primary-solid`** (and `--color-danger-solid`) is for a fill with white
+  text on it. In the dark theme no single colour can do both. Hard-coded hex text colours and a
+  `style={{ background: 'var(--color-danger)' }}` on a button are how contrast regresses — use the
+  classes (`btn--primary`, `btn--danger-solid`).
 - **The dashboard's `permissions.ts` is a mirror, not a second source of truth.** It exists so the
   panel doesn't offer buttons that would 403; change it in the same commit as `access.ts` or the two
   drift. Hiding a control is never a security measure — the API is.
+- **A server's data lives in named volumes, not in its container (#324).** The agent removes a container
+  on every stop and kill, so a new feature that recreates one (image update, migration) is safe only
+  because of `volumes.ts`. Moving a server to another node means moving its volumes.
 - Heartbeat cadence: 1s pulse; Control Room thresholds: degraded ≥3s, offline ≥10s.
 - All timestamps are UTC ISO-8601 strings in event payloads.
 - Dockerfiles build from the **repo root** context (they copy `shared/` + the service dir).

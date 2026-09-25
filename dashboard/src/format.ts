@@ -43,3 +43,14 @@ export function isGameServer(d: { type: string; dockerImage: string }): boolean 
   if (d.type === 'game' || d.dockerImage.startsWith('nexusinfra/')) return true;
   return Boolean(d.type) && d.type !== 'app' && d.type !== 'generic';
 }
+
+/**
+ * A comma- or newline-separated list of directories, as typed into a field (#324).
+ * Blank entries are dropped; validation is the API's, which names what is wrong.
+ */
+export function parsePathList(text: string): string[] {
+  return text
+    .split(/[,\n]/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+}

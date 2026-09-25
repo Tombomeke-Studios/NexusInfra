@@ -237,5 +237,11 @@ development.
   `dev` / `staging` / `main`. The suite runs **twice** — once as `community` (the default) and once
   with `NEXUS_EDITION=hosted` — because billing routes, plan quotas and signup policy only execute
   in the hosted edition and would otherwise ship untested.
+- The same workflow's **integration** job (#242) runs `npm run test:integration` against a RabbitMQ
+  service container and a real SQLite database through Prisma: bindings, payload encryption on the
+  wire, dead-lettering, every migration from an empty file, unique-index races, and the full
+  command → agent → report loop. It sets `REQUIRE_BROKER`, so a job that lost its broker fails
+  instead of skipping. Locally: `RABBITMQ_URL=amqp://guest:guest@localhost:5672 npm run test:integration`
+  (the broker suites skip without it; the database suite always runs).
 - Releases: merges reach `main` only via `staging`; tag `vX.Y.Z` after each main merge
   (see CLAUDE.md branch strategy).

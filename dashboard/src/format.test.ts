@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatLimits, isGameServer } from './format';
+import { formatLimits, isGameServer, parsePathList } from './format';
 
 describe('formatLimits (#318)', () => {
   it('renders the percentages a server was given', () => {
@@ -37,5 +37,12 @@ describe('isGameServer (#318)', () => {
     expect(isGameServer({ type: 'app', dockerImage: 'nginx' })).toBe(false);
     expect(isGameServer({ type: 'generic', dockerImage: 'nginx' })).toBe(false);
     expect(isGameServer({ type: '', dockerImage: 'nginx' })).toBe(false);
+  });
+});
+
+describe('parsePathList (#324)', () => {
+  it('splits on commas and new lines and drops blanks', () => {
+    expect(parsePathList(' /data , /srv\n\n/etc ,')).toEqual(['/data', '/srv', '/etc']);
+    expect(parsePathList('')).toEqual([]);
   });
 });

@@ -19,7 +19,16 @@ if (edition !== 'community' && edition !== 'hosted') {
 }
 
 /** Strings that only the real billing page and its client produce. */
-const BILLING_MARKERS = ['Credit balance', 'Top up via FinVault', '/billing/wallet', '/billing/topup', '/billing/ledger'];
+const BILLING_MARKERS = [
+  'Credit balance',
+  'Top up via FinVault',
+  '/billing/wallet',
+  '/billing/topup',
+  '/billing/ledger',
+  // The plan panel and its client (#297).
+  '/me/entitlements',
+  'for each hour a server runs',
+];
 
 /** Present in every build, so a bundle with none of these was not read properly. */
 const CONTROL_MARKERS = ['New Deployment', 'Shared with me'];

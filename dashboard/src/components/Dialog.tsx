@@ -1,3 +1,4 @@
+import { useFocusTrap } from '../focusTrap';
 import {
   createContext,
   useCallback,
@@ -121,6 +122,8 @@ function DialogHost({ pending, onSettle }: { pending: Pending; onSettle: (value:
   const [touched, setTouched] = useState(false);
 
   const problem = pending.kind === 'prompt' ? (pending.options.validate?.(value) ?? null) : null;
+  // Tab stays inside (#247); focusing in and restoring are handled below.
+  useFocusTrap(panelRef, true, { autoFocus: false, restore: false });
 
   // Focus goes into the dialog, and comes back where it was when it closes —
   // otherwise a keyboard user is dropped at the top of the document after every
