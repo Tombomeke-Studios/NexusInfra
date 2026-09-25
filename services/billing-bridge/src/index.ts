@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, getEdition, isHosted, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
+import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, getEdition, isHosted, readPayload, startHeartbeat, type EventEnvelope, MetricsRegistry, registerBuildInfo, httpMetrics, metricsHandler } from 'shared';
 import { PrismaRepository } from './db.js';
 import { createBillingService } from './service.js';
 import { createBillingRouter } from './api.js';
@@ -29,8 +29,13 @@ const repo = new PrismaRepository();
 const service = createBillingService({ repo });
 
 const app = express();
+// Prometheus metrics (#246).
+const metrics = new MetricsRegistry();
+registerBuildInfo(metrics, 'billing-bridge', buildInfo());
+app.use(httpMetrics(metrics, 'billing-bridge'));
 app.use(cors());
 app.use(express.json());
+app.get('/metrics', metricsHandler(metrics));
 app.get('/health', (_req, res) => {
   res.json({ service: 'billing-bridge', status: 'healthy', ...buildInfo(), uptimeSec: Math.round(process.uptime()) });
 });

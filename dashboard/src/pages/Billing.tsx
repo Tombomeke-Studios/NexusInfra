@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getWallet, getUsage, getLedger, topUp, type CreditWallet, type BillingUsage, type LedgerEntry } from '../api';
 import { useToast } from '../components/Toast';
 import { formatRelative } from '../format';
@@ -13,6 +13,26 @@ function money(amount: number, currency: string): string {
 
 const TOP_UP_PRESETS = [5, 10, 25, 50];
 
+/**
+ * How often the figures are re-read (#296). A balance changes with no action on
+ * this page — an hourly charge, a cycle run, a top-up FinVault confirms — and a
+ * stale balance is a wrong answer stated with confidence.
+ */
+export const POLL_MS = 15_000;
+
+/** While a top-up is waiting on FinVault the person is watching for it to land. */
+export const PENDING_POLL_MS = 3_000;
+
+export function refreshInterval(ledger: LedgerEntry[]): number {
+  return ledger.some((e) => e.type === 'topup' && e.status === 'pending') ? PENDING_POLL_MS : POLL_MS;
+}
+
+/** Top-ups that were pending in `before` and are confirmed in `after`. */
+export function newlyConfirmed(before: LedgerEntry[], after: LedgerEntry[]): LedgerEntry[] {
+  const waiting = new Set(before.filter((e) => e.type === 'topup' && e.status === 'pending').map((e) => e.id));
+  return after.filter((e) => waiting.has(e.id) && e.status === 'confirmed');
+}
+
 export function Billing() {
   const { toast } = useToast();
   const [wallet, setWallet] = useState<CreditWallet | null>(null);
@@ -21,22 +41,71 @@ export function Billing() {
   const [error, setError] = useState<string | null>(null);
   const [amount, setAmount] = useState(10);
   const [busy, setBusy] = useState(false);
+  // When the figures on screen were read, and whether the latest attempt to read
+  // them again failed. A refresh that fails silently looks exactly like a stable
+  // balance, which is the failure #296 is about.
+  const [readAt, setReadAt] = useState<string | null>(null);
+  const [staleReason, setStaleReason] = useState<string | null>(null);
+  const [, setTick] = useState(0);
+  const ledgerRef = useRef<LedgerEntry[] | null>(null);
 
   const load = useCallback(async () => {
     try {
       const [w, u, l] = await Promise.all([getWallet(), getUsage(), getLedger()]);
+      const landed = ledgerRef.current ? newlyConfirmed(ledgerRef.current, l) : [];
+      ledgerRef.current = l;
       setWallet(w);
       setUsage(u);
       setLedger(l);
       setError(null);
+      setStaleReason(null);
+      setReadAt(new Date().toISOString());
+      for (const e of landed) {
+        toast(`${money(e.amount, e.currency)} credit has been added to your balance.`, 'success', 'Top-up confirmed');
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load billing');
+      const message = e instanceof Error ? e.message : 'Failed to load billing';
+      // Only the first read replaces the page: after that the last figures are
+      // still the best we have, so they stay — marked as no longer current.
+      if (ledgerRef.current) setStaleReason(message);
+      else setError(message);
     }
-  }, []);
+  }, [toast]);
+
+  // Re-read on a timer, faster while a top-up is pending. Each read schedules the
+  // next from what it just read, so a top-up that turns pending speeds the page up
+  // straight away. Paused while the tab is hidden (nobody is reading it) and
+  // caught up the moment it is shown again.
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const mountedRef = useRef(true);
+  const refresh = useCallback(async () => {
+    clearTimeout(timerRef.current);
+    if (typeof document === 'undefined' || !document.hidden) await load();
+    // A read that finishes after the page is gone must not start another.
+    if (!mountedRef.current) return;
+    timerRef.current = setTimeout(() => void refresh(), refreshInterval(ledgerRef.current ?? []));
+  }, [load]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    mountedRef.current = true;
+    void refresh();
+    const onVisible = () => {
+      if (!document.hidden) void refresh();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      mountedRef.current = false;
+      clearTimeout(timerRef.current);
+      timerRef.current = undefined;
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [refresh]);
+
+  // Keeps "Updated 12s ago" honest between reads.
+  useEffect(() => {
+    const handle = setInterval(() => setTick((t) => t + 1), 5_000);
+    return () => clearInterval(handle);
+  }, []);
 
   const currency = wallet?.currency ?? usage?.plan.currency ?? 'EUR';
 
@@ -46,7 +115,7 @@ export function Billing() {
     try {
       await topUp(amount);
       toast(`Top-up of ${money(amount, currency)} requested — credit is added once payment confirms.`, 'success', 'Top-up');
-      await load();
+      await refresh();
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Top-up failed', 'error');
     } finally {
@@ -59,9 +128,22 @@ export function Billing() {
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '24px 24px 48px', animation: 'rise 300ms var(--ease-out) both' }}>
       <h1 style={{ marginBottom: 6 }}>Billing</h1>
-      <p className="subtle" style={{ marginTop: 0, marginBottom: 24 }}>
+      <p className="subtle" style={{ marginTop: 0, marginBottom: 12 }}>
         Prepaid credit funds your usage. Top up via FinVault; usage is charged at the end of each monthly cycle.
       </p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, fontSize: '.82rem' }}>
+        <span className="subtle" aria-live="polite">
+          {readAt ? `Updated ${formatRelative(readAt)}` : 'Loading…'}
+        </span>
+        <button className="btn btn--ghost btn--sm" onClick={() => void refresh()}>
+          Refresh
+        </button>
+      </div>
+      {staleReason && (
+        <p role="alert" className="alert alert--error" style={{ marginTop: 0, marginBottom: 20 }}>
+          Could not refresh ({staleReason}). The figures below are from {readAt ? formatRelative(readAt) : 'earlier'} and may be out of date.
+        </p>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16, marginBottom: 22 }}>
         {/* Balance */}
