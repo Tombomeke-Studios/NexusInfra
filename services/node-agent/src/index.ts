@@ -11,6 +11,9 @@ import { createDatabaseRouter } from './dbRoutes.js';
 import { createBackupRouter } from './bkRoutes.js';
 import { createExecRouter } from './execRoutes.js';
 import { createImportRouter, importRoot } from './imports.js';
+import { createDataRouter } from './volumes.js';
+import { createImageRouter } from './images.js';
+import { createMigrationRouter } from './migrateRoutes.js';
 import { attachTerminal, type TerminalSocket } from './terminal.js';
 
 // ── Node Agent ────────────────────────────────────────────────────────────────
@@ -54,6 +57,12 @@ const agent = createAgent({ nodeId: NODE_ID, runtime, publish: (key, envelope) =
 // see and lets the orchestrator reconcile that against its records. Goes through
 // the outbox, so a broker that has not come up yet does not lose it.
 void agent.reportInventory();
+
+// Containers that die or come back without being asked (#332). Without this a
+// crashed server stayed "running" in the panel until the agent itself restarted.
+runtime.watchContainers((event) => {
+  void agent.handleContainerEvent(event).catch((err) => console.error(`[Node Agent ${NODE_ID}] could not report a container event:`, err));
+});
 
 // ── HTTP: health probe ────────────────────────────────────────────────────────
 const app = express();
@@ -128,6 +137,15 @@ app.use(createExecRouter(runtime));
 // can see this filesystem.
 app.use(createImportRouter({ root: importRoot(), realpath: async (p) => (await import('fs/promises')).realpath(p) }));
 
+// ── HTTP: a deleted server's leftovers (#324) — its containers and data volumes ──
+app.use(createDataRouter(runtime));
+
+// ── HTTP: is there a newer image for a server's tag (#239) ────────────────────
+app.use(createImageRouter(runtime));
+
+// ── HTTP: moving a server between nodes (#234) — its volumes and backups ─────
+app.use(createMigrationRouter(runtime));
+
 // ── WebSocket: interactive terminal (#71) ─────────────────────────────────────
 // Internal WS endpoint (reached only via the Orchestrator's WS proxy) that opens
 // a TTY shell in the container and bridges it to the socket. Path:
@@ -175,7 +193,7 @@ async function start() {
   try {
     await consumeRabbitQueue(
       `nexusinfra.node-agent.${NODE_ID}`,
-      ['infra.server.start', 'infra.server.stop', 'infra.server.kill', 'infra.server.restart'],
+      ['infra.server.start', 'infra.server.stop', 'infra.server.kill', 'infra.server.restart', 'infra.server.update'],
       (envelope) => agent.handleCommand(envelope)
     );
     console.log(`[Node Agent ${NODE_ID}] Listening for server commands`);

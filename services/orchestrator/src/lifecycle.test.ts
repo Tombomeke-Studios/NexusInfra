@@ -43,6 +43,27 @@ describe('createLifecycle', () => {
     expect(detail?.stoppedAt).not.toBeNull();
   });
 
+  it('forgets the container on server.stopped — the agent removed it (#321)', async () => {
+    const d = await seedDeployment(repo);
+    await repo.updateDeploymentStatus(d.id, { status: 'running', containerId: 'abc123' });
+    await lifecycle.handleReport(report({ type: 'server.stopped', payload: { deploymentId: d.id, containerId: 'abc123' } }));
+
+    expect((await repo.getDeployment(d.id))?.containerId).toBeNull();
+  });
+
+  it('ignores a late stop report for a container the server has since replaced (#321)', async () => {
+    // Stop c1, start again as c2, and only then does c1's report arrive — an
+    // outbox replay (#167) does exactly this. It must not stop c2 on paper.
+    const d = await seedDeployment(repo);
+    await repo.updateDeploymentStatus(d.id, { status: 'running', containerId: 'c2' });
+    await lifecycle.handleReport(report({ type: 'server.stopped', payload: { deploymentId: d.id, containerId: 'c1' } }));
+
+    const detail = await repo.getDeployment(d.id);
+    expect(detail?.status).toBe('running');
+    expect(detail?.containerId).toBe('c2');
+    expect(detail?.events.some((e) => e.event === 'stopped')).toBe(false);
+  });
+
   it('marks a deployment crashed on server.crashed and records the reason', async () => {
     const d = await seedDeployment(repo);
     await lifecycle.handleReport(
@@ -57,5 +78,36 @@ describe('createLifecycle', () => {
   it('ignores reports for unknown deployments', async () => {
     await lifecycle.handleReport(report({ type: 'server.started', payload: { deploymentId: 'ghost', containerId: 'x', nodeId: 'n' } }));
     expect(await repo.listDeployments()).toHaveLength(0);
+  });
+
+  it('records a pulled image, and whether the container was replaced (#239)', async () => {
+    const d = await seedDeployment(repo);
+    await lifecycle.handleReport(report({ type: 'server.image-updated', payload: { deploymentId: d.id, image: 'nginx', digest: 'sha256:0123456789abcdef0123', recreated: true } }));
+    const entry = (await repo.getDeployment(d.id))?.events.find((e) => e.event === 'image-updated');
+    expect(entry?.message).toContain('pulled nginx (sha256:0123456789ab');
+    expect(entry?.message).toContain('recreated');
+  });
+
+  it('records a failed update as leaving the server alone (#239)', async () => {
+    const d = await seedDeployment(repo);
+    await repo.updateDeploymentStatus(d.id, { status: 'running', containerId: 'c1' });
+    await lifecycle.handleReport(report({ type: 'server.update-failed', payload: { deploymentId: d.id, image: 'nginx:nope', reason: 'manifest unknown' } }));
+    const detail = await repo.getDeployment(d.id);
+    expect(detail?.status).toBe('running');
+    expect(detail?.events.find((e) => e.event === 'update-failed')?.message).toContain('manifest unknown');
+  });
+
+  it('matches a report that names only the container (#332)', async () => {
+    const d = await seedDeployment(repo);
+    await repo.updateDeploymentStatus(d.id, { status: 'running', containerId: 'old-c' });
+    await lifecycle.handleReport(report({ type: 'server.crashed', payload: { deploymentId: '', containerId: 'old-c', reason: 'exited with code 1' } }));
+    expect((await repo.getDeployment(d.id))?.status).toBe('crashed');
+  });
+
+  it('ignores a crash of a container the server has since replaced (#332)', async () => {
+    const d = await seedDeployment(repo);
+    await repo.updateDeploymentStatus(d.id, { status: 'running', containerId: 'new-c' });
+    await lifecycle.handleReport(report({ type: 'server.crashed', payload: { deploymentId: d.id, containerId: 'old-c', reason: 'exited with code 137' } }));
+    expect((await repo.getDeployment(d.id))?.status).toBe('running');
   });
 });

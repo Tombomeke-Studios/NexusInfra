@@ -123,6 +123,12 @@ Volume: `/data` — the database. Back this up.
 | `INTERNAL_API_TOKEN` | yes | Must match the orchestrator's. |
 | `AGENT_URL` | no | How the orchestrator reaches this agent, advertised on its heartbeat. Defaults to `http://<hostname>:<PORT>`, which works on a Compose network; set it explicitly for anything else. |
 | `BACKUP_DIR` | no | Where backup tarballs live. Point at a volume so they survive restarts. |
+| `BACKUP_S3_BUCKET` | no | Turns on **off-site backups** (#232): every backup is also copied to this S3-compatible bucket (AWS, Backblaze B2, Wasabi, Cloudflare R2, a self-hosted store). Off unless the bucket and both keys are set. Restore and download fall back to it when the node's own copy is gone. |
+| `BACKUP_S3_ACCESS_KEY_ID` / `BACKUP_S3_SECRET_ACCESS_KEY` | with a bucket | Credentials for the bucket. Give them access to that bucket (and prefix) only. |
+| `BACKUP_S3_ENDPOINT` | no | Defaults to AWS for `BACKUP_S3_REGION`. Set it for anything else, e.g. `https://s3.eu-central-003.backblazeb2.com`. |
+| `BACKUP_S3_REGION` | no | Default `us-east-1`. R2 wants `auto`. |
+| `BACKUP_S3_PREFIX` | no | Key prefix inside the bucket, default `nexusinfra-backups/`, so one bucket can serve several installations. |
+| `BACKUP_S3_PATH_STYLE` | no | `false` for virtual-hosted addressing (`bucket.endpoint`). Default is path-style, which self-hosted stores expect. |
 | `DISK_PATH` | no | **Rarely needed.** Which filesystem to report disk usage for (#276). The agent works this out by itself: it asks Docker for its data root and measures that when it is readable, and otherwise measures its own root — which under overlay2 already reports the filesystem the Docker data sits on, because that is where the container's writable layer lives. Set this only when the disk you care about is somewhere else, e.g. volumes on a second drive mounted into the agent. A node that cannot measure at all reports nothing rather than zero. |
 | `IMPORT_ROOT` | no | Enables importing existing server directories (#268). A path a person may point a new server at, so it runs against files already on this host. **Unset means the feature is off, which is the default.** Only a platform administrator may use it, and the agent refuses anything that does not resolve inside this root. Mount the same path into the agent container so it can see it. |
 
