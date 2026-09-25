@@ -8,7 +8,7 @@ import { runScheduleAction, type ScheduleActions } from './scheduler.js';
 import { resolveAgentUrl } from './agentUrl.js';
 import { principalOf, requirePlatformAdmin } from './auth.js';
 import { accessGuard, accessOf, requirePermission } from './accessGuard.js';
-import { isGrantableRole, resolveRole } from './access.js';
+import { isGrantableRole, resolveRole, type Permission } from './access.js';
 import { createServerTeamRouter } from './teams.js';
 import { EGGS, getEgg, buildEggDeployment, EggValidationError, type Egg } from './eggs.js';
 import { containerMemoryMb, derivedHeapMb, formatHeapMb, heapBudgetProblem, parseMemoryMb } from './memory.js';
@@ -69,6 +69,23 @@ const KEY_START = 'infra.server.start';
 const KEY_STOP = 'infra.server.stop';
 const KEY_KILL = 'infra.server.kill';
 const KEY_RESTART = 'infra.server.restart';
+
+/** The lifecycle commands a caller can send to a server. */
+export const CONTROL_ACTIONS = ['start', 'stop', 'restart', 'kill'] as const;
+export type ControlAction = (typeof CONTROL_ACTIONS)[number];
+
+export const CONTROL_PERMISSION: Record<ControlAction, Permission> = {
+  start: 'control.start',
+  stop: 'control.stop',
+  restart: 'control.restart',
+  // The same intent as stop, applied harder (#253).
+  kill: 'control.stop',
+};
+
+interface ControlOutcome {
+  status: number;
+  body: unknown;
+}
 
 export type PublishFn = (routingKey: string, envelope: EventEnvelope) => Promise<boolean>;
 export type SelectNodeFn = (nodes: NodeRecord[], now: number) => NodeRecord | null;
@@ -543,95 +560,93 @@ export function createApiRouter(deps: ApiDeps): Router {
     return res.json(events.slice(offset, offset + limit));
   });
 
-  // Request a running deployment be stopped: command the agent, which reports
-  // server.stopped back (lifecycle.ts flips the status).
-  router.post('/deployments/:id/stop', requirePermission('control.stop'), async (req: Request, res: Response) => {
-    const detail = await repo.getDeployment(req.params.id);
-    if (!detail) return res.status(404).json({ error: 'deployment not found' });
-    if (!detail.containerId || !detail.nodeId) {
-      return res.status(409).json({ error: 'deployment is not running' });
-    }
+  // ── Control actions ──────────────────────────────────────────────────────
+  // One implementation per action, so every caller that stops a server stops it
+  // the same way.
+  const controls: Record<ControlAction, (detail: DeploymentDetail) => Promise<ControlOutcome>> = {
+    // Request a running deployment be stopped: command the agent, which reports
+    // server.stopped back (lifecycle.ts flips the status).
+    stop: async (detail) => {
+      if (!detail.containerId || !detail.nodeId) return { status: 409, body: { error: 'deployment is not running' } };
+      await repo.appendDeploymentEvent(detail.id, 'stop-requested', 'stop requested by user');
+      await emit(KEY_STOP, {
+        type: 'server.stop',
+        payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId },
+      });
+      return { status: 202, body: { status: 'stopping', deploymentId: detail.id } };
+    },
 
-    await repo.appendDeploymentEvent(detail.id, 'stop-requested', 'stop requested by user');
-    await emit(KEY_STOP, {
-      type: 'server.stop',
-      payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId },
-    });
-    return res.status(202).json({ status: 'stopping', deploymentId: detail.id });
-  });
+    // Force-terminate a container that ignores a graceful stop (#253). Same
+    // permission as stop — it is the same intent, applied harder — but its own
+    // command and its own audit entry, so the trail can say which one happened.
+    kill: async (detail) => {
+      if (!detail.containerId || !detail.nodeId) return { status: 409, body: { error: 'deployment is not running' } };
+      await repo.appendDeploymentEvent(detail.id, 'kill-requested', 'force kill requested by user');
+      await emit(KEY_KILL, {
+        type: 'server.kill',
+        payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId },
+      });
+      return { status: 202, body: { status: 'killing', deploymentId: detail.id } };
+    },
 
-  // Force-terminate a container that ignores a graceful stop (#253). Same
-  // permission as stop — it is the same intent, applied harder — but its own
-  // command and its own audit entry, so the trail can say which one happened.
-  router.post('/deployments/:id/kill', requirePermission('control.stop'), async (req: Request, res: Response) => {
-    const detail = await repo.getDeployment(req.params.id);
-    if (!detail) return res.status(404).json({ error: 'deployment not found' });
-    if (!detail.containerId || !detail.nodeId) {
-      return res.status(409).json({ error: 'deployment is not running' });
-    }
+    // Start (or re-run) a deployment that isn't currently running: re-place it on a
+    // healthy node and command a fresh container from its saved config.
+    start: async (detail) => {
+      if (detail.status === 'running' || detail.status === 'pending') {
+        return { status: 409, body: { error: 'deployment is already running' } };
+      }
+      const config = await repo.getDeploymentConfig(detail.id);
+      if (!config) return { status: 404, body: { error: 'server config not found' } };
 
-    await repo.appendDeploymentEvent(detail.id, 'kill-requested', 'force kill requested by user');
-    await emit(KEY_KILL, {
-      type: 'server.kill',
-      payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId },
-    });
-    return res.status(202).json({ status: 'killing', deploymentId: detail.id });
-  });
+      const node = selectNode(await repo.listNodes(), Date.now());
+      if (!node) return { status: 503, body: { error: 'No healthy node available to place the deployment' } };
 
-  // Start (or re-run) a deployment that isn't currently running: re-place it on a
-  // healthy node and command a fresh container from its saved config.
-  router.post('/deployments/:id/start', requirePermission('control.start'), async (req: Request, res: Response) => {
-    const detail = await repo.getDeployment(req.params.id);
-    if (!detail) return res.status(404).json({ error: 'deployment not found' });
-    if (detail.status === 'running' || detail.status === 'pending') {
-      return res.status(409).json({ error: 'deployment is already running' });
-    }
-    const config = await repo.getDeploymentConfig(detail.id);
-    if (!config) return res.status(404).json({ error: 'server config not found' });
-
-    const node = selectNode(await repo.listNodes(), Date.now());
-    if (!node) return res.status(503).json({ error: 'No healthy node available to place the deployment' });
-
-    await repo.updateDeploymentStatus(detail.id, {
-      status: 'pending',
-      nodeId: node.id,
-      containerId: null,
-      startedAt: null,
-      stoppedAt: null,
-    });
-    await repo.appendDeploymentEvent(detail.id, 'start-requested', `re-placed on node ${node.id}`);
-    await emit(KEY_START, {
-      type: 'server.start',
-      payload: {
-        deploymentId: detail.id,
+      await repo.updateDeploymentStatus(detail.id, {
+        status: 'pending',
         nodeId: node.id,
-        dockerImage: config.dockerImage,
-        containerName: containerNameFor(config.name, detail.id),
-        env: config.env,
-        ports: config.ports,
-        resourceLimits: config.resourceLimits,
-        ...dataMountFor(config),
-      },
-    });
-    return res.status(202).json({ status: 'starting', deploymentId: detail.id });
-  });
+        containerId: null,
+        startedAt: null,
+        stoppedAt: null,
+      });
+      await repo.appendDeploymentEvent(detail.id, 'start-requested', `re-placed on node ${node.id}`);
+      await emit(KEY_START, {
+        type: 'server.start',
+        payload: {
+          deploymentId: detail.id,
+          nodeId: node.id,
+          dockerImage: config.dockerImage,
+          containerName: containerNameFor(config.name, detail.id),
+          env: config.env,
+          ports: config.ports,
+          resourceLimits: config.resourceLimits,
+          ...dataMountFor(config),
+        },
+      });
+      return { status: 202, body: { status: 'starting', deploymentId: detail.id } };
+    },
 
-  // Request a running deployment be restarted — the agent restarts the container
-  // and reports server.started back.
-  router.post('/deployments/:id/restart', requirePermission('control.restart'), async (req: Request, res: Response) => {
-    const detail = await repo.getDeployment(req.params.id);
-    if (!detail) return res.status(404).json({ error: 'deployment not found' });
-    if (!detail.containerId || !detail.nodeId) {
-      return res.status(409).json({ error: 'deployment is not running' });
-    }
+    // Request a running deployment be restarted — the agent restarts the container
+    // and reports server.started back.
+    restart: async (detail) => {
+      if (!detail.containerId || !detail.nodeId) return { status: 409, body: { error: 'deployment is not running' } };
+      await repo.appendDeploymentEvent(detail.id, 'restart-requested', 'restart requested by user');
+      await emit(KEY_RESTART, {
+        type: 'server.restart',
+        payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId },
+      });
+      return { status: 202, body: { status: 'restarting', deploymentId: detail.id } };
+    },
+  };
 
-    await repo.appendDeploymentEvent(detail.id, 'restart-requested', 'restart requested by user');
-    await emit(KEY_RESTART, {
-      type: 'server.restart',
-      payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId },
-    });
-    return res.status(202).json({ status: 'restarting', deploymentId: detail.id });
-  });
+  const controlRoute = (action: ControlAction) => async (req: Request, res: Response) => {
+    const outcome = await controls[action](accessOf(req).deployment);
+    return res.status(outcome.status).json(outcome.body);
+  };
+
+  router.post('/deployments/:id/stop', requirePermission(CONTROL_PERMISSION.stop), controlRoute('stop'));
+  router.post('/deployments/:id/kill', requirePermission(CONTROL_PERMISSION.kill), controlRoute('kill'));
+  router.post('/deployments/:id/start', requirePermission(CONTROL_PERMISSION.start), controlRoute('start'));
+  router.post('/deployments/:id/restart', requirePermission(CONTROL_PERMISSION.restart), controlRoute('restart'));
 
   // Permanently delete a deployment: stop its container if running, deprovision
   // any managed database containers, then drop the deployment and its records.
