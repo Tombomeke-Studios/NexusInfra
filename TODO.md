@@ -274,7 +274,7 @@ Found while running the hosted release bundle live for the first time (2026-08-2
 far better shape than hosted; these are the gaps between "the code exists" and "a customer could use
 it". Every item carries the `edition:hosted` label on GitHub.
 
-- [ ] The credit balance never refreshes on its own — a stale balance is a wrong answer stated with confidence (#296)
+- [x] The credit balance never refreshes on its own — a stale balance is a wrong answer stated with confidence (#296)
 - [ ] Creating a server is never charged and the form shows no plan entitlements (RAM ceiling, storage, backups, databases) (#297)
 - [ ] The FinVault integration has never been exercised end to end — written, not verified; a mismatched message key fails *silently* (#298)
 - [x] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)
