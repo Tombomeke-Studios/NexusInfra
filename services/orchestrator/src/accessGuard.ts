@@ -57,8 +57,9 @@ export function accessGuard(repo: Repository) {
 /**
  * The caller's role on one server, or null for no access — what the guard asks.
  *
- * Exported so anything that must authorize a server outside the `/:id` subtree
- * uses these same rules rather than a second copy of them.
+ * Exported for routes that address *several* servers in one request (bulk
+ * actions, #238): each one is authorized by this same function rather than by a
+ * second copy of the rules, which is how the two would drift.
  */
 export async function resolveAccess(
   repo: Repository,

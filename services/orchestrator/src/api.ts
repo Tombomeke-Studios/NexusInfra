@@ -7,8 +7,8 @@ import { isValidCron } from './cron.js';
 import { runScheduleAction, type ScheduleActions } from './scheduler.js';
 import { resolveAgentUrl } from './agentUrl.js';
 import { principalOf, requirePlatformAdmin } from './auth.js';
-import { accessGuard, accessOf, requirePermission } from './accessGuard.js';
-import { isGrantableRole, resolveRole, type Permission } from './access.js';
+import { accessGuard, accessOf, requirePermission, resolveAccess } from './accessGuard.js';
+import { can, isGrantableRole, resolveRole, type Permission } from './access.js';
 import { createServerTeamRouter } from './teams.js';
 import { EGGS, getEgg, buildEggDeployment, EggValidationError, type Egg } from './eggs.js';
 import { containerMemoryMb, derivedHeapMb, formatHeapMb, heapBudgetProblem, parseMemoryMb } from './memory.js';
@@ -70,7 +70,7 @@ const KEY_STOP = 'infra.server.stop';
 const KEY_KILL = 'infra.server.kill';
 const KEY_RESTART = 'infra.server.restart';
 
-/** The lifecycle commands a caller can send to a server. */
+/** The lifecycle commands a caller can send to a server, singly or in bulk (#238). */
 export const CONTROL_ACTIONS = ['start', 'stop', 'restart', 'kill'] as const;
 export type ControlAction = (typeof CONTROL_ACTIONS)[number];
 
@@ -82,9 +82,25 @@ export const CONTROL_PERMISSION: Record<ControlAction, Permission> = {
   kill: 'control.stop',
 };
 
+export function isControlAction(value: unknown): value is ControlAction {
+  return typeof value === 'string' && (CONTROL_ACTIONS as readonly string[]).includes(value);
+}
+
+/** Enough to act on a page of the server list, and a bound on one request's work. */
+export const MAX_BULK = 100;
+
 interface ControlOutcome {
   status: number;
   body: unknown;
+}
+
+/** One server's answer inside a bulk request — precise enough to say which failed and why. */
+export interface BulkResult {
+  id: string;
+  name?: string;
+  ok: boolean;
+  status: number;
+  error?: string;
 }
 
 export type PublishFn = (routingKey: string, envelope: EventEnvelope) => Promise<boolean>;
@@ -226,6 +242,10 @@ export function createApiRouter(deps: ApiDeps): Router {
   const scheduleActions = deps.scheduleActions ?? noopScheduleActions;
   const checkQuota = deps.checkQuota ?? defaultCheckQuota;
   const router = Router();
+  // Routes under `/deployments/<word>` that are not a server id must be matched
+  // before the per-server guard (#238); mounting this first guarantees it.
+  const bulkRouter = Router();
+  router.use(bulkRouter);
 
   const emit = (routingKey: string, event: NexusInfraEvent) =>
     publish(routingKey, buildEnvelope('orchestrator', event));
@@ -561,8 +581,9 @@ export function createApiRouter(deps: ApiDeps): Router {
   });
 
   // ── Control actions ──────────────────────────────────────────────────────
-  // One implementation per action, so every caller that stops a server stops it
-  // the same way.
+  // One implementation per action, shared by the single-server routes and the
+  // bulk route (#238), so "stop ten servers" can never mean something slightly
+  // different from stopping each of them.
   const controls: Record<ControlAction, (detail: DeploymentDetail) => Promise<ControlOutcome>> = {
     // Request a running deployment be stopped: command the agent, which reports
     // server.stopped back (lifecycle.ts flips the status).
@@ -647,6 +668,58 @@ export function createApiRouter(deps: ApiDeps): Router {
   router.post('/deployments/:id/kill', requirePermission(CONTROL_PERMISSION.kill), controlRoute('kill'));
   router.post('/deployments/:id/start', requirePermission(CONTROL_PERMISSION.start), controlRoute('start'));
   router.post('/deployments/:id/restart', requirePermission(CONTROL_PERMISSION.restart), controlRoute('restart'));
+
+  // Several servers at once (#238). Registered on the router *before* the
+  // per-server guard below would claim `/deployments/bulk` as a server called
+  // "bulk" — see the ordering note at the guard.
+  //
+  // Every id is authorized on its own with the guard's own resolver, and an id
+  // the caller cannot see reports "not found" exactly as the single route would:
+  // a bulk endpoint that said "forbidden" for some ids would be a way to probe
+  // which servers exist. Runs sequentially — placement reads the fleet, and ten
+  // concurrent starts would all read it before any of them had landed.
+  bulkRouter.post('/deployments/bulk', async (req: Request, res: Response) => {
+    const { action, ids } = req.body ?? {};
+    if (!isControlAction(action)) {
+      return res.status(400).json({ error: `action must be one of ${CONTROL_ACTIONS.join(', ')}` });
+    }
+    if (!Array.isArray(ids) || ids.length === 0 || !ids.every((id) => typeof id === 'string' && id)) {
+      return res.status(400).json({ error: 'ids must be a non-empty list of deployment ids' });
+    }
+    const unique = [...new Set(ids as string[])];
+    if (unique.length > MAX_BULK) return res.status(400).json({ error: `at most ${MAX_BULK} servers per request` });
+
+    const principal = principalOf(req);
+    const results: BulkResult[] = [];
+    for (const id of unique) {
+      const access = await resolveAccess(repo, principal, id);
+      if (!access) {
+        results.push({ id, ok: false, status: 404, error: 'deployment not found' });
+        continue;
+      }
+      if (!can(access.role, CONTROL_PERMISSION[action])) {
+        results.push({ id, name: access.deployment.name, ok: false, status: 403, error: `your role on this server (${access.role}) cannot ${action} it` });
+        continue;
+      }
+      try {
+        const outcome = await controls[action](access.deployment);
+        const ok = outcome.status < 300;
+        results.push({
+          id,
+          name: access.deployment.name,
+          ok,
+          status: outcome.status,
+          ...(ok ? {} : { error: String((outcome.body as { error?: unknown }).error ?? 'failed') }),
+        });
+      } catch (err) {
+        // One server's failure is that server's result, not the whole request's.
+        results.push({ id, name: access.deployment.name, ok: false, status: 500, error: err instanceof Error ? err.message : 'failed' });
+      }
+    }
+
+    const succeeded = results.filter((r) => r.ok).length;
+    return res.json({ action, succeeded, failed: results.length - succeeded, results });
+  });
 
   // Permanently delete a deployment: stop its container if running, deprovision
   // any managed database containers, then drop the deployment and its records.
