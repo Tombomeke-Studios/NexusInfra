@@ -54,9 +54,10 @@ exposes `pendingEvents` / `droppedEvents`.
 |---|---|---|
 | `monitoring.heartbeat.service.{name}` | every service (1s) | control-room |
 | `monitoring.heartbeat.node.{id}` | node-agent (1s pulse, resources every 5s) | control-room |
-| `infra.server.start` / `infra.server.stop` / `infra.server.kill` / `infra.server.restart` | orchestrator | node-agent |
+| `infra.server.start` / `infra.server.stop` / `infra.server.kill` / `infra.server.restart` / `infra.server.update` (#239) | orchestrator | node-agent |
 | `infra.server.started` / `infra.server.stopped` / `infra.server.crashed` | node-agent | orchestrator **and** billing-bridge (runtime intervals, hosted) |
 | `infra.node.inventory` (#244) | node-agent, once at startup | orchestrator |
+| `infra.server.image-updated` / `infra.server.update-failed` (#239) | node-agent | orchestrator (audit trail) |
 | `infra.deployment.created` | orchestrator | billing-bridge (learns owner + limits for tracking, hosted) |
 | `bank.payment.request` | billing-bridge | FinVault (credit top-up charge) |
 | `bank.payment.confirmed` / `bank.payment.failed` | FinVault | billing-bridge (add/mark-failed credit) |
@@ -99,6 +100,39 @@ append-only deployment-event audit trail. Schema source of truth: the service's
 
 The Orchestrator's node registry mirrors the same last-seen status model above (healthy < 3s ≤
 degraded < 10s ≤ offline); only `healthy` nodes are eligible for placement.
+
+**Server data (#324).** A stop removes the container (#52), so nothing a server needs to keep may live
+in it. Each server's data directories are **named Docker volumes labelled with its deployment id** —
+the egg's data directory, every `VOLUME` its image declares, and any `persistPaths` an application
+names. The agent creates them idempotently at start under deterministic names, so the next container
+mounts the same ones; deleting the server asks its node to remove everything carrying that label. An
+imported host directory (#268) is a bind mount instead, and outranks a volume on the same path.
+Before this, every stop deleted the server's files. The start command is built in one place
+(`startCommand.ts`) for creation, start and reconciliation — reconciliation's hand-written copy had
+already lost the imported mount.
+
+**Containers that stop on their own (#332).** Each agent follows Docker's `die`/`start` events for
+the containers it manages. A container that exits without the agent having asked is reported —
+`server.crashed` with the exit code (and "killed by the OOM killer" when that was it), or
+`server.stopped` for a clean exit — and one a restart policy brings back is reported running again.
+The agent's own work is not mistaken for this: a container it removed (stop, kill, recreate) is
+gone by the time it looks, and its own restarts are marked for their duration. Before this, a
+server that crashed stayed "running" in the panel until the agent itself restarted.
+
+**Notifications (#236).** Part of the orchestrator rather than a service of its own: it already holds
+the accounts, who can access which server, and every event worth announcing. A crash report
+(including the ones the agent now notices on its own, #332), a billing suspension, or a node going
+offline and coming back (a 5 s watcher; the first look only records, so a restart announces nothing)
+becomes one **delivery row per subscribed channel** — webhook (JSON, Discord or Slack) or email over
+SMTP. A 15 s worker sends what is due and retries with backoff; rows are claimed atomically, so two
+orchestrators never send one twice, and a restart or an unreachable receiver delays a notification
+rather than losing it.
+
+**Moving a server (#234).** Because a server's data is a set of volumes on one node, moving it is
+moving those: the orchestrator streams each from the source agent's volume export into the target
+agent's import (a created-never-started container of the server's own image carries the volume, so
+no helper image is needed), then the backup tars, then switches the record, then cleans the source.
+Start never moves a server by itself (#329) — it starts on the node that has the data.
 
 **Multi-node routing (#171).** Placement spans every healthy node, and start/stop/restart are addressed
 by `nodeId` over the bus. Direct agent calls (files, exec, terminal, logs/stats, backups, databases)

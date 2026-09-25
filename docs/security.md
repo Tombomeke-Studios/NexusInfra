@@ -314,8 +314,15 @@ plaintext on the private network. mTLS and rotation belong with the production h
 - A backup is a tar the agent writes under an **opaque, filesystem-safe ref** (validated so a crafted
   ref can't traverse out of the backup directory); the agent's backup endpoint is internal
   (token-guarded, #169).
-- Tars live on the **node that made them** (single-node MVP); the Orchestrator stores only metadata, not
-  the blob. Multi-node placement + off-node backup storage is a later (production) concern.
+- Tars live on the **node that made them**; the Orchestrator stores only metadata, not the blob.
+- **Off-site (#232)** is optional and configured per node (`BACKUP_S3_*`, see images.md). The
+  credentials live in the agent's environment only — never in the database or on the wire to the
+  panel — and should be scoped to the one bucket/prefix. Requests are signed with AWS SigV4
+  (`s3.ts`, checked against AWS's published example and byte-for-byte against botocore). A failed
+  upload is recorded on the backup rather than hidden, so "copied off-site" in the panel is a claim
+  that was checked. Tars are uploaded as-is: encrypt at the bucket (SSE) if the data warrants it.
+- **Download** streams through the Orchestrator behind `backup.manage`, so a backup's contents reach
+  exactly the people who could have restored it.
 
 ## Subusers (#112)
 
@@ -336,6 +343,23 @@ the risk is yours to take; across any network you do not, an observer has the se
 [deployment.md](deployment.md#putting-it-behind-tls-245) has working Caddy and nginx configurations,
 which ports to publish and which never to, and the `TRUST_PROXY` setting that keeps per-IP rate
 limiting meaningful once every request arrives from the proxy's address.
+
+## Notifications (#236)
+
+- **Webhooks cannot reach the private network** unless a platform administrator made them. A webhook
+  is the orchestrator making a request on someone's behalf; without this, any account could aim it
+  at the node agents, a database, or the cloud metadata endpoint (`169.254.169.254`). Loopback,
+  RFC 1918, link-local, CGNAT, multicast and IPv6 ULA/link-local are refused, including IPv4-mapped
+  IPv6. The check runs at creation (for a clear error) **and at connect time**, as the HTTP client's
+  DNS lookup — so a name that resolves publicly when saved and privately when used (DNS rebinding)
+  is still refused.
+- **Every webhook body is signed**: `X-NexusInfra-Signature: sha256=<HMAC-SHA256(secret, body)>`,
+  with a per-channel secret shown once at creation. The secret is stored in plain form, because
+  signing needs it; it grants nothing but the ability to forge notifications to that one receiver.
+  `X-NexusInfra-Delivery` stays the same across retries, so a receiver can drop duplicates.
+- **Email goes only to the account's own address.** A panel that mailed any address on request would
+  be a spam relay behind a login page.
+- Channels live under `/me` and are the caller's own; another account's channel answers 404.
 
 ## Known gaps (foundation phase)
 

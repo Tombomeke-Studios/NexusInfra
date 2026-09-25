@@ -18,8 +18,15 @@ import { createUserService, isTotpRequired } from './users.js';
 import { createTeamRouter } from './teams.js';
 import { createNodeRegistry } from './nodeRegistry.js';
 import { createLifecycle } from './lifecycle.js';
+import { createNotifier, defaultTransports } from './notifier.js';
+import { createNotificationRouter } from './notificationRoutes.js';
+import { nodeTransitions } from './notify.js';
+import type { NodeHealth } from './types.js';
 import { createSuspendHandler, type SuspendPayload } from './suspend.js';
 import { startScheduler, type ScheduleActions } from './scheduler.js';
+import { requestImageUpdate } from './imageUpdate.js';
+import { backfillPortAllocations } from './portAllocation.js';
+import { sweepRetention, takeBackup, type BackupDeps, type Snapshot } from './backups.js';
 import { createReconcileHandler } from './reconcile.js';
 
 // ── Orchestrator ────────────────────────────────────────────────────────────
@@ -57,29 +64,60 @@ async function agentUrlFor(nodeId: string | null): Promise<string> {
 const users = createUserService({ repo });
 const registry = createNodeRegistry(repo);
 const reconcile = createReconcileHandler({ repo, publish: publishRabbitEvent });
-const lifecycle = createLifecycle(repo);
-const suspend = createSuspendHandler({ repo });
+// Notifications (#236): channels per account, durable deliveries, retried until
+// they land. Email is on when SMTP_URL is set.
+const notifier = createNotifier({
+  repo,
+  transports: defaultTransports(process.env.SMTP_URL, process.env.SMTP_FROM || 'NexusInfra <nexusinfra@localhost>'),
+  emailEnabled: Boolean(process.env.SMTP_URL),
+});
+const lifecycle = createLifecycle(repo, {
+  onCrashed: (deploymentId, reason) =>
+    void notifier.notifyServer(deploymentId, { event: 'server.crashed', summary: `crashed: ${reason}`, details: { reason } }).then(() => undefined),
+});
+const suspend = createSuspendHandler({
+  repo,
+  onSuspended: (deploymentId, reason) =>
+    void notifier.notifyServer(deploymentId, { event: 'server.suspended', summary: `was suspended: ${reason}`, details: { reason } }).then(() => undefined),
+});
 
 // Actions the schedule runner (#111) performs for a due schedule: restart the
 // server (over the bus) or snapshot a backup (via the owning node agent).
+// What backups need from the outside world (#232) — the owning node's agent.
+const backupDeps: BackupDeps = {
+  repo,
+  agentUrlFor,
+  async snapshot({ agentUrl, ...spec }) {
+    const r = await agentFetch(`${agentUrl}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(spec) });
+    if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? 'backup failed');
+    return (await r.json()) as Snapshot;
+  },
+  async remove(agentUrl, ref) {
+    const r = await agentFetch(`${agentUrl}/backups/${ref}`, { method: 'DELETE' });
+    if (!r.ok && r.status !== 404) throw new Error(`the node refused to delete backup ${ref} (${r.status})`);
+  },
+};
+
 const scheduleActions: ScheduleActions = {
   async restart(deploymentId) {
     const detail = await repo.getDeployment(deploymentId);
-    if (!detail?.containerId || !detail.nodeId) return;
+    // Status too: a row stopped before #321 still names a removed container.
+    if (detail?.status !== 'running' || !detail.containerId || !detail.nodeId) return;
     await publishRabbitEvent(
       'infra.server.restart',
       buildEnvelope('orchestrator', { type: 'server.restart', payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId } })
     );
     await repo.appendDeploymentEvent(detail.id, 'schedule-restart', 'restarted by schedule');
   },
+  async update(deploymentId) {
+    const outcome = await requestImageUpdate({ repo, publish: publishRabbitEvent }, deploymentId, 'schedule');
+    if (outcome.status >= 300) throw new Error(outcome.body.error ?? 'scheduled update failed');
+  },
   async backup(deploymentId) {
-    const detail = await repo.getDeployment(deploymentId);
-    if (!detail?.containerId) return;
-    const r = await agentFetch(`${await agentUrlFor(detail.nodeId)}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ containerId: detail.containerId }) });
-    if (!r.ok) throw new Error('scheduled backup failed');
-    const snap = (await r.json()) as { ref: string; sizeBytes: number; path: string };
-    await repo.createBackup({ deploymentId: detail.id, name: `backup-${new Date().toISOString().replace(/[:.]/g, '-')}`, path: snap.path, ref: snap.ref, sizeBytes: snap.sizeBytes });
-    await repo.appendDeploymentEvent(detail.id, 'schedule-backup', 'snapshot created by schedule');
+    // The same path as the Backups tab (#232): default data directory,
+    // off-site copy, then retention.
+    const outcome = await takeBackup(backupDeps, deploymentId, { by: 'schedule' });
+    if (!outcome.ok && outcome.status !== 409) throw new Error(`scheduled backup failed: ${outcome.error}`);
   },
 };
 
@@ -126,6 +164,7 @@ app.use(requireTokenScope);
 // in instead would lock out everyone the moment the flag was turned on.
 app.use(requireTotpEnrolment);
 app.use(catchAsync(createAccountRouter({ users, repo })));
+app.use(catchAsync(createNotificationRouter({ repo, notifier })));
 app.use(catchAsync(createUserAdminRouter({ users, repo })));
 app.use(catchAsync(createTeamRouter({ repo })));
 app.use(catchAsync(createApiRouter({ repo, scheduleActions })));
@@ -233,6 +272,37 @@ void users
 
 // Evaluate schedules once a minute (restart/backup on a cron).
 startScheduler(repo, scheduleActions);
+
+// Deliver what is due, and retry what failed (#236).
+setInterval(() => void notifier.drain().catch((err) => console.warn('[Orchestrator] notification delivery:', err)), 15_000).unref();
+
+// Watch the fleet for nodes going offline and coming back (#236). The first look
+// only records, so an orchestrator restart does not announce every offline node.
+let nodeStates = new Map<string, NodeHealth>();
+setInterval(() => {
+  void repo
+    .listNodes()
+    .then(async (nodes) => {
+      const { changes, next } = nodeTransitions(nodeStates, nodes, Date.now());
+      nodeStates = next;
+      for (const c of changes) {
+        await notifier.notifyAdmins({
+          event: c.to === 'offline' ? 'node.offline' : 'node.recovered',
+          summary: c.to === 'offline' ? `Node ${c.name} is offline — its servers are unreachable` : `Node ${c.name} is back online`,
+          node: { id: c.nodeId, name: c.name },
+        });
+      }
+    })
+    .catch(() => undefined);
+}, 5_000).unref();
+// Servers from before #233 hold ports nothing recorded; record them once, so the
+// conflict check knows about them.
+void backfillPortAllocations(repo)
+  .then((n) => n && console.log(`[Orchestrator] Recorded ${n} host port${n === 1 ? '' : 's'} held by existing servers (#233)`))
+  .catch((err) => console.warn('[Orchestrator] Could not backfill port allocations:', err));
+// A "keep 30 days" policy has to expire backups even when none are being made
+// (#232). Hourly is plenty for a policy measured in days.
+setInterval(() => void sweepRetention(backupDeps, new Date()).catch(() => undefined), 60 * 60 * 1000).unref();
 console.log('[Orchestrator] Schedule runner started (1-minute tick)');
 
 // ── Event bus: node heartbeats + server lifecycle reports ─────────────────────
@@ -245,6 +315,9 @@ async function start() {
         'infra.server.started',
         'infra.server.stopped',
         'infra.server.crashed',
+        // Image updates (#239): what was pulled, or why it could not be.
+        'infra.server.image-updated',
+        'infra.server.update-failed',
         // What a node reports when its agent restarts, so our records stop
         // describing a machine that no longer matches (#244).
         'infra.node.inventory',

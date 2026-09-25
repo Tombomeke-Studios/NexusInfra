@@ -20,7 +20,14 @@ export type NexusInfraEvent =
   // `dataMount` bind-mounts an existing host directory into the container, for a
   // server whose files already live on the node (#268). Admin-only and confined to
   // the node's IMPORT_ROOT — the agent re-validates it rather than trusting this.
-  | { type: 'server.start'; payload: { deploymentId: string; nodeId: string; dockerImage: string; containerName?: string; env?: Record<string, string>; ports?: Record<string, string>; resourceLimits?: ResourceLimits; dataMount?: { hostPath: string; containerPath: string } } }
+  // persistPaths (#324): container directories kept in named volumes owned by the
+  // deployment, so they survive the container being removed on stop.
+  | { type: 'server.start'; payload: ServerStartPayload }
+  // Pull the image afresh and, when `recreate`, replace the running container
+  // with one from the new image (#239). The pull happens first, so a registry
+  // that is down never takes a running server with it. Data survives the
+  // recreate because it lives in the server's volumes (#324).
+  | { type: 'server.update'; payload: ServerStartPayload & { recreate: boolean } }
   | { type: 'server.stop'; payload: { deploymentId: string; nodeId: string; containerId: string } }
   // Force-terminate rather than ask: SIGKILL, for a container that will not stop
   // gracefully. Distinct from server.stop so the audit trail records which it was (#253).
@@ -35,6 +42,9 @@ export type NexusInfraEvent =
   | { type: 'server.started'; payload: { deploymentId: string; containerId: string; nodeId: string } }
   | { type: 'server.stopped'; payload: { deploymentId: string; containerId: string } }
   | { type: 'server.crashed'; payload: { deploymentId: string; containerId: string; reason: string } }
+  // The outcome of a server.update (#239). A failed pull leaves the server as it was.
+  | { type: 'server.image-updated'; payload: { deploymentId: string; image: string; digest: string | null; recreated: boolean } }
+  | { type: 'server.update-failed'; payload: { deploymentId: string; image: string; reason: string } }
   | { type: 'deployment.created'; payload: { deploymentId: string; userId: string; resourceLimits?: ResourceLimits } }
   | { type: 'deployment.failed'; payload: { deploymentId: string; reason: string } }
   // ── Billing bridge → FinVault (payload shapes match FinVault's events.ts) ──
@@ -47,6 +57,20 @@ export type NexusInfraEvent =
   | { type: 'billing.server.suspend'; payload: { userId: string; deploymentIds: string[]; reason: string } }
   // NexusInfra → FinVault: a monthly invoice record for a closed billing cycle.
   | { type: 'invoice.generate'; payload: { reference: string; userId: string; periodStart: string; periodEnd: string; amount: number; currency: string } };
+
+/** What an agent needs to start a server's container (see orchestrator startCommand.ts). */
+export interface ServerStartPayload {
+  deploymentId: string;
+  nodeId: string;
+  dockerImage: string;
+  containerName?: string;
+  env?: Record<string, string>;
+  ports?: Record<string, string>;
+  resourceLimits?: ResourceLimits;
+  dataMount?: { hostPath: string; containerPath: string };
+  /** Container directories kept in named volumes owned by the deployment (#324). */
+  persistPaths?: string[];
+}
 
 export interface NodeResources {
   cpuPercent: number;
