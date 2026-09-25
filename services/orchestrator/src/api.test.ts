@@ -2147,3 +2147,68 @@ describe('backup retention and download (#232)', () => {
     expect(res.body.error).toContain('neither the node nor the off-site store');
   });
 });
+
+describe('a stopped server starts where its data is (#329)', () => {
+  let repo: InMemoryRepository;
+  let published: Array<{ key: string; envelope: EventEnvelope }>;
+  let app: express.Express;
+
+  const startNode = () => {
+    const start = published.filter((p) => p.key === 'infra.server.start').at(-1);
+    return start ? (readPayload(start.envelope.event) as Record<string, unknown>).nodeId : undefined;
+  };
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    published = [];
+    app = buildApp(repo, published);
+    await seedUser(repo);
+  });
+
+  async function stoppedOn(nodeId: string) {
+    const created = await request(app).post('/deployments').send({ name: 'world', dockerImage: 'nginx', nodeId });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'stopped', containerId: null });
+    published.length = 0;
+    return created.body.id as string;
+  }
+
+  it('goes back to its own node even when another is emptier', async () => {
+    await seedHealthyNode(repo, 'node-a');
+    const id = await stoppedOn('node-a');
+    // A second, idle node appears: the least-loaded rule would pick it.
+    await repo.upsertNode({ id: 'node-b', name: 'node-b', lastHeartbeat: new Date().toISOString(), cpuPercent: 0, ramUsedMb: 0, ramTotalMb: 64000 });
+
+    await request(app).post(`/deployments/${id}/start`).expect(202);
+    expect(startNode()).toBe('node-a');
+  });
+
+  it('refuses, saying why, when its node is offline — rather than starting it empty elsewhere', async () => {
+    await seedHealthyNode(repo, 'node-a');
+    const id = await stoppedOn('node-a');
+    await repo.upsertNode({ id: 'node-a', lastHeartbeat: new Date(Date.now() - 60_000).toISOString() });
+    await seedHealthyNode(repo, 'node-b');
+
+    const res = await request(app).post(`/deployments/${id}/start`);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/node-a is offline.*migrate/);
+    expect(startNode()).toBeUndefined();
+  });
+
+  it('refuses while its node is in maintenance', async () => {
+    await seedHealthyNode(repo, 'node-a');
+    const id = await stoppedOn('node-a');
+    await repo.registerNode({ id: 'node-a', maintenance: true });
+    const res = await request(app).post(`/deployments/${id}/start`);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/maintenance/);
+  });
+
+  it('is placed afresh when its node was deregistered — nothing is waiting anywhere', async () => {
+    await seedHealthyNode(repo, 'node-a');
+    const id = await stoppedOn('node-a');
+    await repo.deleteNode('node-a');
+    await seedHealthyNode(repo, 'node-b');
+    await request(app).post(`/deployments/${id}/start`).expect(202);
+    expect(startNode()).toBe('node-b');
+  });
+});

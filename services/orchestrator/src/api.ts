@@ -657,7 +657,26 @@ export function createApiRouter(deps: ApiDeps): Router {
       const config = await repo.getDeploymentConfig(detail.id);
       if (!config) return { status: 404, body: { error: 'server config not found' } };
 
-      const node = selectNode(await repo.listNodes(), Date.now());
+      // A server that has run before starts where its data is (#329): its volumes
+      // (#324) — or its imported directory (#268) — exist on that node and no
+      // other. Re-placing it on the emptiest node, as start used to, could bring
+      // it up somewhere with an empty world. Moving is a deliberate act (#234).
+      const nodes = await repo.listNodes();
+      const home = detail.nodeId ? nodes.find((n) => n.id === detail.nodeId) : undefined;
+      let node: NodeRecord | null;
+      if (home) {
+        const health = nodeHealth(home, Date.now());
+        if (health !== 'healthy') {
+          return { status: 409, body: { error: `node ${home.id} is ${health}, and this server's data is on it — start it once the node is back, or migrate the server` } };
+        }
+        if (home.maintenance) {
+          return { status: 409, body: { error: `node ${home.id} is in maintenance, and this server's data is on it — take the node out of maintenance, or migrate the server` } };
+        }
+        node = home;
+      } else {
+        // Never placed, or its node was deregistered: nothing is waiting anywhere.
+        node = selectNode(nodes, Date.now());
+      }
       if (!node) return { status: 503, body: { error: 'No healthy node available to place the deployment' } };
 
       await repo.updateDeploymentStatus(detail.id, {
@@ -667,7 +686,7 @@ export function createApiRouter(deps: ApiDeps): Router {
         startedAt: null,
         stoppedAt: null,
       });
-      await repo.appendDeploymentEvent(detail.id, 'start-requested', `re-placed on node ${node.id}`);
+      await repo.appendDeploymentEvent(detail.id, 'start-requested', home ? `starting on node ${node.id}` : `placed on node ${node.id}`);
       await emit(KEY_START, { type: 'server.start', payload: startCommandFor(config, detail.id, node.id) });
       return { status: 202, body: { status: 'starting', deploymentId: detail.id } };
     },

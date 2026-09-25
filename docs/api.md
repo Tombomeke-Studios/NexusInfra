@@ -462,9 +462,13 @@ indefinitely. Requires `server.view`.
 
 ### `POST /deployments/:id/start`
 
-Start (or re-run) a deployment that is **not** currently running — re-places it on a healthy node and
-emits `infra.server.start` from the saved config. `202` while starting, `404` if unknown, `409` if it
-is already running/pending, `503` if no healthy node is available.
+Start (or re-run) a deployment that is **not** currently running — emits `infra.server.start` from the
+saved config. A server that has run before starts **on its own node**, because its data is there
+(#329, #324); if that node is offline or in maintenance the start is refused with `409` naming it,
+never quietly placed on a node without the data — moving a server is `POST …/migrate` (#234). A server
+with no node yet (or whose node was deregistered) is placed on the least-loaded healthy one. `202`
+while starting, `404` if unknown, `409` if it is already running/pending or its node is unavailable,
+`503` if no healthy node is available.
 
 ### `GET /deployments/:id/logs`
 
