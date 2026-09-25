@@ -86,6 +86,16 @@ export interface DeploymentDetail extends DeploymentView {
   env: Record<string, string>;
   resourceLimits: ResourceLimits;
   autoRestart: boolean;
+  /**
+   * Extra directories kept across restarts (#324). The egg's data directory and
+   * any `VOLUME` the image declares are kept as well, without being listed here.
+   * Absent on older responses.
+   */
+  persistPaths?: string[];
+  /** Absent on older responses. */
+  backupRetention?: BackupRetention;
+  /** True while the server is being moved to another node (#234). */
+  migrating?: boolean;
 }
 
 export interface ResourceLimits {
@@ -178,6 +188,8 @@ interface CreateDeploymentBase {
   type?: string;
   /** Pin the server to a node; omit to let the orchestrator pick the emptiest (#254). */
   nodeId?: string;
+  /** Container directories to keep across restarts, beyond the egg's own (#324). */
+  persistPaths?: string[];
 }
 
 /** Thrown when the API responds with a non-2xx status; carries the HTTP status. */
@@ -575,6 +587,7 @@ export interface UpdateDeploymentInput {
   env?: Record<string, string>;
   resourceLimits?: ResourceLimits;
   autoRestart?: boolean;
+  persistPaths?: string[];
 }
 
 /**
@@ -600,6 +613,65 @@ export function restartDeployment(id: string): Promise<{ status: string; deploym
 
 export function startDeployment(id: string): Promise<{ status: string; deploymentId: string }> {
   return request(`/deployments/${id}/start`, { method: 'POST' });
+}
+
+/** The lifecycle commands that can be sent to several servers at once (#238). */
+export type BulkAction = 'start' | 'stop' | 'restart' | 'kill';
+
+/** One server's answer inside a bulk request. `name` is absent for an id you cannot see. */
+export interface BulkResult {
+  id: string;
+  name?: string;
+  ok: boolean;
+  status: number;
+  error?: string;
+}
+
+export interface BulkOutcome {
+  action: BulkAction;
+  succeeded: number;
+  failed: number;
+  results: BulkResult[];
+}
+
+/**
+ * Send one command to several servers (#238). Each is authorized on its own, so
+ * a 200 can still carry failures — read `failed`, not the status code.
+ */
+export function bulkDeploymentAction(action: BulkAction, ids: string[]): Promise<BulkOutcome> {
+  return request('/deployments/bulk', { method: 'POST', body: JSON.stringify({ action, ids }) });
+}
+
+/**
+ * Whether the registry has a newer image than this server runs (#239).
+ * `unknown` means the registry could not be asked — not that nothing is new.
+ */
+export type ImageUpdateStatus = 'current' | 'update-available' | 'pulled-not-applied' | 'unknown';
+
+export interface ImageStatus {
+  image: string;
+  status: ImageUpdateStatus;
+  remoteDigest: string | null;
+  localDigest: string | null;
+  checkedAt: string;
+}
+
+export function getImageStatus(id: string): Promise<ImageStatus> {
+  return request(`/deployments/${id}/image`);
+}
+
+/** Pull the tag afresh; a running server is recreated from it, keeping its data (#239). */
+export function updateImage(id: string): Promise<{ status: string; recreate: boolean }> {
+  return request(`/deployments/${id}/update`, { method: 'POST' });
+}
+
+/**
+ * Move a stopped server to another node, data and backups with it (#234).
+ * Platform administrators only. Answers once the move is accepted; progress is
+ * in the server's activity.
+ */
+export function migrateDeployment(id: string, nodeId: string): Promise<{ status: string; nodeId: string }> {
+  return request(`/deployments/${id}/migrate`, { method: 'POST', body: JSON.stringify({ nodeId }) });
 }
 
 /** Permanently delete a deployment (stops it first if running). */
@@ -745,6 +817,37 @@ export interface ServerBackup {
   sizeBytes: number;
   status: string;
   createdAt: string;
+  /** Whether a copy left the node (#232): null when the node has no off-site target. */
+  offsite?: 'stored' | 'failed' | null;
+}
+
+/** How many backups a server keeps, and for how long (#232). Both absent keeps all. */
+export interface BackupRetention {
+  keepLast?: number;
+  keepDays?: number;
+}
+
+export function setBackupRetention(id: string, policy: { keepLast: number | null; keepDays: number | null }): Promise<{ backupRetention: BackupRetention; expired: number }> {
+  return request(`/deployments/${id}/backups/retention`, { method: 'PUT', body: JSON.stringify(policy) });
+}
+
+/**
+ * A backup's tar, fetched with the session's token (#232). A plain link cannot
+ * carry the Authorization header, so the bytes come through here and are handed
+ * to the browser as a file.
+ */
+export async function downloadBackup(id: string, backupId: string): Promise<{ blob: Blob; filename: string }> {
+  const token = getToken();
+  const res = await fetch(`${BASE}/deployments/${id}/backups/${backupId}/download`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new ApiError(res.status, body?.error ?? res.statusText, body);
+  }
+  const disposition = res.headers.get('content-disposition') ?? '';
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? `backup-${backupId}.tar`;
+  return { blob: await res.blob(), filename };
 }
 
 export function listBackups(id: string): Promise<ServerBackup[]> {
@@ -764,7 +867,7 @@ export function deleteBackup(id: string, backupId: string): Promise<void> {
 }
 
 // ── Schedules (#111) ──────────────────────────────────────────────────────────
-export type ScheduleAction = 'restart' | 'backup';
+export type ScheduleAction = 'restart' | 'backup' | 'update';
 
 export interface ServerSchedule {
   id: string;
