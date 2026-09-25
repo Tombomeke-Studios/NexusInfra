@@ -478,8 +478,6 @@ Known limitations, stated plainly rather than left to be discovered:
 - **SQLite, not PostgreSQL.** Fine for a single control plane; a migration path is on the roadmap.
 - **The hosted edition has not been verified against a live FinVault instance** — the event contract
   is test-guarded on this side, but the two have not yet been run together.
-- **The interactive terminal and the gateway proxy are unit-tested but not yet exercised end to end**
-  against a running stack.
 
 See [TODO.md](TODO.md) for what is planned.
 

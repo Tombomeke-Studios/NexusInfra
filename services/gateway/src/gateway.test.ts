@@ -15,12 +15,8 @@ const routes = defaultRoutes(TARGET);
 const TOKEN = jwt.sign({ sub: 'user-1' }, SECRET);
 const token = () => TOKEN;
 
-function upstream(body: unknown, status = 200) {
-  return {
-    status,
-    headers: { get: (h: string) => (h === 'content-type' ? 'application/json' : null) },
-    arrayBuffer: async () => Buffer.from(JSON.stringify(body)),
-  } as unknown as Response;
+function upstream(body: unknown, status = 200, headers: Record<string, string> = {}) {
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
 }
 
 describe('gateway app', () => {
@@ -82,6 +78,56 @@ describe('gateway app', () => {
     fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
     const res = await request(app()).get('/config');
     expect(res.status).toBe(502);
+  });
+
+  // An API token is opaque to the gateway; the Orchestrator owns the verdict.
+  // It used to be rejected here, so every script failed at the front door (#228).
+  it('passes an API token through to the backend instead of rejecting it', async () => {
+    const verify = vi.fn(() => {
+      throw new Error('not a JWT');
+    });
+    const a = createGatewayApp({ routes, verify });
+    const res = await request(a).get('/deployments').set('authorization', 'Bearer nxi_secret');
+    expect(res.status).toBe(200);
+    expect(verify).not.toHaveBeenCalled();
+    const [, init] = fetchMock.mock.calls[0];
+    expect((init as RequestInit).headers).toMatchObject({ authorization: 'Bearer nxi_secret' });
+    expect((init as { headers: Record<string, string> }).headers['x-user-id']).toBeUndefined();
+  });
+
+  it('never forwards an x-user-id the caller chose', async () => {
+    await request(app()).get('/config').set('x-user-id', 'admin');
+    const [, init] = fetchMock.mock.calls[0];
+    expect((init as { headers: Record<string, string> }).headers['x-user-id']).toBeUndefined();
+  });
+
+  it('replaces a spoofed x-user-id with the verified one', async () => {
+    await request(app()).get('/deployments').set('authorization', `Bearer ${token()}`).set('x-user-id', 'admin');
+    const [, init] = fetchMock.mock.calls[0];
+    expect((init as { headers: Record<string, string> }).headers['x-user-id']).toBe('user-1');
+  });
+
+  it('keeps the headers a download needs', async () => {
+    fetchMock.mockResolvedValue(
+      new Response('tarball', { headers: { 'content-type': 'application/gzip', 'content-disposition': 'attachment; filename="b.tar.gz"' } })
+    );
+    const res = await request(app()).get('/deployments/d1/backups/b1/download').set('authorization', `Bearer ${token()}`);
+    expect(res.headers['content-type']).toBe('application/gzip');
+    expect(res.headers['content-disposition']).toBe('attachment; filename="b.tar.gz"');
+  });
+
+  it("relays a backend redirect rather than following it", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 302, headers: { location: '/login' } }));
+    const res = await request(app()).get('/config');
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe('/login');
+    expect((fetchMock.mock.calls[0][1] as RequestInit).redirect).toBe('manual');
+  });
+
+  it('answers an empty response without a body', async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+    const res = await request(app()).delete('/deployments/d1').set('authorization', `Bearer ${token()}`);
+    expect(res.status).toBe(204);
   });
 });
 

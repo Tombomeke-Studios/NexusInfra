@@ -49,6 +49,12 @@ requires one.
   panel to a network.
 - WebSocket connections authenticate via a JWT in the query string (browsers cannot set headers on
   the handshake), mirroring FinVault's gateway.
+- **The gateway is a first check, never the only one** (#20, #69). It verifies a JWT's signature and
+  expiry before proxying anything — HTTP or WebSocket — but the Orchestrator still authenticates every
+  request itself (sessions, API tokens, the second factor) and authorizes it per server. An API token
+  is opaque to the gateway and passes through for the Orchestrator to judge; it is rate-limited by
+  address, because an unverified token is a key the caller chose. The `x-user-id` header the gateway
+  adds is stripped from what callers send, so it can only ever name a verified user.
 
 A valid token establishes only *who* the caller is. What they may do is a separate concern — see
 below.
