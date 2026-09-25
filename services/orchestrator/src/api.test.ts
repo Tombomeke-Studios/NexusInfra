@@ -965,6 +965,32 @@ describe('deployment API', () => {
     expect((await request(bkApp).get(`/deployments/${created.body.id}/backups`)).body).toEqual([]);
   });
 
+  it("answers 404, not 502, when the node no longer has a backup's archive (#339)", async () => {
+    const { BackupGoneError } = await import('./api.js');
+    const bkApp = express();
+    bkApp.use(express.json());
+    bkApp.use(asPrincipal());
+    bkApp.use(
+      createApiRouter({
+        repo,
+        checkQuota: allowQuota,
+        publish: async () => true,
+        snapshotBackup: async () => ({ ref: 'bk_x', sizeBytes: 1, path: '/data' }),
+        restoreBackup: async () => {
+          throw new BackupGoneError("this node no longer has the backup's archive");
+        },
+      })
+    );
+    await seedHealthyNode(repo);
+    const created = await request(bkApp).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'abc', nodeId: 'node-local' });
+    const make = await request(bkApp).post(`/deployments/${created.body.id}/backups`).send({});
+
+    const rest = await request(bkApp).post(`/deployments/${created.body.id}/backups/${make.body.id}/restore`);
+    expect(rest.status).toBe(404);
+    expect(rest.body.error).toMatch(/no longer has/);
+  });
+
   it('gates creating a backup on the deployment being running', async () => {
     await seedHealthyNode(repo);
     const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });

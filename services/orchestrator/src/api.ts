@@ -130,6 +130,9 @@ export type DeprovisionDatabaseFn = (agentUrl: string, containerId: string) => P
 
 /** Snapshot / restore / delete a container backup on the owning Node Agent. */
 export type SnapshotBackupFn = (req: { agentUrl: string; containerId: string; path?: string }) => Promise<Snapshot>;
+/** The node no longer has the backup's archive (#339) — a missing thing, not a failed node. */
+export class BackupGoneError extends Error {}
+
 export type RestoreBackupFn = (req: { agentUrl: string; containerId: string; ref: string; path: string }) => Promise<void>;
 export type RemoveBackupFn = (agentUrl: string, ref: string) => Promise<void>;
 /** Stream one backup's tar from its node (#232). */
@@ -277,6 +280,7 @@ const defaultSnapshotBackup: SnapshotBackupFn = async ({ agentUrl, ...spec }) =>
 
 const defaultRestoreBackup: RestoreBackupFn = async ({ agentUrl, ...spec }) => {
   const r = await agentFetch(`${agentUrl}/backups/restore`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(spec) });
+  if (r.status === 404) throw new BackupGoneError((await r.json().catch(() => ({}))).error ?? 'the backup archive is missing');
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? 'restore failed');
 };
 
@@ -1289,7 +1293,7 @@ export function createApiRouter(deps: ApiDeps): Router {
       await restoreBackup({ agentUrl: await agentUrlFor(detail.nodeId), containerId: detail.containerId, ref: backup.ref, path: backup.path });
       return res.status(200).json({ status: 'restored', backupId: backup.id });
     } catch (err) {
-      return res.status(502).json({ error: err instanceof Error ? err.message : 'restore failed' });
+      return res.status(err instanceof BackupGoneError ? 404 : 502).json({ error: err instanceof Error ? err.message : 'restore failed' });
     }
   });
 
