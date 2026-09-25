@@ -236,22 +236,29 @@ scrolling log lines describing events that never happened.
 - [x] Minecraft egg: NeoForge + pick the game version from a list instead of typing it (#311)
 - [x] Every published port was mapped as TCP, so the UDP game servers were unreachable (#313) 🐛
 - [x] Add Minecraft Bedrock and Palworld eggs (#315)
+- [x] The Valheim egg pointed at an image the project no longer publishes from (#317)
 - [x] Import an existing server directory into the panel (#268)
-- [ ] Backup retention, download, and off-site (S3) targets (#232)
-- [ ] Port allocation management per node — pool, conflicts, primary port (#233)
-- [ ] Migrate a server to another node (#234)
+- [x] Backup retention, download, and off-site (S3) targets (#232)
+- [x] Port allocation management per node — pool, conflicts, primary port (#233)
+- [x] Migrate a server to another node (#234)
 - [ ] Real SFTP access per server, honouring the file permissions (#235)
-- [ ] Notification service — mail/webhook on crash, suspend, node offline (#236)
+- [x] Notification service — mail/webhook on crash, suspend, node offline (#236)
 - [x] Search, filter and pagination on the Servers list (#237)
-- [ ] Bulk actions on multiple servers (#238)
-- [ ] Update a deployment's container image (pull + recreate) (#239)
-- [ ] `nexusctl` — a CLI client for the panel (#240)
+- [x] Bulk actions on multiple servers (#238)
+- [x] Update a deployment's container image (pull + recreate) (#239)
+- [x] `nexusctl` — a CLI client for the panel (#240)
 
 ### 🐛 Bugs / fixes (open)
 
 - [x] The Java heap and the RAM limit are two settings for the same memory (#308)
 - [x] The New Deployment form guesses the placement node itself, and can guess wrong (#309) 🐛
 - [x] Servers list shows invented limits and labels every egg server as an app (#318) 🐛
+- [x] A stopped server keeps the id of a container that no longer exists (#321) 🐛
+- [x] Stopping a server deleted its data — it now lives in named volumes owned by the server (#324) 🐛
+- [x] Restoring a backup nested it inside the directory instead of replacing it (#327) 🐛
+- [x] Starting a stopped server could move it to a node without its data (#329) 🐛
+- [x] A server that died on its own was shown as running forever — the agent now watches Docker events (#332) 🐛
+- [x] A missing backup archive answered with the node's host path (`ENOENT …/bk_….tar`) (#339) 🐛
 
 - [x] Delete server button is a no-op — wire `DELETE /deployments/:id` end to end (#156)
 - [x] Node Agent internal API was unauthenticated + host-published — token-guard it (#169)
@@ -273,7 +280,7 @@ Found while running the hosted release bundle live for the first time (2026-08-2
 far better shape than hosted; these are the gaps between "the code exists" and "a customer could use
 it". Every item carries the `edition:hosted` label on GitHub.
 
-- [ ] The credit balance never refreshes on its own — a stale balance is a wrong answer stated with confidence (#296)
+- [x] The credit balance never refreshes on its own — a stale balance is a wrong answer stated with confidence (#296)
 - [ ] Creating a server is never charged and the form shows no plan entitlements (RAM ceiling, storage, backups, databases) (#297)
 - [ ] The FinVault integration has never been exercised end to end — written, not verified; a mismatched message key fails *silently* (#298)
 - [x] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)
@@ -290,11 +297,11 @@ it". Every item carries the `edition:hosted` label on GitHub.
 
 ### Phase 5 — Production hardening (`feature/production`)
 
-- [~] Multi-node: agent calls now route to the deployment's owning node (#171 — **done**); still to do: run several agents and verify placement across them live (#21)
+- [x] Multi-node: agent calls route to the owning node (#171); **verified live** with two agents on two separate Docker daemons — exec, files, backups and restore reach the right node, and a server moved between them (#234) (#21)
 - [~] Node Agent: offline event queue / replay on reconnect (#167 — **done**, in-memory outbox for lifecycle reports) + auto-restart on crash (still to do)
-- [~] Control Room: uptime % / history (#165 — **done**, in-memory) + alerting via the Notification/Mail service + DLQ monitoring (still to do)
+- [x] Control Room: uptime % / history (#165), DLQ monitoring (#243), and alerting — node offline/recovered and crashes are notified by webhook or email (#236)
 - [ ] Metrics: InfluxDB + Grafana dashboards
-- [ ] Prometheus `/metrics` on every service — the cheap half of the above (#246)
+- [x] Prometheus `/metrics` on every service — the cheap half of the above (#246)
 - [~] Security: service-to-service auth (#169 — **done**, token-guarded agent API) + rate limiting (done in the gateway, #20); secrets-at-rest, token rotation, mTLS/HTTPS still to do
 - [ ] Production docker-compose + deployment docs; migrate SQLite → PostgreSQL via Prisma (#241)
 - [ ] Integration tests: RabbitMQ / DB-backed end to end (Docker Compose test target) (#242)

@@ -114,6 +114,10 @@ model Node {
   diskUsedGb    Float?
   diskTotalGb   Float?
   maintenance   Boolean      @default(false)
+  // The host ports servers here may be given (#233). Both null means no pool:
+  // any free port may be named, and "auto" has nothing to choose from.
+  portRangeStart Int?
+  portRangeEnd   Int?
   createdAt     DateTime     @default(now())
   deployments   Deployment[]
 }
@@ -135,6 +139,13 @@ model ServerConfig {
   // An existing host directory on the node, mounted as this server's data
   // directory (#268). Null for the normal case of a server that starts empty.
   dataPath        String?
+  // Extra container directories kept in named volumes across restarts (#324),
+  // as a JSON list. The egg's own data directory is not stored here — it
+  // follows the catalogue, like dataPath's mount point does.
+  persistPaths    String       @default("[]")
+  // How many backups to keep, and for how long (#232), as JSON. Empty keeps
+  // everything, which is what every server did before this existed.
+  backupRetention String       @default("{}")
   type            String       @default("generic")
   createdAt       DateTime     @default(now())
   deployments     Deployment[]
@@ -206,6 +217,9 @@ model ServerBackup {
   ref          String
   sizeBytes    Int        @default(0)
   status       String     @default("ready")
+  // Whether a copy left the node (#232): null when the node has no off-site
+  // target, "stored" or "failed" otherwise.
+  offsite      String?
   createdAt    DateTime   @default(now())
 }
 
@@ -250,4 +264,61 @@ model ApiToken {
   expiresAt  DateTime?
 
   @@index([userId])
+}
+
+// One host port held by one server on one node (#233). The unique constraint is
+// what makes double-booking impossible rather than merely unlikely: two creates
+// that both checked and both found the port free cannot both write it.
+model PortAllocation {
+  id           String   @id
+  nodeId       String
+  port         Int
+  deploymentId String
+  // The one the Network tab shows first — "the" address of the server.
+  primary      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@unique([nodeId, port])
+  @@index([deploymentId])
+}
+
+// Where an account wants to hear about events (#236): a webhook URL, or its own
+// email address. `events` is a JSON list. The webhook secret signs each body so
+// the receiver can check it came from this panel; it is stored because signing
+// needs it, and shown to the owner once.
+model NotificationChannel {
+  id             String    @id
+  userId         String
+  kind           String
+  target         String
+  format         String    @default("json")
+  events         String    @default("[]")
+  secret         String?
+  // Set only when a platform administrator made it: everyone else's webhooks
+  // may not reach private addresses.
+  allowPrivate   Boolean   @default(false)
+  enabled        Boolean   @default(true)
+  lastDeliveryAt DateTime?
+  lastError      String?
+  createdAt      DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// One notification on its way to one channel (#236). Rows, not memory, so a
+// restart or an unreachable endpoint delays a notification rather than losing it.
+model NotificationDelivery {
+  id            String    @id
+  channelId     String
+  event         String
+  payload       String
+  status        String    @default("pending")
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lastError     String?
+  createdAt     DateTime  @default(now())
+  sentAt        DateTime?
+
+  @@index([status, nextAttemptAt])
+  @@index([channelId])
 }

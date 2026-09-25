@@ -1,6 +1,6 @@
 import express, { type Request, type Response } from 'express';
 import cors from 'cors';
-import { buildInfo } from 'shared';
+import { buildInfo, metricsHandler, MetricsRegistry, registerBuildInfo } from 'shared';
 import { bearerToken, verifyToken, type VerifiedToken } from './auth.js';
 import { matchRoute, type RouteRule } from './routes.js';
 import { RateLimiter } from './rateLimit.js';
@@ -15,6 +15,9 @@ export interface GatewayDeps {
   rateLimiter?: RateLimiter;
   now?: () => number;
   verify?: (token: string) => VerifiedToken;
+  /** Where to count requests (#246); a fresh registry when not given. */
+  metrics?: MetricsRegistry;
+  metricsToken?: string;
 }
 
 /** Per-client key for rate limiting: the authenticated user if present, else the IP. */
@@ -52,10 +55,17 @@ export function createGatewayApp(deps: GatewayDeps): express.Express {
   const rateLimiter = deps.rateLimiter ?? new RateLimiter({ ratePerSec: 50, burst: 100 });
   const now = deps.now ?? Date.now;
   const verify = deps.verify ?? ((token: string) => verifyToken(token));
+  const metrics = deps.metrics ?? new MetricsRegistry();
+  if (!deps.metrics) registerBuildInfo(metrics, 'gateway', buildInfo());
+  // One series per route *prefix* and outcome — bounded by the routing table, so
+  // a flood of made-up paths cannot mint new series (#246).
+  const handled = metrics.counter('nexusinfra_gateway_requests_total', 'Requests the gateway handled, by route prefix, outcome and status class.');
+  const count = (route: string, outcome: string, status: number) => handled.inc({ route, outcome, status: `${Math.floor(status / 100)}xx` });
 
   const app = express();
   app.disable('x-powered-by');
   app.use(cors());
+  app.get('/metrics', metricsHandler(metrics, { token: deps.metricsToken ?? process.env.METRICS_TOKEN }));
   // The gateway's own liveness probe (not proxied).
   app.get('/health', (_req, res) => {
     res.json({ service: 'gateway', status: 'healthy', ...buildInfo(), uptimeSec: Math.round(process.uptime()) });
@@ -66,20 +76,28 @@ export function createGatewayApp(deps: GatewayDeps): express.Express {
 
   app.all('*', async (req: Request, res: Response) => {
     const route = matchRoute(req.path, routes);
-    if (!route) return res.status(404).json({ error: 'no route for path' });
+    if (!route) {
+      count('none', 'no_route', 404);
+      return res.status(404).json({ error: 'no route for path' });
+    }
 
     // Rate limit first so floods are cheap to reject.
     if (!rateLimiter.allow(clientKey(req), now())) {
+      count(route.prefix, 'rate_limited', 429);
       return res.status(429).json({ error: 'rate limit exceeded' });
     }
 
     // JWT validation for protected routes.
     if (!route.public) {
       const token = bearerToken(req.headers.authorization);
-      if (!token) return res.status(401).json({ error: 'missing bearer token' });
+      if (!token) {
+        count(route.prefix, 'unauthorized', 401);
+        return res.status(401).json({ error: 'missing bearer token' });
+      }
       try {
         (req as Request & { userId?: string }).userId = verify(token).userId;
       } catch {
+        count(route.prefix, 'unauthorized', 401);
         return res.status(401).json({ error: 'invalid or expired token' });
       }
     }
@@ -93,11 +111,13 @@ export function createGatewayApp(deps: GatewayDeps): express.Express {
         body: hasBody ? req.body : undefined,
       });
       res.status(upstream.status);
+      count(route.prefix, 'proxied', upstream.status);
       const contentType = upstream.headers.get('content-type');
       if (contentType) res.set('content-type', contentType);
       const buf = Buffer.from(await upstream.arrayBuffer());
       return buf.length ? res.send(buf) : res.end();
     } catch {
+      count(route.prefix, 'upstream_error', 502);
       return res.status(502).json({ error: 'backend unreachable' });
     }
   });

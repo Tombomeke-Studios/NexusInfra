@@ -84,3 +84,17 @@ describe('gateway app', () => {
     expect(res.status).toBe(502);
   });
 });
+
+describe('gateway metrics (#246)', () => {
+  it('counts outcomes per route prefix, never per raw path', async () => {
+    const { MetricsRegistry } = await import('shared');
+    const metrics = new MetricsRegistry();
+    const app = createGatewayApp({ routes: [{ prefix: '/api', target: 'http://127.0.0.1:1' }], metrics, verify: () => ({ userId: 'u' }) as never });
+    await request(app).get('/api/deployments/abc');
+    await request(app).get('/nowhere/xyz');
+    const text = (await request(app).get('/metrics')).text;
+    expect(text).toContain('nexusinfra_gateway_requests_total{route="/api",outcome="unauthorized",status="4xx"} 1');
+    expect(text).toContain('nexusinfra_gateway_requests_total{route="none",outcome="no_route",status="4xx"} 1');
+    expect(text).not.toContain('/deployments/abc');
+  });
+});
