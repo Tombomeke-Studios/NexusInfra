@@ -2,7 +2,7 @@ import { createServer } from 'http';
 import express from 'express';
 import cors from 'cors';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
-import { assertEditionIsRunnable, buildEnvelope, buildInfo, consumeRabbitQueue, getInternalToken, INTERNAL_TOKEN_HEADER, publishRabbitEvent, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
+import { assertEditionIsRunnable, buildEnvelope, buildInfo, consumeRabbitQueue, getInternalToken, INTERNAL_TOKEN_HEADER, publishRabbitEvent, readPayload, startHeartbeat, type EventEnvelope, MetricsRegistry, registerBuildInfo, httpMetrics, metricsHandler } from 'shared';
 import { PrismaRepository } from './db.js';
 import { agentFetch, createApiRouter, resolveContainerTarget } from './api.js';
 import { catchAsync, errorHandler, installProcessGuards } from './errorBoundary.js';
@@ -13,13 +13,23 @@ import { pipeSockets, toWsUrl, type DuplexSocket } from './wsProxy.js';
 import { createBillingProxyRouter } from './billingProxy.js';
 import { createMonitoringRouter } from './monitoring.js';
 import { createConfigRouter } from './config.js';
+import { createPasswordResetRouter, parsePanelUrl, resetAvailable } from './passwordReset.js';
 import { createAccountRouter, createAuthRouter, createRequireAuth, createUserAdminRouter, requireTokenScope, requireTotpEnrolment } from './auth.js';
 import { createUserService, isTotpRequired } from './users.js';
 import { createTeamRouter } from './teams.js';
 import { createNodeRegistry } from './nodeRegistry.js';
 import { createLifecycle } from './lifecycle.js';
+import { createNotifier, defaultTransports } from './notifier.js';
+import { createNotificationRouter } from './notificationRoutes.js';
+import { nodeTransitions } from './notify.js';
+import { nodeHealth } from './nodeRegistry.js';
+import type { NodeHealth } from './types.js';
 import { createSuspendHandler, type SuspendPayload } from './suspend.js';
 import { startScheduler, type ScheduleActions } from './scheduler.js';
+import { requestImageUpdate } from './imageUpdate.js';
+import { backfillPortAllocations } from './portAllocation.js';
+import { BackupPathMissingError, sweepRetention, takeBackup, type BackupDeps, type Snapshot } from './backups.js';
+import { fetchEntitlements } from './entitlements.js';
 import { createReconcileHandler } from './reconcile.js';
 
 // ── Orchestrator ────────────────────────────────────────────────────────────
@@ -47,6 +57,34 @@ const NODE_AGENT_URL = process.env.NODE_AGENT_URL || 'http://node-agent:9100';
 
 const repo = new PrismaRepository();
 
+// Prometheus metrics (#246). Created first: the publishers and consumers below
+// count into it.
+const metrics = new MetricsRegistry();
+registerBuildInfo(metrics, 'orchestrator', buildInfo());
+const published = metrics.counter('nexusinfra_events_published_total', 'Events this service published, by routing key and outcome.');
+const reports = metrics.counter('nexusinfra_lifecycle_reports_total', 'Lifecycle reports received from node agents, by type.');
+const notificationOutcomes = metrics.counter('nexusinfra_notifications_total', 'Notification delivery attempts, by outcome and channel kind (#236).');
+/** publishRabbitEvent, counted: a publish that returns false is an event the broker never took. */
+const countedPublish: typeof publishRabbitEvent = async (routingKey, envelope) => {
+  const ok = await publishRabbitEvent(routingKey, envelope);
+  published.inc({ routing_key: routingKey, outcome: ok ? 'ok' : 'failed' });
+  return ok;
+};
+metrics.gauge('nexusinfra_deployments', 'Servers, by status.', ['status'], async () => {
+  const counts: Record<string, number> = { pending: 0, running: 0, stopped: 0, crashed: 0, failed: 0 };
+  for (const d of await repo.listDeployments()) counts[d.status] = (counts[d.status] ?? 0) + 1;
+  return Object.entries(counts).map(([status, value]) => ({ labels: { status }, value }));
+});
+metrics.gauge('nexusinfra_nodes', 'Nodes, by health; draining nodes counted separately.', ['health'], async () => {
+  const counts: Record<string, number> = { healthy: 0, degraded: 0, offline: 0, maintenance: 0 };
+  const now = Date.now();
+  for (const n of await repo.listNodes()) {
+    counts[nodeHealth(n, now)]++;
+    if (n.maintenance) counts.maintenance++;
+  }
+  return Object.entries(counts).map(([health, value]) => ({ labels: { health }, value }));
+});
+
 /** Base URL of the agent owning `nodeId`, falling back to the single-node default (#171). */
 async function agentUrlFor(nodeId: string | null): Promise<string> {
   if (!nodeId) return resolveAgentUrl(null, NODE_AGENT_URL);
@@ -56,30 +94,68 @@ async function agentUrlFor(nodeId: string | null): Promise<string> {
 
 const users = createUserService({ repo });
 const registry = createNodeRegistry(repo);
-const reconcile = createReconcileHandler({ repo, publish: publishRabbitEvent });
-const lifecycle = createLifecycle(repo);
-const suspend = createSuspendHandler({ repo });
+const reconcile = createReconcileHandler({ repo, publish: countedPublish });
+// Notifications (#236): channels per account, durable deliveries, retried until
+// they land. Email is on when SMTP_URL is set.
+const transports = defaultTransports(process.env.SMTP_URL, process.env.SMTP_FROM || 'NexusInfra <nexusinfra@localhost>');
+const notifier = createNotifier({
+  repo,
+  transports,
+  emailEnabled: Boolean(process.env.SMTP_URL),
+  onOutcome: (outcome, kind) => notificationOutcomes.inc({ outcome, kind }),
+});
+const lifecycle = createLifecycle(repo, {
+  onCrashed: (deploymentId, reason) =>
+    void notifier.notifyServer(deploymentId, { event: 'server.crashed', summary: `crashed: ${reason}`, details: { reason } }).then(() => undefined),
+});
+const suspend = createSuspendHandler({
+  repo,
+  onSuspended: (deploymentId, reason) =>
+    void notifier.notifyServer(deploymentId, { event: 'server.suspended', summary: `was suspended: ${reason}`, details: { reason } }).then(() => undefined),
+});
 
 // Actions the schedule runner (#111) performs for a due schedule: restart the
 // server (over the bus) or snapshot a backup (via the owning node agent).
+// What backups need from the outside world (#232) — the owning node's agent.
+const backupDeps: BackupDeps = {
+  repo,
+  agentUrlFor,
+  // The plan's ceiling on backups per server (#297); none in community.
+  async backupCeiling(userId) {
+    return (await fetchEntitlements(process.env.BILLING_BRIDGE_URL || 'http://billing-bridge:9300', userId))?.maxBackupsPerServer ?? null;
+  },
+  async snapshot({ agentUrl, ...spec }) {
+    const r = await agentFetch(`${agentUrl}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(spec) });
+    if (r.status === 404) throw new BackupPathMissingError(((await r.json().catch(() => ({}))) as { error?: string }).error ?? 'nothing to back up at that path');
+    if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? 'backup failed');
+    return (await r.json()) as Snapshot;
+  },
+  async remove(agentUrl, ref) {
+    const r = await agentFetch(`${agentUrl}/backups/${ref}`, { method: 'DELETE' });
+    if (!r.ok && r.status !== 404) throw new Error(`the node refused to delete backup ${ref} (${r.status})`);
+  },
+};
+
 const scheduleActions: ScheduleActions = {
   async restart(deploymentId) {
     const detail = await repo.getDeployment(deploymentId);
-    if (!detail?.containerId || !detail.nodeId) return;
-    await publishRabbitEvent(
+    // Status too: a row stopped before #321 still names a removed container.
+    if (detail?.status !== 'running' || !detail.containerId || !detail.nodeId) return;
+    await countedPublish(
       'infra.server.restart',
       buildEnvelope('orchestrator', { type: 'server.restart', payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId } })
     );
     await repo.appendDeploymentEvent(detail.id, 'schedule-restart', 'restarted by schedule');
   },
+  async update(deploymentId) {
+    const outcome = await requestImageUpdate({ repo, publish: countedPublish }, deploymentId, 'schedule');
+    if (outcome.status >= 300) throw new Error(outcome.body.error ?? 'scheduled update failed');
+  },
   async backup(deploymentId) {
-    const detail = await repo.getDeployment(deploymentId);
-    if (!detail?.containerId) return;
-    const r = await agentFetch(`${await agentUrlFor(detail.nodeId)}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ containerId: detail.containerId }) });
-    if (!r.ok) throw new Error('scheduled backup failed');
-    const snap = (await r.json()) as { ref: string; sizeBytes: number; path: string };
-    await repo.createBackup({ deploymentId: detail.id, name: `backup-${new Date().toISOString().replace(/[:.]/g, '-')}`, path: snap.path, ref: snap.ref, sizeBytes: snap.sizeBytes });
-    await repo.appendDeploymentEvent(detail.id, 'schedule-backup', 'snapshot created by schedule');
+    // The same path as the Backups tab (#232): default data directory,
+    // off-site copy, then retention.
+    const outcome = await takeBackup(backupDeps, deploymentId, { by: 'schedule' });
+    if (!outcome.ok && outcome.status !== 409) throw new Error(`scheduled backup failed: ${outcome.error}`);
   },
 };
 
@@ -104,13 +180,24 @@ if (process.env.TRUST_PROXY && process.env.TRUST_PROXY !== '0') {
   app.set('trust proxy', /^\d+$/.test(value) ? Number(value) : value);
 }
 
+app.use(httpMetrics(metrics, 'orchestrator'));
 app.use(cors());
 app.use(express.json());
+// Aggregates only — no names, no ids. Behind METRICS_TOKEN when set, which it
+// should be: the dashboard's /api proxy makes this path public.
+app.get('/metrics', metricsHandler(metrics));
 app.get('/health', (_req, res) => {
   res.json({ service: 'orchestrator', status: 'healthy', ...buildInfo(), uptimeSec: Math.round(process.uptime()) });
 });
+// Self-service password reset (#344): only with mail *and* a known public
+// address — the link is never built from the request's Host header.
+const panelUrl = parsePanelUrl(process.env.PANEL_URL);
+if (process.env.PANEL_URL && !panelUrl) console.warn('[Orchestrator] PANEL_URL is not an http(s) address; password reset by email is off');
+const passwordReset = { repo, users, panelUrl, sendMail: process.env.SMTP_URL ? transports.mail : null };
 // Public runtime config (edition flag) — read by the dashboard before login.
-app.use(catchAsync(createConfigRouter()));
+app.use(catchAsync(createConfigRouter(undefined, { passwordResetByEmail: resetAvailable(passwordReset) })));
+// Public, like login: somebody who forgot their password has no token.
+app.use(catchAsync(createPasswordResetRouter(passwordReset)));
 // Public login/registration, then everything below requires a valid Bearer token.
 app.use(catchAsync(createAuthRouter({ users, repo })));
 // Session-aware (#227): a valid signature is not enough, the session it names
@@ -126,9 +213,10 @@ app.use(requireTokenScope);
 // in instead would lock out everyone the moment the flag was turned on.
 app.use(requireTotpEnrolment);
 app.use(catchAsync(createAccountRouter({ users, repo })));
+app.use(catchAsync(createNotificationRouter({ repo, notifier })));
 app.use(catchAsync(createUserAdminRouter({ users, repo })));
 app.use(catchAsync(createTeamRouter({ repo })));
-app.use(catchAsync(createApiRouter({ repo, scheduleActions })));
+app.use(catchAsync(createApiRouter({ repo, scheduleActions, publish: countedPublish })));
 // Authenticated billing proxy → Billing Bridge (hosted edition; injects the JWT user id).
 app.use(catchAsync(createBillingProxyRouter()));
 // Surfaces the Control Room's live service/node monitoring to the dashboard (#157).
@@ -233,6 +321,37 @@ void users
 
 // Evaluate schedules once a minute (restart/backup on a cron).
 startScheduler(repo, scheduleActions);
+
+// Deliver what is due, and retry what failed (#236).
+setInterval(() => void notifier.drain().catch((err) => console.warn('[Orchestrator] notification delivery:', err)), 15_000).unref();
+
+// Watch the fleet for nodes going offline and coming back (#236). The first look
+// only records, so an orchestrator restart does not announce every offline node.
+let nodeStates = new Map<string, NodeHealth>();
+setInterval(() => {
+  void repo
+    .listNodes()
+    .then(async (nodes) => {
+      const { changes, next } = nodeTransitions(nodeStates, nodes, Date.now());
+      nodeStates = next;
+      for (const c of changes) {
+        await notifier.notifyAdmins({
+          event: c.to === 'offline' ? 'node.offline' : 'node.recovered',
+          summary: c.to === 'offline' ? `Node ${c.name} is offline — its servers are unreachable` : `Node ${c.name} is back online`,
+          node: { id: c.nodeId, name: c.name },
+        });
+      }
+    })
+    .catch(() => undefined);
+}, 5_000).unref();
+// Servers from before #233 hold ports nothing recorded; record them once, so the
+// conflict check knows about them.
+void backfillPortAllocations(repo)
+  .then((n) => n && console.log(`[Orchestrator] Recorded ${n} host port${n === 1 ? '' : 's'} held by existing servers (#233)`))
+  .catch((err) => console.warn('[Orchestrator] Could not backfill port allocations:', err));
+// A "keep 30 days" policy has to expire backups even when none are being made
+// (#232). Hourly is plenty for a policy measured in days.
+setInterval(() => void sweepRetention(backupDeps, new Date()).catch(() => undefined), 60 * 60 * 1000).unref();
 console.log('[Orchestrator] Schedule runner started (1-minute tick)');
 
 // ── Event bus: node heartbeats + server lifecycle reports ─────────────────────
@@ -245,6 +364,9 @@ async function start() {
         'infra.server.started',
         'infra.server.stopped',
         'infra.server.crashed',
+        // Image updates (#239): what was pulled, or why it could not be.
+        'infra.server.image-updated',
+        'infra.server.update-failed',
         // What a node reports when its agent restarts, so our records stop
         // describing a machine that no longer matches (#244).
         'infra.node.inventory',
@@ -258,6 +380,7 @@ async function start() {
         } else if (envelope.event.type === 'billing.server.suspend') {
           await suspend(readPayload(envelope.event) as unknown as SuspendPayload);
         } else {
+          reports.inc({ type: envelope.event.type });
           await lifecycle.handleReport(envelope);
         }
       }

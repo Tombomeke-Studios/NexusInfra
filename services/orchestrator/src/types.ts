@@ -3,6 +3,7 @@
 // an interface, not a concrete database — enabling an in-memory fake in tests.
 
 import type { ResourceLimits } from 'shared';
+import type { BackupRetention } from './retention.js';
 
 // Re-exported so the rest of the Orchestrator imports it from one place; the
 // canonical definition lives in shared (it also rides on the server.start event).
@@ -54,6 +55,49 @@ export interface NodeRecord {
    * has, but takes nothing new. Set by an administrator, never by a heartbeat.
    */
   maintenance: boolean;
+  /** The host ports servers here may be given (#233); null for no pool. */
+  portRangeStart: number | null;
+  portRangeEnd: number | null;
+}
+
+/** One host port held by one server on one node (#233). */
+export interface PortAllocationRecord {
+  id: string;
+  nodeId: string;
+  port: number;
+  deploymentId: string;
+  primary: boolean;
+  createdAt: string;
+}
+
+/** Where an account hears about events (#236). */
+export interface NotificationChannelRecord {
+  id: string;
+  userId: string;
+  kind: string;
+  target: string;
+  format: string;
+  events: string[];
+  /** HMAC key for webhook signatures; never returned after creation. */
+  secret: string | null;
+  allowPrivate: boolean;
+  enabled: boolean;
+  lastDeliveryAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+}
+
+export interface NotificationDeliveryRecord {
+  id: string;
+  channelId: string;
+  event: string;
+  payload: string;
+  status: 'pending' | 'sent' | 'failed';
+  attempts: number;
+  nextAttemptAt: string;
+  lastError: string | null;
+  createdAt: string;
+  sentAt: string | null;
 }
 
 export interface ServerConfigRecord {
@@ -72,6 +116,14 @@ export interface ServerConfigRecord {
    * (#268). Null for a server that starts from an empty container.
    */
   dataPath: string | null;
+  /**
+   * Extra container directories to keep across restarts (#324), on top of the
+   * egg's data directory and any `VOLUME` the image declares. How a plain
+   * application — which has no egg to say where its data lives — keeps it.
+   */
+  persistPaths: string[];
+  /** How many backups to keep and for how long (#232); empty keeps all. */
+  backupRetention: BackupRetention;
   type: string;
   createdAt: string;
 }
@@ -144,6 +196,8 @@ export interface ServerBackupRecord {
   sizeBytes: number;
   status: string;
   createdAt: string;
+  /** Whether a copy left the node (#232): null when it has no off-site target. */
+  offsite: string | null;
 }
 
 export interface CreateServerBackupInput {
@@ -152,6 +206,7 @@ export interface CreateServerBackupInput {
   path: string;
   ref: string;
   sizeBytes: number;
+  offsite?: string | null;
 }
 
 export type SubuserRole = 'admin' | 'viewer';
@@ -199,7 +254,7 @@ export interface CreateServerSubuserInput {
   status?: string;
 }
 
-export type ScheduleAction = 'restart' | 'backup';
+export type ScheduleAction = 'restart' | 'backup' | 'update';
 
 export interface ServerScheduleRecord {
   id: string;
@@ -248,6 +303,9 @@ export interface DeploymentDetail extends DeploymentView {
   env: Record<string, string>;
   resourceLimits: ResourceLimits;
   autoRestart: boolean;
+  /** Directories kept across restarts in addition to the egg's own (#324). */
+  persistPaths: string[];
+  backupRetention: BackupRetention;
 }
 
 export interface UpsertNodeInput {
@@ -276,6 +334,7 @@ export interface CreateServerConfigInput {
   autoRestart?: boolean;
   /** Import an existing host directory as this server's data directory (#268). */
   dataPath?: string | null;
+  persistPaths?: string[];
   type?: string;
 }
 
@@ -320,6 +379,8 @@ export interface UpdateServerConfigInput {
   env?: Record<string, string>;
   resourceLimits?: ResourceLimits;
   autoRestart?: boolean;
+  persistPaths?: string[];
+  backupRetention?: BackupRetention;
 }
 
 /** One signed-in session (#227). A token names one; deleting it ends that login. */
@@ -372,6 +433,8 @@ export interface RegisterNodeInput {
   agentUrl?: string | null;
   /** Drain (or un-drain) the node — no new placements while true (#258). */
   maintenance?: boolean;
+  /** Set (or with null, remove) the node's host-port pool (#233). */
+  portRange?: { start: number; end: number } | null;
 }
 
 export interface Repository {
@@ -408,6 +471,16 @@ export interface Repository {
   /** End every session for a user, optionally sparing the one making the request. */
   deleteSessionsForUser(userId: string, exceptId?: string): Promise<void>;
   touchSession(id: string, at: string): Promise<void>;
+
+  // ── Password resets (#344) — single-use, short-lived, stored as a digest ───
+  /** Record a reset for a user, superseding any they had not used. */
+  createPasswordReset(input: { userId: string; tokenHash: string; expiresAt: string }): Promise<void>;
+  /**
+   * Claim a reset: marks it used and returns its user, or null when there is no
+   * such reset, it expired, or it was already used. Atomic — two submissions of
+   * one link cannot both succeed.
+   */
+  consumePasswordReset(tokenHash: string, now: string): Promise<string | null>;
 
   // ── API tokens (#228) — a credential a script may hold ────────────────────
   createApiToken(input: CreateApiTokenInput): Promise<ApiTokenRecord>;
@@ -454,6 +527,39 @@ export interface Repository {
   getDeploymentConfig(deploymentId: string): Promise<ServerConfigRecord | null>;
   /** Remove a deployment and all of its child records (events/databases/backups/schedules/subusers). */
   deleteDeployment(id: string): Promise<void>;
+
+  // Host ports (#233).
+  listPortAllocations(filter: { nodeId?: string; deploymentId?: string }): Promise<PortAllocationRecord[]>;
+  /**
+   * Make a server's allocations exactly `ports` on `nodeId` (or none, with a
+   * null node), in one step. Throws PortConflictError when another server holds
+   * one of them — the unique constraint, not a prior read, is the guard.
+   * The primary survives when its port is kept; otherwise the first port is.
+   */
+  replacePortAllocations(deploymentId: string, nodeId: string | null, ports: number[]): Promise<PortAllocationRecord[]>;
+  /** Mark one of a server's ports as its primary. False when it holds no such port. */
+  setPrimaryPort(deploymentId: string, port: number): Promise<boolean>;
+
+  // Notifications (#236).
+  createNotificationChannel(input: Omit<NotificationChannelRecord, 'id' | 'lastDeliveryAt' | 'lastError' | 'createdAt'>): Promise<NotificationChannelRecord>;
+  listNotificationChannels(userIds: string[]): Promise<NotificationChannelRecord[]>;
+  getNotificationChannel(id: string): Promise<NotificationChannelRecord | null>;
+  updateNotificationChannel(
+    id: string,
+    patch: Partial<Pick<NotificationChannelRecord, 'events' | 'enabled' | 'lastDeliveryAt' | 'lastError'>>,
+  ): Promise<NotificationChannelRecord | null>;
+  /** Removes the channel and anything still queued for it. */
+  deleteNotificationChannel(id: string): Promise<void>;
+  enqueueDeliveries(rows: Array<{ channelId: string; event: string; payload: string }>): Promise<NotificationDeliveryRecord[]>;
+  listDueDeliveries(now: string, limit: number): Promise<NotificationDeliveryRecord[]>;
+  /**
+   * Take a pending delivery for sending, if nobody else has. Conditional on the
+   * attempt count read with it, so two drains that read the same row cannot
+   * both win; the winner's next update moves the count on.
+   */
+  claimDelivery(id: string, attempts: number): Promise<boolean>;
+  updateDelivery(id: string, patch: Partial<Pick<NotificationDeliveryRecord, 'status' | 'attempts' | 'nextAttemptAt' | 'lastError' | 'sentAt'>>): Promise<void>;
+  listDeliveries(channelId: string, limit: number): Promise<NotificationDeliveryRecord[]>;
 
   // Managed databases (#109).
   createDatabase(input: CreateServerDatabaseInput): Promise<ServerDatabaseRecord>;

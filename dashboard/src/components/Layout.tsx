@@ -18,6 +18,17 @@ export function Layout() {
   const { isHosted } = useEdition();
   const [introOpen, setIntroOpen] = useState(() => !hasSeenIntro());
   const [user, setUser] = useState<CurrentUser | null>(null);
+  // Below 900px the nav and the bar's actions fold behind a Menu button (#247) —
+  // a single row of eight links does not fit a phone, and the whole page used
+  // to scroll sideways because of it. Closed again by navigating or Escape.
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => setMenuOpen(false), [location.pathname]);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setMenuOpen(false);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
   const isPlatformAdmin = user?.platformRole === 'admin' || user?.platformRole === 'owner';
 
   // Who am I? Shown in the bar so it's never ambiguous which account is acting —
@@ -54,6 +65,16 @@ export function Layout() {
           <IconHexagon size={20} />
           NexusInfra
         </span>
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm appbar__menu-toggle"
+          aria-expanded={menuOpen}
+          aria-controls="app-menu"
+          onClick={() => setMenuOpen((v) => !v)}
+        >
+          {menuOpen ? 'Close' : 'Menu'}
+        </button>
+        <div id="app-menu" className={`appbar__menu${menuOpen ? ' is-open' : ''}`}>
         <nav className="appbar__nav" aria-label="Primary">
           <NavLink to="/" end className="navlink" data-ripple>
             Overview
@@ -103,6 +124,7 @@ export function Layout() {
           <IconLogout size={16} />
           Sign out
         </button>
+        </div>
       </header>
       <main>
         <div key={location.pathname} className="route-view">

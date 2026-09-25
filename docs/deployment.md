@@ -163,6 +163,64 @@ orchestrator is reachable directly, a caller can set it themselves and choose wh
 - Community edition refuses self-registration, so the only accounts are the ones you create. Hosted
   does not — that is the point of it, but it means the registration form is public.
 
+## PostgreSQL
+
+**SQLite is the default** and the right choice for most installations: a file in the service's
+volume, nothing else to run, backed up by copying it. **PostgreSQL** (#241) is supported for when you
+want the database on a server you already run, managed backups, or to stop depending on a file on the
+orchestrator's disk. Both are fully supported and tested in CI — every repository behaviour that
+needs a real database runs against both.
+
+It is not a scaling switch. The orchestrator keeps some coordination in process (the migration lock,
+the schedule runner, the notification drain), so it still runs as a single instance either way.
+
+### A new installation on PostgreSQL
+
+In the release bundle's `.env`:
+
+```sh
+POSTGRES_PASSWORD=<a long random value>
+ORCHESTRATOR_DATABASE_URL=postgresql://nexusinfra:<that value>@postgres:5432/nexusinfra
+# hosted only — its own schema in the same database:
+BILLING_DATABASE_URL=postgresql://nexusinfra:<that value>@postgres:5432/nexusinfra?schema=billing
+```
+
+then `docker compose --profile postgres up -d`. An external server works the same way: point the URLs
+at it and leave the profile off. The services create their tables at start. (On the very first start
+the orchestrator may try before PostgreSQL is ready; it exits and Docker restarts it.)
+
+### Moving an existing installation
+
+The migrations create empty tables; the data is copied by `scripts/sqlite-to-postgres.mjs`, which
+copies every table in dependency order, checks the row counts, and refuses a target that already has
+data. With the bundle:
+
+```sh
+docker compose stop orchestrator billing-bridge            # nothing may write during the copy
+docker compose --profile postgres up -d postgres
+docker compose run --rm --no-deps orchestrator \
+  node ../../scripts/sqlite-to-postgres.mjs . \
+  --from file:/data/orchestrator.db --to "$ORCHESTRATOR_DATABASE_URL"
+# hosted: the same for billing-bridge, from file:/data/billing.db to $BILLING_DATABASE_URL
+```
+
+Then set the `*_DATABASE_URL` values in `.env` and `docker compose --profile postgres up -d`. The
+SQLite files stay in their volumes untouched — going back is unsetting the variables.
+
+### Changing the schema
+
+Each service carries two schemas and two sets of migrations, because Prisma fixes the provider when a
+client is generated:
+
+1. Edit `prisma/schema.prisma` (the SQLite one — the source).
+2. `npm run db:sync-postgres` regenerates `prisma/postgres/schema.prisma` from it.
+3. Add a migration for each: `npx prisma migrate dev` (SQLite) and
+   `npx prisma migrate dev --schema prisma/postgres/schema.prisma` against a PostgreSQL `DATABASE_URL`.
+
+CI holds you to it: a unit test fails when the PostgreSQL schema is out of date or the SQLite
+migrations do not produce the schema, and the integration job replays the PostgreSQL migrations into a
+real server and fails on any difference.
+
 ## Combined deployment with FinVault
 
 Run one broker for both platforms: omit NexusInfra's `rabbitmq` service and point `RABBITMQ_URL` at
@@ -237,5 +295,11 @@ development.
   `dev` / `staging` / `main`. The suite runs **twice** — once as `community` (the default) and once
   with `NEXUS_EDITION=hosted` — because billing routes, plan quotas and signup policy only execute
   in the hosted edition and would otherwise ship untested.
+- The same workflow's **integration** job (#242) runs `npm run test:integration` against a RabbitMQ
+  service container and a real SQLite database through Prisma: bindings, payload encryption on the
+  wire, dead-lettering, every migration from an empty file, unique-index races, and the full
+  command → agent → report loop. It sets `REQUIRE_BROKER`, so a job that lost its broker fails
+  instead of skipping. Locally: `RABBITMQ_URL=amqp://guest:guest@localhost:5672 npm run test:integration`
+  (the broker suites skip without it; the database suite always runs).
 - Releases: merges reach `main` only via `staging`; tag `vX.Y.Z` after each main merge
   (see CLAUDE.md branch strategy).

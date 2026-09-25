@@ -47,12 +47,27 @@ import {
   type ServerBackup,
   type ServerSchedule,
   type ScheduleAction,
+  type ImageStatus,
+  setPrimaryPort,
+  type NodeView,
+  migrateDeployment,
+  getCurrentUser,
+  listNodes,
+  type BackupRetention,
+  setBackupRetention,
+  downloadBackup,
+  type ImageUpdateStatus,
+  getImageStatus,
+  updateImage,
   listTeams,
   setServerTeam,
   transferOwnership,
   type Team,
+  type DeploymentDisk,
+  getDeploymentDisk,
   type ServerSubuser,
   type SubuserRole,
+  ApiError,
 } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
 import { useToast } from '../components/Toast';
@@ -61,7 +76,7 @@ import { InfoHint } from '../components/InfoHint';
 import { VersionSelect } from '../components/VersionSelect';
 import { permissionsFor, ROLE_LABELS, type ServerPermission, type ServerRole } from '../permissions';
 import { Terminal } from '../components/Terminal';
-import { isGameServer } from '../format';
+import { formatBytes, formatRelative, isGameServer, parsePathList } from '../format';
 
 // Server detail — ported from the redesign, and now backed end to end: header
 // actions, live stats, logs, terminal, files, databases, backups, schedules,
@@ -181,6 +196,12 @@ export function ServerDetail() {
           <div className="mono" style={{ marginTop: 5, fontSize: '.85rem', color: 'var(--color-text-subtle)' }}>
             {isGame ? 'game server' : 'application'} · {d.dockerImage}
           </div>
+          {d.migrating && (
+            <p role="status" className="alert" style={{ margin: '10px 0 0', fontSize: '.84rem' }}>
+              <span className="spinner" style={{ marginRight: 8 }} />
+              Moving to another node — its data and backups are being copied. Start is unavailable until it is done.
+            </p>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {running ? (
@@ -223,11 +244,15 @@ export function ServerDetail() {
       {activeTab === 'terminal' && <TerminalTab id={d.id} running={running} />}
       {activeTab === 'files' && <FilesTab id={d.id} running={running} />}
       {activeTab === 'databases' && <DatabasesTab id={d.id} running={running} />}
-      {activeTab === 'backups' && <BackupsTab id={d.id} running={running} />}
-      {activeTab === 'network' && <NetworkTab ports={d.ports ?? {}} />}
+      {activeTab === 'backups' && <BackupsTab id={d.id} running={running} retention={d.backupRetention ?? {}} onRetentionSaved={load} />}
+      {activeTab === 'network' && (
+        <NetworkTab id={d.id} ports={d.ports ?? {}} allocations={d.portAllocations ?? []} canEdit={allows('server.edit')} onChanged={load} />
+      )}
       {activeTab === 'schedules' && <SchedulesTab id={d.id} />}
       {activeTab === 'subusers' && <SubusersTab id={d.id} />}
-      {activeTab === 'startup' && <StartupTab image={d.dockerImage} env={d.env ?? {}} autoRestart={d.autoRestart ?? false} />}
+      {activeTab === 'startup' && (
+        <StartupTab image={d.dockerImage} env={d.env ?? {}} autoRestart={d.autoRestart ?? false} deploymentId={d.id} running={running} canUpdate={allows('server.edit')} onUpdated={load} />
+      )}
       {activeTab === 'activity' && <ActivityTab id={d.id} />}
       {activeTab === 'settings' && <SettingsTab deployment={d} allows={allows} onDelete={onDelete} onSaved={load} />}
     </div>
@@ -244,7 +269,8 @@ export function ServerDetail() {
  * server. Nothing here invents a number now — before the first sample, and after
  * a stream failure, the tiles read `—` and the indicator says why.
  *
- * There is no Disk tile because `docker stats` does not report disk, and no
+ * Disk is not from `docker stats` (which does not report it) but from the
+ * node's own measurement of the server's volumes and writable layer (#347). No
  * Players/TPS tile because nothing in the stack can measure game telemetry (#252).
  */
 function LiveStats({ id, running, containerId, startedAt }: { id: string; running: boolean; containerId: string | null; startedAt: string | null }) {
@@ -284,6 +310,27 @@ function LiveStats({ id, running, containerId, startedAt }: { id: string; runnin
     };
   }, [id, running, containerId]);
 
+  // Disk is measured whether or not the server runs: its volumes are there
+  // either way. The node caches the measurement for a minute; so does this.
+  const [disk, setDisk] = useState<DeploymentDisk | null>(null);
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      getDeploymentDisk(id)
+        .then((d) => live && setDisk(d))
+        .catch(() => live && setDisk(null));
+    void load();
+    const timer = setInterval(load, 60_000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [id]);
+  const diskTotal = disk && disk.volumesBytes != null ? disk.volumesBytes + (disk.writableBytes ?? 0) : null;
+  const diskDetail = disk
+    ? `Data volumes ${formatBytes(disk.volumesBytes)} · container layer ${formatBytes(disk.writableBytes)} — measured ${formatRelative(disk.measuredAt)}`
+    : 'Not measured — the node agent did not answer';
+
   const mins = running && startedAt ? Math.floor((Date.now() - new Date(startedAt).getTime()) / 60000) : 0;
   const uptime = running && startedAt ? `${Math.floor(mins / 60)}h ${mins % 60}m` : '—';
   const net = s ? (s.netKb >= 1024 ? `${(s.netKb / 1024).toFixed(1)} MB/s` : `${s.netKb} KB/s`) : '—';
@@ -303,16 +350,23 @@ function LiveStats({ id, running, containerId, startedAt }: { id: string; runnin
         <StatBox label="Memory" value={s ? `${s.ram}%` : '—'} />
         <StatBox label="Network" value={net} />
         <StatBox label="Uptime" value={uptime} />
+        <StatBox
+          label="Disk"
+          value={formatBytes(diskTotal)}
+          title={diskDetail}
+          note={disk ? `data ${formatBytes(disk.volumesBytes)} · layer ${formatBytes(disk.writableBytes)}` : undefined}
+        />
       </div>
     </div>
   );
 }
 
-function StatBox({ label, value }: { label: string; value: string }) {
+function StatBox({ label, value, title, note }: { label: string; value: string; title?: string; note?: string }) {
   return (
-    <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', padding: '13px 16px' }}>
+    <div title={title} style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', padding: '13px 16px' }}>
       <div style={{ fontSize: '.74rem', textTransform: 'uppercase', letterSpacing: '.04em', color: 'var(--color-text-subtle)', marginBottom: 4 }}>{label}</div>
       <div className="tnum" style={{ fontSize: '1.3rem', fontWeight: 700 }}>{value}</div>
+      {note && <div className="tnum" style={{ fontSize: '.72rem', color: 'var(--color-text-subtle)', marginTop: 2 }}>{note}</div>}
     </div>
   );
 }
@@ -440,10 +494,13 @@ function ConsoleTab({ id, running, containerId }: { id: string; running: boolean
           {running ? 'streaming' : 'offline'}
         </span>
       </div>
-      <div ref={boxRef} style={{ background: '#0a0e16', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', padding: '12px 14px', fontFamily: 'var(--font-mono)', fontSize: '.8rem', lineHeight: 1.7, height: 340, overflowY: 'auto' }}>
+      {/* Focusable, so the log can be scrolled from the keyboard (#247). Not
+          announced line by line — a busy server would drown a screen reader —
+          but there to be read when focused. */}
+      <div ref={boxRef} tabIndex={0} role="log" aria-label="Console output" aria-live="off" style={{ background: '#0a0e16', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', padding: '12px 14px', fontFamily: 'var(--font-mono)', fontSize: '.8rem', lineHeight: 1.7, height: 340, overflowY: 'auto' }}>
         {log.map((l) => (
           <div key={l.id} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-            <span style={{ color: '#5a6473' }}>{l.time}</span> <span style={{ color: l.color }}>{l.text}</span>
+            <span style={{ color: '#7d8797' }}>{l.time}</span> <span style={{ color: l.color }}>{l.text}</span>
           </div>
         ))}
       </div>
@@ -567,7 +624,7 @@ function FilesTab({ id, running }: { id: string; running: boolean }) {
 
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
         <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', fontSize: '.88rem' }}>
           <button className="name-btn" onClick={() => setCwd('/')}>container</button>
           <span className="subtle">/</span>
@@ -578,7 +635,7 @@ function FilesTab({ id, running }: { id: string; running: boolean }) {
             </span>
           ))}
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn btn--secondary btn--sm" data-ripple onClick={newFile}>New file</button>
           <button className="btn btn--secondary btn--sm" data-ripple onClick={newFolder}>New folder</button>
           <button className="btn btn--primary btn--sm" data-ripple data-magnetic onClick={() => fileInput.current?.click()}>Upload</button>
@@ -737,12 +794,64 @@ function DatabasesTab({ id, running }: { id: string; running: boolean }) {
 }
 
 // ── Backups — real tar snapshots of the server's data volume (#110) ─────────
-function BackupsTab({ id, running }: { id: string; running: boolean }) {
+/** The API's messages are clauses ("nothing at /data …"); a dialog shows sentences. */
+const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+function BackupsTab({
+  id,
+  running,
+  retention,
+  onRetentionSaved,
+}: {
+  id: string;
+  running: boolean;
+  retention: BackupRetention;
+  onRetentionSaved: () => Promise<void> | void;
+}) {
   const { toast } = useToast();
-  const { confirm } = useDialog();
+  const { confirm, prompt } = useDialog();
   const [backups, setBackups] = useState<ServerBackup[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Blank means "no limit" — the policy every server had before #232.
+  const [keepLast, setKeepLast] = useState(retention.keepLast ? String(retention.keepLast) : '');
+  const [keepDays, setKeepDays] = useState(retention.keepDays ? String(retention.keepDays) : '');
+  const [savingPolicy, setSavingPolicy] = useState(false);
+
+  const savePolicy = async () => {
+    const toLimit = (v: string) => (v.trim() ? Number(v) : null);
+    setSavingPolicy(true);
+    try {
+      const r = await setBackupRetention(id, { keepLast: toLimit(keepLast), keepDays: toLimit(keepDays) });
+      toast(
+        r.expired ? `Retention saved — ${r.expired} old backup${r.expired === 1 ? ' was' : 's were'} removed` : 'Retention saved',
+        'success',
+        'Backups',
+      );
+      await load();
+      await onRetentionSaved();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not save retention', 'error', 'Backups');
+    } finally {
+      setSavingPolicy(false);
+    }
+  };
+
+  const download = async (b: ServerBackup) => {
+    try {
+      const { blob, filename } = await downloadBackup(id, b.id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Download failed', 'error', 'Backup');
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -760,8 +869,27 @@ function BackupsTab({ id, running }: { id: string; running: boolean }) {
   const create = async () => {
     setBusy(true);
     try {
-      const b = await createBackup(id);
-      toast(`Backup ${b.name} created`, 'success', 'Backup');
+      let b: ServerBackup;
+      try {
+        b = await createBackup(id);
+      } catch (e) {
+        // A server with no data directory of its own falls back to /data, which
+        // most images do not have (#342). Ask which directory instead of only
+        // reporting that the guess was wrong.
+        if (!(e instanceof ApiError && e.status === 404)) throw e;
+        const path = await prompt({
+          title: 'Which directory should be backed up?',
+          message: `${sentence(e.message.replace(/ — .*$/, ''))}. Name the directory inside the container that holds this server's data.`,
+          label: 'Directory',
+          placeholder: '/usr/share/nginx/html',
+          confirmLabel: 'Back up',
+          validate: (v) => (v.trim().startsWith('/') ? null : 'An absolute path, starting with /'),
+        });
+        if (!path) return;
+        b = await createBackup(id, path.trim());
+      }
+      const extra = (b as ServerBackup & { expired?: number }).expired;
+      toast(`Backup ${b.name} created${extra ? ` — retention removed ${extra} older` : ''}`, 'success', 'Backup');
       await load();
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Backup failed', 'error', 'Backup');
@@ -773,7 +901,7 @@ function BackupsTab({ id, running }: { id: string; running: boolean }) {
   const restore = async (b: ServerBackup) => {
     const ok = await confirm({
       title: `Restore ${b.name}?`,
-      message: `This overwrites ${b.path} in the running server with the contents of the backup. Anything changed since the snapshot is lost.`,
+      message: `Every file in the backup replaces the current one in ${b.path}, so changes to them since the snapshot are lost. Files created since the snapshot are kept.`,
       confirmLabel: 'Restore',
       danger: true,
     });
@@ -806,20 +934,44 @@ function BackupsTab({ id, running }: { id: string; running: boolean }) {
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, gap: 12 }}>
-        <strong style={{ fontSize: '.92rem' }}>Backups<InfoHint text="A backup is a tar snapshot of the server's data directory, stored on its node. Restore extracts it back into the running container. Requires the server to be running." label="Backups help" /></strong>
+        <strong style={{ fontSize: '.92rem' }}>Backups<InfoHint text="A backup is a tar snapshot of the server's data directory, stored on its node — and copied to the node's off-site bucket when one is configured. Restore extracts it back into the running container; download keeps a copy of your own. Requires the server to be running." label="Backups help" /></strong>
         <button className="btn btn--primary btn--sm" data-ripple data-burst="primary" onClick={create} disabled={busy || !running} title={running ? '' : 'Start the server first'}>
           {busy ? 'Snapshotting…' : 'Create backup'}
         </button>
       </div>
       {!running && <p className="subtle" style={{ fontSize: '.84rem', marginBottom: 12 }}>Start the server to snapshot or restore its data.</p>}
+      <div className="card" style={{ padding: '14px 16px', marginBottom: 14, display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <label style={{ flex: '0 1 140px' }}>
+          <span className="field__label" style={{ fontSize: '.78rem' }}>
+            Keep the last
+            <InfoHint text="The most backups to keep. Older ones are deleted after each new backup — from the node and from off-site. Blank keeps them all. The newest backup is never deleted." label="Keep last help" />
+          </span>
+          <input className="input" type="number" min={1} value={keepLast} onChange={(e) => setKeepLast(e.target.value)} placeholder="all" aria-label="Keep the last N backups" />
+        </label>
+        <label style={{ flex: '0 1 140px' }}>
+          <span className="field__label" style={{ fontSize: '.78rem' }}>
+            Keep for days
+            <InfoHint text="Delete backups older than this many days, checked hourly. Blank keeps them however old. When both are set, a backup that breaks either limit goes." label="Keep days help" />
+          </span>
+          <input className="input" type="number" min={1} value={keepDays} onChange={(e) => setKeepDays(e.target.value)} placeholder="forever" aria-label="Keep backups for N days" />
+        </label>
+        <button className="btn btn--secondary btn--sm" data-ripple onClick={() => void savePolicy()} disabled={savingPolicy} style={{ minHeight: 40 }}>
+          {savingPolicy ? 'Saving…' : 'Save retention'}
+        </button>
+      </div>
       {error && <p role="alert" className="alert alert--error" style={{ marginBottom: 12 }}>{error}</p>}
       <div style={listCard}>
         {backups.map((b) => (
           <div key={b.id} style={{ ...rowCss, gap: 12 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="mono" style={{ fontSize: '.84rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</div>
-              <div className="subtle" style={{ fontSize: '.76rem', marginTop: 2 }}>{fmtSize(b.sizeBytes)} · <span className="mono">{b.path}</span></div>
+              <div className="subtle" style={{ fontSize: '.76rem', marginTop: 2 }}>
+                {fmtSize(b.sizeBytes)} · <span className="mono">{b.path}</span>
+                {b.offsite === 'stored' && <> · <span style={{ color: 'var(--color-success)' }}>copied off-site</span></>}
+                {b.offsite === 'failed' && <> · <span style={{ color: 'var(--color-warning)' }}>on the node only — the off-site copy failed</span></>}
+              </div>
             </div>
+            <button className="btn btn--secondary btn--sm" data-ripple onClick={() => void download(b)} aria-label={`Download ${b.name}`}>Download</button>
             <button className="btn btn--secondary btn--sm" data-ripple onClick={() => restore(b)} disabled={!running}>Restore</button>
             <button className="icon-btn" data-ripple aria-label={`Delete ${b.name}`} onClick={() => remove(b)}>🗑</button>
           </div>
@@ -833,8 +985,32 @@ function BackupsTab({ id, running }: { id: string; running: boolean }) {
 // The server's real port mappings, as configured at creation and carried on the
 // detail response (#217). This used to render two invented allocations and an
 // SFTP endpoint nothing in the stack listens on; real SFTP is its own work (#235).
-function NetworkTab({ ports }: { ports: Record<string, string> }) {
-  const allocs = Object.entries(ports);
+function NetworkTab({
+  id,
+  ports,
+  allocations,
+  canEdit,
+  onChanged,
+}: {
+  id: string;
+  ports: Record<string, string>;
+  allocations: Array<{ port: number; primary: boolean }>;
+  canEdit: boolean;
+  onChanged: () => Promise<void> | void;
+}) {
+  const { toast } = useToast();
+  const primary = allocations.find((a) => a.primary)?.port;
+  // The primary port first — it is "the" address of the server (#233).
+  const allocs = Object.entries(ports).sort(([a], [b]) => (Number(a) === primary ? -1 : Number(b) === primary ? 1 : 0));
+  const makePrimary = async (port: number) => {
+    try {
+      await setPrimaryPort(id, port);
+      toast(`Port ${port} is now the primary port`, 'success', 'Network');
+      await onChanged();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not change the primary port', 'error', 'Network');
+    }
+  };
   return (
     <>
       <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 12 }}>
@@ -865,6 +1041,16 @@ function NetworkTab({ ports }: { ports: Record<string, string> }) {
                   {(protocol ?? 'tcp').replace('+', ' + ').toUpperCase()}
                 </span>
                 <span className="muted" style={{ flex: 1, fontSize: '.84rem' }}>in the container</span>
+                {Number(hostPort) === primary ? (
+                  <span className="badge" style={{ fontSize: '.72rem' }}>Primary</span>
+                ) : (
+                  canEdit &&
+                  allocations.length > 1 && (
+                    <button className="btn btn--ghost btn--sm" onClick={() => void makePrimary(Number(hostPort))} aria-label={`Make ${hostPort} the primary port`}>
+                      Make primary
+                    </button>
+                  )
+                )}
               </div>
             );
           })}
@@ -1024,7 +1210,7 @@ function SchedulesTab({ id }: { id: string }) {
         <div>
           <span className="field__label" style={{ fontSize: '.78rem' }}>Action</span>
           <div style={{ display: 'flex', gap: 6 }}>
-            {(['backup', 'restart'] as ScheduleAction[]).map((a) => (
+            {(['backup', 'restart', 'update'] as ScheduleAction[]).map((a) => (
               <button key={a} type="button" data-ripple onClick={() => setAction(a)} className={`opt${action === a ? ' is-active' : ''}`} style={{ textTransform: 'capitalize' }}>{a}</button>
             ))}
           </div>
@@ -1189,14 +1375,93 @@ function SubusersTab({ id }: { id: string }) {
 // What this server actually runs (#218): its image, its restart policy and its own
 // environment. It used to render three invented variables (EULA, MAX_MEMORY, …)
 // and a startup command nothing executes. Editing these is #220.
-function StartupTab({ image, env, autoRestart }: { image: string; env: Record<string, string>; autoRestart: boolean }) {
+const IMAGE_STATUS_TEXT: Record<ImageUpdateStatus, string> = {
+  current: 'Up to date with the registry.',
+  'update-available': 'A newer image is available for this tag.',
+  'pulled-not-applied': 'A newer image is on the node but this server still runs the old one — update to apply it.',
+  unknown: 'Could not ask the registry, so this is not known to be current.',
+};
+
+function StartupTab({
+  image,
+  env,
+  autoRestart,
+  deploymentId,
+  running,
+  canUpdate,
+  onUpdated,
+}: {
+  image: string;
+  env: Record<string, string>;
+  autoRestart: boolean;
+  deploymentId: string;
+  running: boolean;
+  canUpdate: boolean;
+  onUpdated: () => Promise<void> | void;
+}) {
   const vars = Object.entries(env);
+  const { toast } = useToast();
+  const [imageStatus, setImageStatus] = useState<ImageStatus | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
+  const [updating, setUpdating] = useState(false);
+
+  // Asked on demand rather than on every visit: it goes to the registry, which
+  // rate-limits anonymous callers (#239).
+  const check = async () => {
+    setChecking(true);
+    setCheckError(null);
+    try {
+      setImageStatus(await getImageStatus(deploymentId));
+    } catch (e) {
+      setCheckError(e instanceof Error ? e.message : 'Could not check for updates');
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const update = async () => {
+    setUpdating(true);
+    try {
+      const r = await updateImage(deploymentId);
+      toast(
+        r.recreate
+          ? 'Pulling the image — the server is recreated from it once the pull finishes. Its data is kept.'
+          : 'Pulling the image — it is used the next time this server starts.',
+        'success',
+        'Update',
+      );
+      setImageStatus(null);
+      await onUpdated();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not start the update', 'error');
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   return (
     <>
       <div className="card" style={{ padding: '20px 22px', marginBottom: 18 }}>
         <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 12 }}>Container image</strong>
         <div className="mono" style={{ fontSize: '.84rem', background: '#0a0e16', color: '#c9d1d9', padding: '12px 14px', borderRadius: 'var(--radius)', wordBreak: 'break-all' }}>
           {image}
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
+          <button className="btn btn--secondary btn--sm" data-ripple onClick={() => void check()} disabled={checking}>
+            {checking ? 'Checking…' : 'Check for updates'}
+          </button>
+          {canUpdate && (
+            <button className="btn btn--primary btn--sm" data-ripple onClick={() => void update()} disabled={updating}>
+              {updating ? 'Starting update…' : running ? 'Update and recreate' : 'Pull latest'}
+            </button>
+          )}
+          {imageStatus && (
+            <span role="status" style={{ fontSize: '.84rem', color: imageStatus.status === 'current' ? 'var(--color-success)' : imageStatus.status === 'unknown' ? 'var(--color-text-subtle)' : 'var(--color-warning)' }}>
+              {IMAGE_STATUS_TEXT[imageStatus.status]}
+            </span>
+          )}
+          {checkError && <span role="alert" style={{ fontSize: '.84rem', color: 'var(--color-danger)' }}>{checkError}</span>}
         </div>
         <p className="subtle" style={{ margin: '12px 0 0', fontSize: '.84rem' }}>
           The image runs its own entrypoint; the variables below are what NexusInfra passes in.
@@ -1243,6 +1508,7 @@ function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; o
   const [ports, setPorts] = useState(() => JSON.stringify(deployment.ports ?? {}, null, 2));
   const [env, setEnv] = useState(() => JSON.stringify(deployment.env ?? {}, null, 2));
   const [autoRestart, setAutoRestart] = useState(Boolean(deployment.autoRestart));
+  const [persist, setPersist] = useState(() => (deployment.persistPaths ?? []).join(', '));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -1303,6 +1569,7 @@ function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; o
         // losing it takes the server out of the browser (#313).
         ports: egg && hostPort.trim() && containerPort ? { ...otherPorts, [hostPort.trim()]: containerPort } : parsedPorts,
         autoRestart,
+        persistPaths: parsePathList(persist),
       });
       toast('Configuration saved — it applies the next time this server starts', 'success', 'Settings');
       await onSaved();
@@ -1381,6 +1648,16 @@ function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; o
           </div>
         </>
       )}
+      <div className="field">
+        <label className="field__label" htmlFor="cfg-persist">
+          Persistent directories
+          <InfoHint
+            text={`Kept when the server stops, restarts or is updated; everything else is reset on each start.${egg ? ` ${egg.dataPath} is kept already, because the ${egg.name} recipe stores its data there.` : ''} Directories the image declares as volumes are kept automatically.`}
+            label="Persistent directories help"
+          />
+        </label>
+        <input id="cfg-persist" className="input mono" value={persist} onChange={(e) => setPersist(e.target.value)} placeholder="/data, /var/lib/app" />
+      </div>
       <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, fontSize: '.86rem' }}>
         <input type="checkbox" checked={autoRestart} onChange={(e) => setAutoRestart(e.target.checked)} />
         Restart automatically if it stops unexpectedly
@@ -1391,6 +1668,78 @@ function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; o
       <button className="btn btn--primary btn--sm" data-ripple data-burst="success" disabled={busy} onClick={() => void save()}>
         {busy ? 'Saving…' : 'Save configuration'}
       </button>
+    </div>
+  );
+}
+
+/**
+ * Move a stopped server to another node (#234). Shown to platform
+ * administrators only — the API refuses everyone else — because it moves data
+ * between machines, which is fleet management rather than a server role's call.
+ */
+function MigrateCard({ deployment, onMoved }: { deployment: DeploymentDetail; onMoved: () => Promise<void> | void }) {
+  const { toast } = useToast();
+  const { confirm } = useDialog();
+  const [admin, setAdmin] = useState(false);
+  const [nodes, setNodes] = useState<NodeView[]>([]);
+  const [target, setTarget] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void getCurrentUser()
+      .then((me) => setAdmin(me.platformRole === 'admin' || me.platformRole === 'owner'))
+      .catch(() => undefined);
+    void listNodes()
+      .then(setNodes)
+      .catch(() => undefined);
+  }, []);
+
+  if (!admin) return null;
+  const candidates = nodes.filter((n) => n.id !== deployment.nodeId && n.health === 'healthy' && !n.maintenance);
+  const running = deployment.status === 'running' || deployment.status === 'pending';
+
+  const move = async () => {
+    const ok = await confirm({
+      title: `Move ${deployment.name} to ${target}?`,
+      message: `Its data and backups are copied to ${target}; once that has finished the server lives there and the copy on ${deployment.nodeId ?? 'its node'} is removed. If anything fails, nothing on the current node is touched.`,
+      confirmLabel: 'Move server',
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await migrateDeployment(deployment.id, target);
+      toast(`Moving ${deployment.name} to ${target} — follow it in Activity`, 'success', 'Migration');
+      await onMoved();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not start the move', 'error', 'Migration');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ padding: '20px 22px', marginBottom: 18 }}>
+      <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6 }}>
+        Move to another node
+        <InfoHint text="Copies the server's data volumes and backups to another node, points the server there, then removes them from the old node. The server must be stopped. A server running on an imported directory cannot be moved, because that directory exists only on its node." label="Move to another node help" />
+      </strong>
+      <p className="subtle" style={{ margin: '0 0 14px', fontSize: '.84rem' }}>
+        Currently on <strong className="mono">{deployment.nodeId ?? 'no node'}</strong>.{' '}
+        {running ? 'Stop the server to move it.' : candidates.length ? '' : 'No other healthy node is available.'}
+      </p>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <select className="select" value={target} onChange={(e) => setTarget(e.target.value)} aria-label="Node to move to" disabled={running || !candidates.length || deployment.migrating} style={{ width: 'auto', minWidth: 220 }}>
+          <option value="">Choose a node…</option>
+          {candidates.map((n) => (
+            <option key={n.id} value={n.id}>
+              {n.name}{n.location ? ` (${n.location})` : ''}
+            </option>
+          ))}
+        </select>
+        <button className="btn btn--secondary btn--sm" data-ripple onClick={() => void move()} disabled={!target || running || busy || deployment.migrating}>
+          {busy || deployment.migrating ? 'Moving…' : 'Move server'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -1470,6 +1819,7 @@ function SettingsTab({
   return (
     <>
       {allows('server.edit') && <ConfigEditor deployment={deployment} onSaved={onSaved} />}
+      <MigrateCard deployment={deployment} onMoved={onSaved} />
       <div className="card" style={{ padding: '20px 22px', marginBottom: 18 }}>
         <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6 }}>
           Share with a team
@@ -1497,7 +1847,7 @@ function SettingsTab({
       <div className="card" style={{ padding: '20px 22px', borderColor: 'var(--color-danger-soft)' }}>
         <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6, color: 'var(--color-danger)' }}>Delete server</strong>
         <p className="subtle" style={{ margin: '0 0 14px', fontSize: '.84rem' }}>Permanently removes this server and all of its files. This cannot be undone.</p>
-        <button className="btn btn--primary btn--sm" data-ripple data-burst="danger" onClick={onDelete} style={{ background: 'var(--color-danger)' }}>Delete server</button>
+        <button className="btn btn--danger-solid btn--sm" data-ripple data-burst="danger" onClick={onDelete}>Delete server</button>
       </div>
     </>
   );

@@ -16,8 +16,8 @@ describe('prefixMatches', () => {
 
 describe('matchRoute', () => {
   it('routes protected API paths to the orchestrator', () => {
-    expect(matchRoute('/deployments', routes)).toEqual({ target: 'http://orchestrator:9200', public: false });
-    expect(matchRoute('/deployments/d1/logs', routes)).toEqual({ target: 'http://orchestrator:9200', public: false });
+    expect(matchRoute('/deployments', routes)).toEqual({ target: 'http://orchestrator:9200', public: false, prefix: '/deployments' });
+    expect(matchRoute('/deployments/d1/logs', routes)).toEqual({ target: 'http://orchestrator:9200', public: false, prefix: '/deployments' });
   });
 
   it('marks login and config as public', () => {

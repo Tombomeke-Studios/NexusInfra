@@ -21,6 +21,9 @@ COPY --from=builder /app/shared/package*.json ./shared/
 COPY --from=builder /app/services/billing-bridge/dist ./services/billing-bridge/dist
 COPY --from=builder /app/services/billing-bridge/package*.json ./services/billing-bridge/
 COPY --from=builder /app/services/billing-bridge/prisma ./services/billing-bridge/prisma
+# db:deploy picks SQLite or PostgreSQL migrations by DATABASE_URL (#241), and the
+# SQLite → PostgreSQL copy lives there too; both are repo-root scripts.
+COPY scripts/ ./scripts/
 # prisma (CLI, for migrate deploy) + @prisma/client are runtime deps; the
 # postinstall regenerates the client against the copied schema.
 RUN npm install --omit=dev
