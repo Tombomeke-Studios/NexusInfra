@@ -531,7 +531,7 @@ it is not running, `502` if the node operation fails.
 | `POST /deployments/:id/backups` | Snapshot the data path → `201` with the backup record plus `expired`, how many old ones retention removed |
 | `PUT /deployments/:id/backups/retention` | Set `{ keepLast, keepDays }` (#232) — whole numbers ≥ 1, `null`/absent for no limit. Both are limits; the newest backup is never removed. Applied at once → `{ backupRetention, expired }` |
 | `GET /deployments/:id/backups/:backupId/download` | The tar, as an attachment (#232) — from the node, or from off-site when the node lost it |
-| `POST /deployments/:id/backups/:backupId/restore` | Extract the snapshot back into the running container |
+| `POST /deployments/:id/backups/:backupId/restore` | Extract the snapshot back where it came from in the running container: files in the backup replace the current ones, files created since are kept. (Before #327 it nested the snapshot inside the directory and restored nothing.) |
 | `DELETE /deployments/:id/backups/:backupId` | Delete the stored tar and drop the record → `204` |
 
 ### Image updates (#239)

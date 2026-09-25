@@ -254,6 +254,7 @@ scrolling log lines describing events that never happened.
 - [x] Servers list shows invented limits and labels every egg server as an app (#318) 🐛
 - [x] A stopped server keeps the id of a container that no longer exists (#321) 🐛
 - [x] Stopping a server deleted its data — it now lives in named volumes owned by the server (#324) 🐛
+- [x] Restoring a backup nested it inside the directory instead of replacing it (#327) 🐛
 
 - [x] Delete server button is a no-op — wire `DELETE /deployments/:id` end to end (#156)
 - [x] Node Agent internal API was unauthenticated + host-published — token-guard it (#169)

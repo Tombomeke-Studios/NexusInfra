@@ -832,7 +832,7 @@ function BackupsTab({
   const restore = async (b: ServerBackup) => {
     const ok = await confirm({
       title: `Restore ${b.name}?`,
-      message: `This overwrites ${b.path} in the running server with the contents of the backup. Anything changed since the snapshot is lost.`,
+      message: `Every file in the backup replaces the current one in ${b.path}, so changes to them since the snapshot are lost. Files created since the snapshot are kept.`,
       confirmLabel: 'Restore',
       danger: true,
     });
