@@ -395,6 +395,18 @@ export type Edition = 'community' | 'hosted';
 
 export interface AppConfig {
   edition: Edition;
+  /** Whether a forgotten password can be reset by email here (#344). */
+  passwordResetByEmail?: boolean;
+}
+
+/** Ask for a reset link (#344). The answer is the same whether or not the account exists. */
+export function requestPasswordReset(email: string): Promise<{ status: string; message: string }> {
+  return request('/auth/password-reset', { method: 'POST', body: JSON.stringify({ email }) });
+}
+
+/** Set a new password with the token from the mailed link (#344). */
+export function confirmPasswordReset(token: string, newPassword: string): Promise<void> {
+  return request('/auth/password-reset/confirm', { method: 'POST', body: JSON.stringify({ token, newPassword }) });
 }
 
 /** Public config — read before login to decide whether billing UI renders (#144). */

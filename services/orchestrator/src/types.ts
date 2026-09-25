@@ -472,6 +472,16 @@ export interface Repository {
   deleteSessionsForUser(userId: string, exceptId?: string): Promise<void>;
   touchSession(id: string, at: string): Promise<void>;
 
+  // ── Password resets (#344) — single-use, short-lived, stored as a digest ───
+  /** Record a reset for a user, superseding any they had not used. */
+  createPasswordReset(input: { userId: string; tokenHash: string; expiresAt: string }): Promise<void>;
+  /**
+   * Claim a reset: marks it used and returns its user, or null when there is no
+   * such reset, it expired, or it was already used. Atomic — two submissions of
+   * one link cannot both succeed.
+   */
+  consumePasswordReset(tokenHash: string, now: string): Promise<string | null>;
+
   // ── API tokens (#228) — a credential a script may hold ────────────────────
   createApiToken(input: CreateApiTokenInput): Promise<ApiTokenRecord>;
   /** The authentication lookup: by digest, because the secret is never stored. */

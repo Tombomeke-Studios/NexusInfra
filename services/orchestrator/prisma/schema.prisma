@@ -266,6 +266,19 @@ model ApiToken {
   @@index([userId])
 }
 
+// A self-service password reset (#344). Like an API token, the secret is only
+// ever stored as its digest; it is single-use and short-lived.
+model PasswordReset {
+  id        String    @id
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
 // One host port held by one server on one node (#233). The unique constraint is
 // what makes double-booking impossible rather than merely unlikely: two creates
 // that both checked and both found the port free cannot both write it.

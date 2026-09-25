@@ -127,6 +127,7 @@ scrape_configs:
 | `DATABASE_PUBLIC_HOST` | no | Hostname given to users connecting to a provisioned database. Defaults to `localhost`. |
 | `SMTP_URL` | no | Turns on **email notifications** (#236), e.g. `smtps://user:pass@smtp.example.com:465` or `smtp://user:pass@mail.local:587` (STARTTLS when offered). Unset means webhooks only, and the panel says so. |
 | `SMTP_FROM` | no | The sender, e.g. `NexusInfra <panel@example.com>`. |
+| `PANEL_URL` | no | The panel's public address, e.g. `https://panel.example.com`. With `SMTP_URL`, turns on **password reset by email** (#344); the mailed link is built from this, never from the request. |
 
 Volume: `/data` — the database, which also holds notifications waiting to be retried. Back this up.
 

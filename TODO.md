@@ -225,6 +225,7 @@ scrolling log lines describing events that never happened.
 
 - [x] Login is not rate limited on the orchestrator — nginx proxies past the gateway (#225) 🐛
 - [x] Password reset flow — admin-driven; the email variant waits on the notification service (#226)
+- [x] Self-service password reset by email — single-use 30-minute links built from `PANEL_URL`, same answer for every address, sessions ended (#344)
 - [x] Sessions cannot be revoked — a deleted user's token stays valid (#227)
 - [x] API tokens for scripted/CI access, scoped and revocable (#228)
 - [x] Two-factor authentication (TOTP) + recovery codes (#229)
