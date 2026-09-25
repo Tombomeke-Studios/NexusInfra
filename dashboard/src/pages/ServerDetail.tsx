@@ -65,6 +65,7 @@ import {
   type Team,
   type ServerSubuser,
   type SubuserRole,
+  ApiError,
 } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
 import { useToast } from '../components/Toast';
@@ -759,6 +760,9 @@ function DatabasesTab({ id, running }: { id: string; running: boolean }) {
 }
 
 // ── Backups — real tar snapshots of the server's data volume (#110) ─────────
+/** The API's messages are clauses ("nothing at /data …"); a dialog shows sentences. */
+const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 function BackupsTab({
   id,
   running,
@@ -771,7 +775,7 @@ function BackupsTab({
   onRetentionSaved: () => Promise<void> | void;
 }) {
   const { toast } = useToast();
-  const { confirm } = useDialog();
+  const { confirm, prompt } = useDialog();
   const [backups, setBackups] = useState<ServerBackup[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -831,7 +835,25 @@ function BackupsTab({
   const create = async () => {
     setBusy(true);
     try {
-      const b = await createBackup(id);
+      let b: ServerBackup;
+      try {
+        b = await createBackup(id);
+      } catch (e) {
+        // A server with no data directory of its own falls back to /data, which
+        // most images do not have (#342). Ask which directory instead of only
+        // reporting that the guess was wrong.
+        if (!(e instanceof ApiError && e.status === 404)) throw e;
+        const path = await prompt({
+          title: 'Which directory should be backed up?',
+          message: `${sentence(e.message.replace(/ — .*$/, ''))}. Name the directory inside the container that holds this server's data.`,
+          label: 'Directory',
+          placeholder: '/usr/share/nginx/html',
+          confirmLabel: 'Back up',
+          validate: (v) => (v.trim().startsWith('/') ? null : 'An absolute path, starting with /'),
+        });
+        if (!path) return;
+        b = await createBackup(id, path.trim());
+      }
       const extra = (b as ServerBackup & { expired?: number }).expired;
       toast(`Backup ${b.name} created${extra ? ` — retention removed ${extra} older` : ''}`, 'success', 'Backup');
       await load();

@@ -15,6 +15,9 @@ export interface Snapshot {
   offsiteError?: string;
 }
 
+/** The directory to back up does not exist in the container (#342) — the caller's to fix, not a failed node. */
+export class BackupPathMissingError extends Error {}
+
 export interface BackupDeps {
   repo: Repository;
   snapshot(req: { agentUrl: string; containerId: string; path?: string }): Promise<Snapshot>;
@@ -51,6 +54,7 @@ export async function takeBackup(deps: BackupDeps, deploymentId: string, opts: {
       path: opts.path ?? defaultBackupPath(config),
     });
   } catch (err) {
+    if (err instanceof BackupPathMissingError) return { ok: false, status: 404, error: err.message };
     return { ok: false, status: 502, error: err instanceof Error ? err.message : 'backup failed' };
   }
 

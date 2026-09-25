@@ -64,6 +64,16 @@ describe('backup router', () => {
     expect((await request(app).post('/backups/restore').send({ containerId: 'c1', ref: '../evil' })).status).toBe(400);
   });
 
+  // Docker says "no such container" about a path the container lacks (#342).
+  it('says a missing directory is missing, without the container id', async () => {
+    runtime.snapshotPath = async () => {
+      throw Object.assign(new Error('(HTTP code 404) no such container - Could not find the file /data in container 666ac5068a1b'), { statusCode: 404 });
+    };
+    const res = await request(app).post('/backups').send({ containerId: '666ac5068a1b', path: '/data' });
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'nothing at /data in this server — name a directory to back up', path: '/data' });
+  });
+
   it('downloads a backup as a tar (#232)', async () => {
     const make = await request(app).post('/backups').send({ containerId: 'c1', path: '/data' });
     const res = await request(app).get(`/backups/${make.body.ref}/download`).buffer(true).parse((r, cb) => {
