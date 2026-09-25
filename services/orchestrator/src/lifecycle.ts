@@ -10,7 +10,12 @@ export interface Lifecycle {
   handleReport(envelope: EventEnvelope): Promise<void>;
 }
 
-export function createLifecycle(repo: Repository): Lifecycle {
+/** What else wants to know when a server's state changes — notifications (#236). */
+export interface LifecycleHooks {
+  onCrashed?(deploymentId: string, reason: string): Promise<void> | void;
+}
+
+export function createLifecycle(repo: Repository, hooks: LifecycleHooks = {}): Lifecycle {
   async function handleReport(envelope: EventEnvelope): Promise<void> {
     const type = envelope.event.type;
     const payload = readPayload(envelope.event) as Record<string, unknown>;
@@ -68,7 +73,11 @@ export function createLifecycle(repo: Repository): Lifecycle {
           status: 'crashed',
           stoppedAt: new Date().toISOString(),
         });
-        if (updated) await repo.appendDeploymentEvent(deploymentId, 'crashed', reason);
+        if (updated) {
+          await repo.appendDeploymentEvent(deploymentId, 'crashed', reason);
+          // A notification failing must not fail the report that caused it.
+          await (async () => hooks.onCrashed?.(deploymentId, reason))().catch(() => undefined);
+        }
         return;
       }
 

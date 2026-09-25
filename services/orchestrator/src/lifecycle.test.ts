@@ -110,4 +110,18 @@ describe('createLifecycle', () => {
     await lifecycle.handleReport(report({ type: 'server.crashed', payload: { deploymentId: d.id, containerId: 'old-c', reason: 'exited with code 137' } }));
     expect((await repo.getDeployment(d.id))?.status).toBe('running');
   });
+
+  it('tells the notifier about a crash, and a notifier failure does not fail the report (#236)', async () => {
+    const d = await seedDeployment(repo);
+    const told: string[] = [];
+    const withHook = createLifecycle(repo, {
+      onCrashed: (id, reason) => {
+        told.push(`${id}:${reason}`);
+        throw new Error('smtp down');
+      },
+    });
+    await withHook.handleReport(report({ type: 'server.crashed', payload: { deploymentId: d.id, containerId: '', reason: 'exited with code 1' } }));
+    expect(told).toEqual([`${d.id}:exited with code 1`]);
+    expect((await repo.getDeployment(d.id))?.status).toBe('crashed');
+  });
 });

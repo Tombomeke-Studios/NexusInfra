@@ -281,3 +281,44 @@ model PortAllocation {
   @@unique([nodeId, port])
   @@index([deploymentId])
 }
+
+// Where an account wants to hear about events (#236): a webhook URL, or its own
+// email address. `events` is a JSON list. The webhook secret signs each body so
+// the receiver can check it came from this panel; it is stored because signing
+// needs it, and shown to the owner once.
+model NotificationChannel {
+  id             String    @id
+  userId         String
+  kind           String
+  target         String
+  format         String    @default("json")
+  events         String    @default("[]")
+  secret         String?
+  // Set only when a platform administrator made it: everyone else's webhooks
+  // may not reach private addresses.
+  allowPrivate   Boolean   @default(false)
+  enabled        Boolean   @default(true)
+  lastDeliveryAt DateTime?
+  lastError      String?
+  createdAt      DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// One notification on its way to one channel (#236). Rows, not memory, so a
+// restart or an unreachable endpoint delays a notification rather than losing it.
+model NotificationDelivery {
+  id            String    @id
+  channelId     String
+  event         String
+  payload       String
+  status        String    @default("pending")
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lastError     String?
+  createdAt     DateTime  @default(now())
+  sentAt        DateTime?
+
+  @@index([status, nextAttemptAt])
+  @@index([channelId])
+}

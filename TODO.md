@@ -241,7 +241,7 @@ scrolling log lines describing events that never happened.
 - [x] Port allocation management per node — pool, conflicts, primary port (#233)
 - [x] Migrate a server to another node (#234)
 - [ ] Real SFTP access per server, honouring the file permissions (#235)
-- [ ] Notification service — mail/webhook on crash, suspend, node offline (#236)
+- [x] Notification service — mail/webhook on crash, suspend, node offline (#236)
 - [x] Search, filter and pagination on the Servers list (#237)
 - [x] Bulk actions on multiple servers (#238)
 - [x] Update a deployment's container image (pull + recreate) (#239)
@@ -297,7 +297,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 
 - [x] Multi-node: agent calls route to the owning node (#171); **verified live** with two agents on two separate Docker daemons — exec, files, backups and restore reach the right node, and a server moved between them (#234) (#21)
 - [~] Node Agent: offline event queue / replay on reconnect (#167 — **done**, in-memory outbox for lifecycle reports) + auto-restart on crash (still to do)
-- [~] Control Room: uptime % / history (#165 — **done**, in-memory) + alerting via the Notification/Mail service + DLQ monitoring (still to do)
+- [x] Control Room: uptime % / history (#165), DLQ monitoring (#243), and alerting — node offline/recovered and crashes are notified by webhook or email (#236)
 - [ ] Metrics: InfluxDB + Grafana dashboards
 - [ ] Prometheus `/metrics` on every service — the cheap half of the above (#246)
 - [~] Security: service-to-service auth (#169 — **done**, token-guarded agent API) + rate limiting (done in the gateway, #20); secrets-at-rest, token rotation, mTLS/HTTPS still to do

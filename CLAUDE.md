@@ -275,6 +275,9 @@ is the migrations directory.
 | `src/migrate.ts` | `planMigration` (#234): validates synchronously, returns the work to run in the background; copy volumes → copy backups → switch node → clean source. A failure before the switch removes only what it created. `isMigrating` is the lock start/update/delete check |
 | `src/portPool.ts` | Pure host-port planning (#233): `planPorts` (`auto` from the node's range, explicit ports held to it, conflicts named, 400 vs 409) + `parsePortRange`, `rangeOf`, `PortConflictError` |
 | `src/portAllocation.ts` | The repository side of host ports: `takenPorts`, `checkPorts`, `allocatePorts` (plan + write; the unique (node, port) index is the real guard), `backfillPortAllocations` (servers from before #233, once at start) |
+| `src/notify.ts` | Notifications, pure (#236): events, `webhookBody` (json/discord/slack), `signBody` (HMAC), `nextAttemptDelayMs`, `isPrivateAddress`, `parseChannelInput` (email only to your own address; node events admin-only), `nodeTransitions` |
+| `src/notifier.ts` | `createNotifier` — recipients (owner, shares, team; admins for node events), durable delivery rows, atomic claim, retry/give-up; `defaultTransports` (node http with `guardedLookup`, which refuses private addresses **at connect time**, and nodemailer) |
+| `src/notificationRoutes.ts` | `/me/notifications` CRUD + test + deliveries. A webhook secret is returned once |
 | `src/cron.ts` | Pure 5-field cron matcher (`cronMatches`, `isValidCron`) for the schedule runner |
 | `src/scheduler.ts` | Schedule runner: pure `selectDue`/`tickSchedules` + `startScheduler` (1-min poll); actions injected |
 | `src/users.ts` | Account domain: bcrypt hashing, email normalisation, password rules, edition-derived signup policy, and `createUserService` (register / authenticate / change password / first-run bootstrap) (#174) |

@@ -119,6 +119,15 @@ The agent's own work is not mistaken for this: a container it removed (stop, kil
 gone by the time it looks, and its own restarts are marked for their duration. Before this, a
 server that crashed stayed "running" in the panel until the agent itself restarted.
 
+**Notifications (#236).** Part of the orchestrator rather than a service of its own: it already holds
+the accounts, who can access which server, and every event worth announcing. A crash report
+(including the ones the agent now notices on its own, #332), a billing suspension, or a node going
+offline and coming back (a 5 s watcher; the first look only records, so a restart announces nothing)
+becomes one **delivery row per subscribed channel** — webhook (JSON, Discord or Slack) or email over
+SMTP. A 15 s worker sends what is due and retries with backoff; rows are claimed atomically, so two
+orchestrators never send one twice, and a restart or an unreachable receiver delays a notification
+rather than losing it.
+
 **Moving a server (#234).** Because a server's data is a set of volumes on one node, moving it is
 moving those: the orchestrator streams each from the source agent's volume export into the target
 agent's import (a created-never-started container of the server's own image carries the volume, so

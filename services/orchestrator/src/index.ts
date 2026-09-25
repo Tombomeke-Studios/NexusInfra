@@ -18,6 +18,10 @@ import { createUserService, isTotpRequired } from './users.js';
 import { createTeamRouter } from './teams.js';
 import { createNodeRegistry } from './nodeRegistry.js';
 import { createLifecycle } from './lifecycle.js';
+import { createNotifier, defaultTransports } from './notifier.js';
+import { createNotificationRouter } from './notificationRoutes.js';
+import { nodeTransitions } from './notify.js';
+import type { NodeHealth } from './types.js';
 import { createSuspendHandler, type SuspendPayload } from './suspend.js';
 import { startScheduler, type ScheduleActions } from './scheduler.js';
 import { requestImageUpdate } from './imageUpdate.js';
@@ -60,8 +64,22 @@ async function agentUrlFor(nodeId: string | null): Promise<string> {
 const users = createUserService({ repo });
 const registry = createNodeRegistry(repo);
 const reconcile = createReconcileHandler({ repo, publish: publishRabbitEvent });
-const lifecycle = createLifecycle(repo);
-const suspend = createSuspendHandler({ repo });
+// Notifications (#236): channels per account, durable deliveries, retried until
+// they land. Email is on when SMTP_URL is set.
+const notifier = createNotifier({
+  repo,
+  transports: defaultTransports(process.env.SMTP_URL, process.env.SMTP_FROM || 'NexusInfra <nexusinfra@localhost>'),
+  emailEnabled: Boolean(process.env.SMTP_URL),
+});
+const lifecycle = createLifecycle(repo, {
+  onCrashed: (deploymentId, reason) =>
+    void notifier.notifyServer(deploymentId, { event: 'server.crashed', summary: `crashed: ${reason}`, details: { reason } }).then(() => undefined),
+});
+const suspend = createSuspendHandler({
+  repo,
+  onSuspended: (deploymentId, reason) =>
+    void notifier.notifyServer(deploymentId, { event: 'server.suspended', summary: `was suspended: ${reason}`, details: { reason } }).then(() => undefined),
+});
 
 // Actions the schedule runner (#111) performs for a due schedule: restart the
 // server (over the bus) or snapshot a backup (via the owning node agent).
@@ -146,6 +164,7 @@ app.use(requireTokenScope);
 // in instead would lock out everyone the moment the flag was turned on.
 app.use(requireTotpEnrolment);
 app.use(catchAsync(createAccountRouter({ users, repo })));
+app.use(catchAsync(createNotificationRouter({ repo, notifier })));
 app.use(catchAsync(createUserAdminRouter({ users, repo })));
 app.use(catchAsync(createTeamRouter({ repo })));
 app.use(catchAsync(createApiRouter({ repo, scheduleActions })));
@@ -253,6 +272,29 @@ void users
 
 // Evaluate schedules once a minute (restart/backup on a cron).
 startScheduler(repo, scheduleActions);
+
+// Deliver what is due, and retry what failed (#236).
+setInterval(() => void notifier.drain().catch((err) => console.warn('[Orchestrator] notification delivery:', err)), 15_000).unref();
+
+// Watch the fleet for nodes going offline and coming back (#236). The first look
+// only records, so an orchestrator restart does not announce every offline node.
+let nodeStates = new Map<string, NodeHealth>();
+setInterval(() => {
+  void repo
+    .listNodes()
+    .then(async (nodes) => {
+      const { changes, next } = nodeTransitions(nodeStates, nodes, Date.now());
+      nodeStates = next;
+      for (const c of changes) {
+        await notifier.notifyAdmins({
+          event: c.to === 'offline' ? 'node.offline' : 'node.recovered',
+          summary: c.to === 'offline' ? `Node ${c.name} is offline — its servers are unreachable` : `Node ${c.name} is back online`,
+          node: { id: c.nodeId, name: c.name },
+        });
+      }
+    })
+    .catch(() => undefined);
+}, 5_000).unref();
 // Servers from before #233 hold ports nothing recorded; record them once, so the
 // conflict check knows about them.
 void backfillPortAllocations(repo)

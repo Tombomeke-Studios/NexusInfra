@@ -1088,3 +1088,62 @@ export function removeTeamMember(id: string, userId: string): Promise<void> {
 export function setServerTeam(deploymentId: string, teamId: string | null): Promise<{ deploymentId: string; teamId: string | null }> {
   return request(`/deployments/${deploymentId}/team`, { method: 'PATCH', body: JSON.stringify({ teamId }) });
 }
+
+// ── Notifications (#236) ──────────────────────────────────────────────────────
+export type NotificationEventName = 'server.crashed' | 'server.suspended' | 'node.offline' | 'node.recovered';
+
+export const NOTIFICATION_EVENT_LABELS: Record<NotificationEventName, string> = {
+  'server.crashed': 'A server crashes',
+  'server.suspended': 'A server is suspended for billing',
+  'node.offline': 'A node goes offline',
+  'node.recovered': 'A node comes back',
+};
+
+export interface NotificationChannel {
+  id: string;
+  kind: 'webhook' | 'email';
+  target: string;
+  format: 'json' | 'discord' | 'slack';
+  events: NotificationEventName[];
+  enabled: boolean;
+  signed: boolean;
+  lastDeliveryAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+}
+
+export interface NotificationSettings {
+  channels: NotificationChannel[];
+  capabilities: { email: boolean; events: NotificationEventName[] };
+}
+
+export function getNotificationSettings(): Promise<NotificationSettings> {
+  return request('/me/notifications');
+}
+
+export function createNotificationChannel(input: {
+  kind: 'webhook' | 'email';
+  target?: string;
+  format?: 'json' | 'discord' | 'slack';
+  events: NotificationEventName[];
+}): Promise<NotificationChannel & { secret?: string }> {
+  return request('/me/notifications', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function updateNotificationChannel(id: string, patch: { enabled?: boolean; events?: NotificationEventName[] }): Promise<NotificationChannel> {
+  return request(`/me/notifications/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+}
+
+export function deleteNotificationChannel(id: string): Promise<void> {
+  return request(`/me/notifications/${id}`, { method: 'DELETE' });
+}
+
+/** Send a test now. Resolves `{ ok: false, error }` rather than throwing when the endpoint refuses. */
+export async function testNotificationChannel(id: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    return await request(`/me/notifications/${id}/test`, { method: 'POST' });
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 502) return { ok: false, error: e.message };
+    throw e;
+  }
+}
