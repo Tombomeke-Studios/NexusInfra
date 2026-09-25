@@ -78,6 +78,23 @@ describe('backup router', () => {
     expect((await request(app).get('/backups/..%2Fevil/download')).status).toBe(400);
   });
 
+  // The filesystem's error names the node's backup directory; it used to reach
+  // the browser verbatim (#339).
+  it('says a missing archive is missing, without naming where it was', async () => {
+    const make = await request(app).post('/backups').send({ containerId: 'c1', path: '/data' });
+    await fs.rm(path.join(dir, `${make.body.ref}.tar`));
+
+    const download = await request(app).get(`/backups/${make.body.ref}/download`);
+    expect(download.status).toBe(404);
+    expect(download.body.error).toMatch(/no longer has the backup's archive/);
+    expect(download.body.error).not.toContain(dir);
+    expect(download.body.error).not.toContain('ENOENT');
+
+    const restore = await request(app).post('/backups/restore').send({ containerId: 'c1', ref: make.body.ref, path: '/data' });
+    expect(restore.status).toBe(404);
+    expect(restore.body.error).not.toContain(dir);
+  });
+
   describe('off-site copies (#232)', () => {
     class FakeBucket {
       objects = new Map<string, Buffer>();
@@ -130,6 +147,17 @@ describe('backup router', () => {
       const make = await request(offApp).post('/backups').send({ containerId: 'c1', path: '/data' });
       await request(offApp).delete(`/backups/${make.body.ref}?localOnly=true`).expect(204);
       expect(bucket.objects.has(make.body.ref)).toBe(true);
+    });
+
+    it('says so when the archive is gone from both places (#339)', async () => {
+      const make = await request(offApp).post('/backups').send({ containerId: 'c1', path: '/data' });
+      await fs.rm(path.join(dir, `${make.body.ref}.tar`));
+      bucket.objects.clear();
+
+      const res = await request(offApp).get(`/backups/${make.body.ref}/download`);
+      expect(res.status).toBe(404);
+      expect(res.body.error).toMatch(/neither this node nor the off-site store/);
+      expect(res.body.error).not.toContain(dir);
     });
 
     it('deletes the off-site copy with the backup', async () => {
