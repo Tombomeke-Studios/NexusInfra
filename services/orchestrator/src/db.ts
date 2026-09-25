@@ -158,6 +158,16 @@ function toNodeRecord(n: PrismaNode): NodeRecord {
   };
 }
 
+/** A stored JSON list of strings; anything else reads as empty rather than throwing. */
+function parseStringList(raw: string | null | undefined): string[] {
+  try {
+    const value = JSON.parse(raw ?? '[]');
+    return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 function toConfigRecord(c: PrismaConfig): ServerConfigRecord {
   return {
     id: c.id,
@@ -170,6 +180,7 @@ function toConfigRecord(c: PrismaConfig): ServerConfigRecord {
     resourceLimits: parseLimits(c.resourceLimits),
     autoRestart: c.autoRestart,
     dataPath: c.dataPath,
+    persistPaths: parseStringList(c.persistPaths),
     type: c.type,
     createdAt: c.createdAt.toISOString(),
   };
@@ -522,6 +533,7 @@ export class PrismaRepository implements Repository {
         resourceLimits: JSON.stringify(input.resourceLimits ?? {}),
         autoRestart: input.autoRestart ?? false,
         dataPath: input.dataPath ?? null,
+        persistPaths: JSON.stringify(input.persistPaths ?? []),
         type: input.type ?? 'generic',
       },
     });
@@ -615,6 +627,7 @@ export class PrismaRepository implements Repository {
         ...(provided(patch.env) ? { environmentVars: JSON.stringify(patch.env) } : {}),
         ...(provided(patch.resourceLimits) ? { resourceLimits: JSON.stringify(patch.resourceLimits) } : {}),
         ...(provided(patch.autoRestart) ? { autoRestart: patch.autoRestart } : {}),
+        ...(provided(patch.persistPaths) ? { persistPaths: JSON.stringify(patch.persistPaths) } : {}),
       },
     });
     return toConfigRecord(updated);
@@ -841,6 +854,7 @@ export class PrismaRepository implements Repository {
       env: config.env,
       resourceLimits: config.resourceLimits,
       autoRestart: config.autoRestart,
+      persistPaths: config.persistPaths,
       events: d.events.map((e) => ({
         id: e.id,
         deploymentId: e.deploymentId,

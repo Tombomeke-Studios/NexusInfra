@@ -72,6 +72,12 @@ export interface ServerConfigRecord {
    * (#268). Null for a server that starts from an empty container.
    */
   dataPath: string | null;
+  /**
+   * Extra container directories to keep across restarts (#324), on top of the
+   * egg's data directory and any `VOLUME` the image declares. How a plain
+   * application — which has no egg to say where its data lives — keeps it.
+   */
+  persistPaths: string[];
   type: string;
   createdAt: string;
 }
@@ -199,7 +205,7 @@ export interface CreateServerSubuserInput {
   status?: string;
 }
 
-export type ScheduleAction = 'restart' | 'backup';
+export type ScheduleAction = 'restart' | 'backup' | 'update';
 
 export interface ServerScheduleRecord {
   id: string;
@@ -248,6 +254,8 @@ export interface DeploymentDetail extends DeploymentView {
   env: Record<string, string>;
   resourceLimits: ResourceLimits;
   autoRestart: boolean;
+  /** Directories kept across restarts in addition to the egg's own (#324). */
+  persistPaths: string[];
 }
 
 export interface UpsertNodeInput {
@@ -276,6 +284,7 @@ export interface CreateServerConfigInput {
   autoRestart?: boolean;
   /** Import an existing host directory as this server's data directory (#268). */
   dataPath?: string | null;
+  persistPaths?: string[];
   type?: string;
 }
 
@@ -320,6 +329,7 @@ export interface UpdateServerConfigInput {
   env?: Record<string, string>;
   resourceLimits?: ResourceLimits;
   autoRestart?: boolean;
+  persistPaths?: string[];
 }
 
 /** One signed-in session (#227). A token names one; deleting it ends that login. */

@@ -54,9 +54,10 @@ exposes `pendingEvents` / `droppedEvents`.
 |---|---|---|
 | `monitoring.heartbeat.service.{name}` | every service (1s) | control-room |
 | `monitoring.heartbeat.node.{id}` | node-agent (1s pulse, resources every 5s) | control-room |
-| `infra.server.start` / `infra.server.stop` / `infra.server.kill` / `infra.server.restart` | orchestrator | node-agent |
+| `infra.server.start` / `infra.server.stop` / `infra.server.kill` / `infra.server.restart` / `infra.server.update` (#239) | orchestrator | node-agent |
 | `infra.server.started` / `infra.server.stopped` / `infra.server.crashed` | node-agent | orchestrator **and** billing-bridge (runtime intervals, hosted) |
 | `infra.node.inventory` (#244) | node-agent, once at startup | orchestrator |
+| `infra.server.image-updated` / `infra.server.update-failed` (#239) | node-agent | orchestrator (audit trail) |
 | `infra.deployment.created` | orchestrator | billing-bridge (learns owner + limits for tracking, hosted) |
 | `bank.payment.request` | billing-bridge | FinVault (credit top-up charge) |
 | `bank.payment.confirmed` / `bank.payment.failed` | FinVault | billing-bridge (add/mark-failed credit) |
@@ -99,6 +100,16 @@ append-only deployment-event audit trail. Schema source of truth: the service's
 
 The Orchestrator's node registry mirrors the same last-seen status model above (healthy < 3s ≤
 degraded < 10s ≤ offline); only `healthy` nodes are eligible for placement.
+
+**Server data (#324).** A stop removes the container (#52), so nothing a server needs to keep may live
+in it. Each server's data directories are **named Docker volumes labelled with its deployment id** —
+the egg's data directory, every `VOLUME` its image declares, and any `persistPaths` an application
+names. The agent creates them idempotently at start under deterministic names, so the next container
+mounts the same ones; deleting the server asks its node to remove everything carrying that label. An
+imported host directory (#268) is a bind mount instead, and outranks a volume on the same path.
+Before this, every stop deleted the server's files. The start command is built in one place
+(`startCommand.ts`) for creation, start and reconciliation — reconciliation's hand-written copy had
+already lost the imported mount.
 
 **Multi-node routing (#171).** Placement spans every healthy node, and start/stop/restart are addressed
 by `nodeId` over the bus. Direct agent calls (files, exec, terminal, logs/stats, backups, databases)

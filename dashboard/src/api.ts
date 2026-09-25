@@ -86,6 +86,12 @@ export interface DeploymentDetail extends DeploymentView {
   env: Record<string, string>;
   resourceLimits: ResourceLimits;
   autoRestart: boolean;
+  /**
+   * Extra directories kept across restarts (#324). The egg's data directory and
+   * any `VOLUME` the image declares are kept as well, without being listed here.
+   * Absent on older responses.
+   */
+  persistPaths?: string[];
 }
 
 export interface ResourceLimits {
@@ -178,6 +184,8 @@ interface CreateDeploymentBase {
   type?: string;
   /** Pin the server to a node; omit to let the orchestrator pick the emptiest (#254). */
   nodeId?: string;
+  /** Container directories to keep across restarts, beyond the egg's own (#324). */
+  persistPaths?: string[];
 }
 
 /** Thrown when the API responds with a non-2xx status; carries the HTTP status. */
@@ -575,6 +583,7 @@ export interface UpdateDeploymentInput {
   env?: Record<string, string>;
   resourceLimits?: ResourceLimits;
   autoRestart?: boolean;
+  persistPaths?: string[];
 }
 
 /**
@@ -600,6 +609,56 @@ export function restartDeployment(id: string): Promise<{ status: string; deploym
 
 export function startDeployment(id: string): Promise<{ status: string; deploymentId: string }> {
   return request(`/deployments/${id}/start`, { method: 'POST' });
+}
+
+/** The lifecycle commands that can be sent to several servers at once (#238). */
+export type BulkAction = 'start' | 'stop' | 'restart' | 'kill';
+
+/** One server's answer inside a bulk request. `name` is absent for an id you cannot see. */
+export interface BulkResult {
+  id: string;
+  name?: string;
+  ok: boolean;
+  status: number;
+  error?: string;
+}
+
+export interface BulkOutcome {
+  action: BulkAction;
+  succeeded: number;
+  failed: number;
+  results: BulkResult[];
+}
+
+/**
+ * Send one command to several servers (#238). Each is authorized on its own, so
+ * a 200 can still carry failures — read `failed`, not the status code.
+ */
+export function bulkDeploymentAction(action: BulkAction, ids: string[]): Promise<BulkOutcome> {
+  return request('/deployments/bulk', { method: 'POST', body: JSON.stringify({ action, ids }) });
+}
+
+/**
+ * Whether the registry has a newer image than this server runs (#239).
+ * `unknown` means the registry could not be asked — not that nothing is new.
+ */
+export type ImageUpdateStatus = 'current' | 'update-available' | 'pulled-not-applied' | 'unknown';
+
+export interface ImageStatus {
+  image: string;
+  status: ImageUpdateStatus;
+  remoteDigest: string | null;
+  localDigest: string | null;
+  checkedAt: string;
+}
+
+export function getImageStatus(id: string): Promise<ImageStatus> {
+  return request(`/deployments/${id}/image`);
+}
+
+/** Pull the tag afresh; a running server is recreated from it, keeping its data (#239). */
+export function updateImage(id: string): Promise<{ status: string; recreate: boolean }> {
+  return request(`/deployments/${id}/update`, { method: 'POST' });
 }
 
 /** Permanently delete a deployment (stops it first if running). */
@@ -764,7 +823,7 @@ export function deleteBackup(id: string, backupId: string): Promise<void> {
 }
 
 // ── Schedules (#111) ──────────────────────────────────────────────────────────
-export type ScheduleAction = 'restart' | 'backup';
+export type ScheduleAction = 'restart' | 'backup' | 'update';
 
 export interface ServerSchedule {
   id: string;

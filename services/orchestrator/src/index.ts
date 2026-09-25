@@ -20,6 +20,7 @@ import { createNodeRegistry } from './nodeRegistry.js';
 import { createLifecycle } from './lifecycle.js';
 import { createSuspendHandler, type SuspendPayload } from './suspend.js';
 import { startScheduler, type ScheduleActions } from './scheduler.js';
+import { requestImageUpdate } from './imageUpdate.js';
 import { createReconcileHandler } from './reconcile.js';
 
 // ── Orchestrator ────────────────────────────────────────────────────────────
@@ -65,16 +66,21 @@ const suspend = createSuspendHandler({ repo });
 const scheduleActions: ScheduleActions = {
   async restart(deploymentId) {
     const detail = await repo.getDeployment(deploymentId);
-    if (!detail?.containerId || !detail.nodeId) return;
+    // Status too: a row stopped before #321 still names a removed container.
+    if (detail?.status !== 'running' || !detail.containerId || !detail.nodeId) return;
     await publishRabbitEvent(
       'infra.server.restart',
       buildEnvelope('orchestrator', { type: 'server.restart', payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId } })
     );
     await repo.appendDeploymentEvent(detail.id, 'schedule-restart', 'restarted by schedule');
   },
+  async update(deploymentId) {
+    const outcome = await requestImageUpdate({ repo, publish: publishRabbitEvent }, deploymentId, 'schedule');
+    if (outcome.status >= 300) throw new Error(outcome.body.error ?? 'scheduled update failed');
+  },
   async backup(deploymentId) {
     const detail = await repo.getDeployment(deploymentId);
-    if (!detail?.containerId) return;
+    if (detail?.status !== 'running' || !detail.containerId) return;
     const r = await agentFetch(`${await agentUrlFor(detail.nodeId)}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ containerId: detail.containerId }) });
     if (!r.ok) throw new Error('scheduled backup failed');
     const snap = (await r.json()) as { ref: string; sizeBytes: number; path: string };
@@ -245,6 +251,9 @@ async function start() {
         'infra.server.started',
         'infra.server.stopped',
         'infra.server.crashed',
+        // Image updates (#239): what was pulled, or why it could not be.
+        'infra.server.image-updated',
+        'infra.server.update-failed',
         // What a node reports when its agent restarts, so our records stop
         // describing a machine that no longer matches (#244).
         'infra.node.inventory',

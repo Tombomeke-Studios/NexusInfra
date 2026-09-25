@@ -31,6 +31,18 @@ class FakeRuntime implements ContainerRuntime {
     this.calls.push(`kill:${containerId}`);
     if (this.failOn === 'kill') throw new Error('no such container');
   }
+  pulls: string[] = [];
+  async pullImage(image: string): Promise<{ imageId: string; digest: string | null }> {
+    this.calls.push(`pull:${image}`);
+    if (this.failOn === 'pull') throw new Error('manifest unknown');
+    return { imageId: 'img-new', digest: 'sha256:new' };
+  }
+  async imageFacts(image: string): Promise<import('./images.js').ImageFacts> {
+    return { image, remoteDigest: null, localRepoDigests: [], localImageId: null, containerImageId: null };
+  }
+  async purgeDeployment(): Promise<{ containers: number; volumes: number }> {
+    return { containers: 0, volumes: 0 };
+  }
   async restart(containerId: string): Promise<void> {
     this.calls.push(`restart:${containerId}`);
     if (this.failOn === 'restart') throw new Error('restart failed');
@@ -106,6 +118,21 @@ describe('Node Agent command handling', () => {
     expect(published[0].envelope.event.type).toBe('server.started');
     expect((published[0].envelope.event.payload as any).containerId).toBe('container-xyz');
     expect((published[0].envelope.event.payload as any).nodeId).toBe(NODE_ID);
+  });
+
+  it('names the server and its persistent directories on the start spec (#324)', async () => {
+    const { runtime, agent } = makeAgent();
+    await agent.handleCommand(
+      cmd({ type: 'server.start', payload: { deploymentId: 'd-1', nodeId: NODE_ID, dockerImage: 'nginx', persistPaths: ['/data'] } })
+    );
+    expect(runtime.lastStartSpec?.deploymentId).toBe('d-1');
+    expect(runtime.lastStartSpec?.persistPaths).toEqual(['/data']);
+  });
+
+  it('starts with no extra directories when an older orchestrator sends none', async () => {
+    const { runtime, agent } = makeAgent();
+    await agent.handleCommand(cmd({ type: 'server.start', payload: { deploymentId: 'd-1', nodeId: NODE_ID, dockerImage: 'nginx' } }));
+    expect(runtime.lastStartSpec?.persistPaths).toEqual([]);
   });
 
   it('forwards the resource limits from the command to the runtime start spec (#107)', async () => {
@@ -296,5 +323,55 @@ describe('Node Agent command handling', () => {
     await agent.handleCommand(envelope);
     expect(runtime.calls).toEqual(['stop:c-enc']);
     expect(published[0].key).toBe('infra.server.stopped');
+  });
+
+  describe('server.update (#239)', () => {
+    const update = (recreate: boolean) =>
+      cmd({
+        type: 'server.update',
+        payload: { deploymentId: 'd-1', nodeId: NODE_ID, dockerImage: 'nginx:alpine', containerName: 'nexus-web-d1', persistPaths: ['/data'], recreate },
+      });
+
+    it('pulls, recreates from the new image, and reports both', async () => {
+      const { runtime, published, agent } = makeAgent();
+      await agent.handleCommand(update(true));
+
+      expect(runtime.calls).toEqual(['pull:nginx:alpine', 'start:nginx:alpine']);
+      // The new container keeps the server's volumes (#324).
+      expect(runtime.lastStartSpec?.persistPaths).toEqual(['/data']);
+      expect(published.map((p) => p.key)).toEqual(['infra.server.started', 'infra.server.image-updated']);
+      expect(published[1].envelope.event.payload).toMatchObject({ deploymentId: 'd-1', digest: 'sha256:new', recreated: true });
+    });
+
+    it('only pulls for a server that is not running', async () => {
+      const { runtime, published, agent } = makeAgent();
+      await agent.handleCommand(update(false));
+
+      expect(runtime.calls).toEqual(['pull:nginx:alpine']);
+      expect(published.map((p) => p.key)).toEqual(['infra.server.image-updated']);
+    });
+
+    it('leaves a running server untouched when the pull fails', async () => {
+      const { runtime, published, agent } = makeAgent();
+      runtime.failOn = 'pull';
+      await agent.handleCommand(update(true));
+
+      expect(runtime.calls).toEqual(['pull:nginx:alpine']);
+      expect(published.map((p) => p.key)).toEqual(['infra.server.update-failed']);
+      expect(published[0].envelope.event.payload).toMatchObject({ reason: 'manifest unknown' });
+    });
+
+    it('reports a crash when the new container will not start', async () => {
+      const { runtime, published, agent } = makeAgent();
+      runtime.failOn = 'start';
+      await agent.handleCommand(update(true));
+      expect(published.map((p) => p.key)).toEqual(['infra.server.crashed']);
+    });
+
+    it('ignores an update for another node', async () => {
+      const { runtime, agent } = makeAgent();
+      await agent.handleCommand(cmd({ type: 'server.update', payload: { deploymentId: 'd-1', nodeId: 'elsewhere', dockerImage: 'nginx', recreate: true } }));
+      expect(runtime.calls).toEqual([]);
+    });
   });
 });

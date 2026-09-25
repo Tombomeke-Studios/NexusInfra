@@ -248,6 +248,22 @@ describe('ServerDetail Settings tab', () => {
     expect(JSON.parse(patch![1].body as string)).toMatchObject({ name: 'new-name', env: { A: '1' } });
   });
 
+  it('saves which directories survive a restart (#324)', async () => {
+    renderDetail('owner', { name: 'web', env: {}, persistPaths: ['/srv'] });
+    await userEvent.click(await screen.findByRole('button', { name: 'settings' }));
+
+    const field = await screen.findByPlaceholderText('/data, /var/lib/app');
+    expect(field).toHaveValue('/srv');
+    await userEvent.clear(field);
+    await userEvent.type(field, '/srv, /var/lib/app');
+    await userEvent.click(screen.getByRole('button', { name: /save configuration/i }));
+
+    const patch = (globalThis.fetch as unknown as { mock: { calls: [string, { method?: string; body?: string }][] } }).mock.calls.find(
+      ([u, o]) => String(u).includes('/deployments/dep-1') && o?.method === 'PATCH'
+    );
+    expect(JSON.parse(patch![1].body as string).persistPaths).toEqual(['/srv', '/var/lib/app']);
+  });
+
   // An egg server was created with a proper form and then edited as raw JSON, with
   // no labels, no validation and nothing stopping you deleting EULA (#272).
   describe('an egg server', () => {
@@ -512,5 +528,65 @@ describe('ServerDetail Network tab shows the protocol (#313)', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'network' }));
 
     expect(await screen.findByText('TCP')).toBeInTheDocument();
+  });
+});
+
+describe('ServerDetail image updates (#239)', () => {
+  beforeEach(() => vi.resetAllMocks());
+  afterEach(() => vi.unstubAllGlobals());
+
+  function stubWithImage(role: string, imageBody: unknown = { image: 'nginx', status: 'update-available', remoteDigest: 'sha256:b', localDigest: 'sha256:a', checkedAt: '' }) {
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const path = String(url);
+      let body: unknown = [];
+      if (path.endsWith('/deployments/dep-1')) body = { ...BASE, role };
+      else if (path.endsWith('/deployments/dep-1/image')) body = imageBody;
+      else if (path.endsWith('/deployments/dep-1/update') && init?.method === 'POST') body = { status: 'updating', recreate: true };
+      return Promise.resolve({ ok: true, status: path.endsWith('/update') ? 202 : 200, json: async () => body } as Response);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <MemoryRouter initialEntries={['/servers/dep-1']}>
+        <ToastProvider>
+          <DialogProvider>
+            <Routes>
+              <Route path="/servers/:id" element={<ServerDetail />} />
+            </Routes>
+          </DialogProvider>
+        </ToastProvider>
+      </MemoryRouter>
+    );
+    return fetchMock;
+  }
+
+  it('checks the registry on demand and says what it found', async () => {
+    stubWithImage('owner');
+    await userEvent.click(await screen.findByRole('button', { name: 'startup' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }));
+    expect(await screen.findByText('A newer image is available for this tag.')).toBeInTheDocument();
+  });
+
+  it('does not call an unreachable registry "up to date"', async () => {
+    stubWithImage('owner', { image: 'nginx', status: 'unknown', remoteDigest: null, localDigest: 'sha256:a', checkedAt: '' });
+    await userEvent.click(await screen.findByRole('button', { name: 'startup' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }));
+    expect(await screen.findByText(/not known to be current/)).toBeInTheDocument();
+  });
+
+  it('updates and recreates a running server', async () => {
+    const fetchMock = stubWithImage('owner');
+    await userEvent.click(await screen.findByRole('button', { name: 'startup' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Update and recreate' }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([u, o]) => String(u).endsWith('/deployments/dep-1/update') && o?.method === 'POST')).toBe(true)
+    );
+    expect(await screen.findByText(/Its data is kept/)).toBeInTheDocument();
+  });
+
+  it('lets an operator check but not update', async () => {
+    stubWithImage('operator');
+    await userEvent.click(await screen.findByRole('button', { name: 'startup' }));
+    expect(screen.getByRole('button', { name: 'Check for updates' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Update and recreate' })).not.toBeInTheDocument();
   });
 });
