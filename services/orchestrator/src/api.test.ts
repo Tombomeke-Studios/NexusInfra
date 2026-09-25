@@ -16,6 +16,8 @@ import { FALLBACK_VERSIONS, offeredVersions } from './minecraftVersions.js';
 // call to an unreachable bridge whenever NEXUS_EDITION=hosted, so the suite sat
 // waiting on DNS failures for a minute in the hosted CI leg (#173).
 const allowQuota: Parameters<typeof createApiRouter>[0]['checkQuota'] = async () => ({ allowed: true, limit: Infinity });
+// The same for plan entitlements (#297): no plan unless a suite brings one.
+const noPlan: Parameters<typeof createApiRouter>[0]['getEntitlements'] = async () => null;
 
 // Every route is now behind authentication and per-server authorization (#175),
 // so these suites run as a real account. `asPrincipal` stands in for requireAuth,
@@ -48,7 +50,7 @@ function buildApp(
   app.use(
     createApiRouter({
       repo,
-      checkQuota: allowQuota,
+      checkQuota: allowQuota, getEntitlements: noPlan,
       publish: async (key, envelope) => {
         published.push({ key, envelope });
         return true;
@@ -883,7 +885,7 @@ describe('deployment API', () => {
     dbApp.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota,
+        checkQuota: allowQuota, getEntitlements: noPlan,
         publish: async (key, envelope) => (published.push({ key, envelope }), true),
         provisionDatabase: async (req) => {
           provisioned.push({ engine: req.engine, name: req.name });
@@ -936,7 +938,7 @@ describe('deployment API', () => {
     bkApp.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota,
+        checkQuota: allowQuota, getEntitlements: noPlan,
         publish: async (key, envelope) => (published.push({ key, envelope }), true),
         snapshotBackup: async (req) => (snapshots.push(req.containerId), { ref: 'bk_x', sizeBytes: 4096, path: '/data' }),
         restoreBackup: async (req) => void restores.push(req.ref),
@@ -973,7 +975,7 @@ describe('deployment API', () => {
     bkApp.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota,
+        checkQuota: allowQuota, getEntitlements: noPlan,
         publish: async () => true,
         snapshotBackup: async () => ({ ref: 'bk_x', sizeBytes: 1, path: '/data' }),
         restoreBackup: async () => {
@@ -1057,7 +1059,7 @@ describe('deployment API', () => {
     schedApp.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota,
+        checkQuota: allowQuota, getEntitlements: noPlan,
         publish: async (key, envelope) => (published.push({ key, envelope }), true),
         scheduleActions: { restart: async (id) => void ran.push(`restart:${id}`), backup: async (id) => void ran.push(`backup:${id}`) },
       })
@@ -1089,6 +1091,134 @@ describe('deployment API', () => {
   });
 });
 
+describe('plan entitlements (#297)', () => {
+  const plan = (maxRamMb: number | null, maxBackupsPerServer: number | null = null) => ({
+    planId: 'standard',
+    planName: 'Standard',
+    maxServers: 5,
+    maxDatabases: 5,
+    maxRamMb,
+    maxBackupsPerServer,
+    charging: { basis: 'runtime-hours' as const, pricePerHour: 0.02, currency: 'EUR', freeHoursPerMonth: 100, sizeFactor: { standardCpuPercent: 50, standardRamPercent: 50, minimum: 0.25 } },
+  });
+
+  function planApp(repo: InMemoryRepository, entitlements: ReturnType<typeof plan> | null, principal = OWNER, asked: string[] = []) {
+    const app = express();
+    app.use(express.json());
+    app.use(asPrincipal(principal));
+    app.use(
+      createApiRouter({
+        repo,
+        publish: async () => true,
+        checkQuota: allowQuota,
+        getEntitlements: async (userId) => (asked.push(userId), entitlements),
+        snapshotBackup: async () => ({ ref: `bk_${Math.random().toString(36).slice(2)}`, sizeBytes: 1, path: '/data' }),
+        removeBackup: async () => undefined,
+      })
+    );
+    return app;
+  }
+
+  async function seedNode(repo: InMemoryRepository) {
+    // 8 GB, so a percentage is easy to read in megabytes.
+    await repo.upsertNode({ id: 'node-local', name: 'node-local', lastHeartbeat: new Date().toISOString(), cpuPercent: 5, ramUsedMb: 500, ramTotalMb: 8192 });
+  }
+
+  it('creates a server that fits the plan', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const res = await request(planApp(repo, plan(4096))).post('/deployments').send({ name: 'a', dockerImage: 'nginx', resourceLimits: { ramMb: 2048 } });
+    expect(res.status).toBe(201);
+  });
+
+  it('refuses a server that does not fit what is left, naming the numbers', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const app = planApp(repo, plan(4096));
+    expect((await request(app).post('/deployments').send({ name: 'a', dockerImage: 'nginx', resourceLimits: { ramMb: 3072 } })).status).toBe(201);
+    // 25% of this node is 2048 MB, and 1024 MB is left.
+    const res = await request(app).post('/deployments').send({ name: 'b', dockerImage: 'nginx', resourceLimits: { ramPercent: 25 } });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('this server needs 2 GB of memory, and your plan has 1 GB of its 4 GB left');
+    expect((await repo.listDeployments()).map((d) => d.name)).toEqual(['a']);
+  });
+
+  it('refuses an uncapped server under a memory ceiling', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const res = await request(planApp(repo, plan(4096))).post('/deployments').send({ name: 'a', dockerImage: 'nginx' });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/needs a memory limit/);
+  });
+
+  it('applies nothing where there is no plan (community, or the bridge is down)', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const res = await request(planApp(repo, null)).post('/deployments').send({ name: 'a', dockerImage: 'nginx' });
+    expect(res.status).toBe(201);
+  });
+
+  it('refuses growing a server past the plan, and allows shrinking it', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const app = planApp(repo, plan(4096));
+    const created = await request(app).post('/deployments').send({ name: 'a', dockerImage: 'nginx', resourceLimits: { ramMb: 2048 } });
+    await request(app).post('/deployments').send({ name: 'b', dockerImage: 'nginx', resourceLimits: { ramMb: 1024 } });
+
+    const grow = await request(app).patch(`/deployments/${created.body.id}`).send({ resourceLimits: { ramMb: 4096 } });
+    expect(grow.status).toBe(409);
+    expect(grow.body.error).toMatch(/needs 4 GB.*3 GB of its 4 GB left/);
+
+    expect((await request(app).patch(`/deployments/${created.body.id}`).send({ resourceLimits: { ramMb: 3072 } })).status).toBe(200);
+    expect((await request(app).patch(`/deployments/${created.body.id}`).send({ resourceLimits: { ramMb: 512 } })).status).toBe(200);
+  });
+
+  it("measures an administrator's edit against the owner's plan, not their own", async () => {
+    // Resizing somebody's server spends that person's memory.
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const created = await request(planApp(repo, plan(4096))).post('/deployments').send({ name: 'a', dockerImage: 'nginx', resourceLimits: { ramMb: 1024 } });
+    const asked: string[] = [];
+    const admin = planApp(repo, plan(4096), PLATFORM_ADMIN, asked);
+    const res = await request(admin).patch(`/deployments/${created.body.id}`).send({ resourceLimits: { ramMb: 8192 } });
+    expect(res.status).toBe(409);
+    expect(asked).toEqual([OWNER.id]);
+  });
+
+  it('shows the plan and what is used of it', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const app = planApp(repo, plan(4096, 10));
+    await request(app).post('/deployments').send({ name: 'a', dockerImage: 'nginx', resourceLimits: { ramPercent: 25 } });
+    const res = await request(app).get('/me/entitlements');
+    expect(res.status).toBe(200);
+    expect(res.body.entitlements).toMatchObject({ planName: 'Standard', maxRamMb: 4096, maxBackupsPerServer: 10, charging: { basis: 'runtime-hours' } });
+    expect(res.body.usage).toEqual({ servers: 1, databases: 0, ramMb: 2048, uncappedServers: 0 });
+  });
+
+  it('answers 404 where no plan applies', async () => {
+    expect((await request(planApp(new InMemoryRepository(), null)).get('/me/entitlements')).status).toBe(404);
+  });
+
+  it("rotates backups at the plan's ceiling instead of refusing the next one", async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const app = planApp(repo, plan(null, 2));
+    const created = await request(app).post('/deployments').send({ name: 'a', dockerImage: 'nginx' });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'abc', nodeId: 'node-local' });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      for (let i = 0; i < 3; i++) {
+        vi.setSystemTime(Date.UTC(2026, 8, 1, 3, i));
+        expect((await request(app).post(`/deployments/${created.body.id}/backups`).send({})).status).toBe(201);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await repo.listBackups(created.body.id)).toHaveLength(2);
+  });
+});
+
 describe('plan quota enforcement (#148)', () => {
   // A denying checkQuota stands in for the Billing Bridge in the hosted edition.
   function buildApp(repo: InMemoryRepository, checkQuota: Parameters<typeof createApiRouter>[0]['checkQuota']) {
@@ -1096,7 +1226,7 @@ describe('plan quota enforcement (#148)', () => {
     app.use(express.json());
 
     app.use(asPrincipal());
-    app.use(createApiRouter({ repo, publish: async () => true, checkQuota, provisionDatabase: async () => ({ containerId: 'db-c', port: 5432 }) }));
+    app.use(createApiRouter({ repo, publish: async () => true, checkQuota, getEntitlements: noPlan, provisionDatabase: async () => ({ containerId: 'db-c', port: 5432 }) }));
     return app;
   }
 
@@ -1152,7 +1282,7 @@ describe('multi-node agent routing (#171)', () => {
     app.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota,
+        checkQuota: allowQuota, getEntitlements: noPlan,
         publish: async () => true,
         provisionDatabase: async (req) => (calls.push(req.agentUrl), { containerId: 'db-1', port: 5432 }),
         snapshotBackup: async (req) => (calls.push(req.agentUrl), { ref: 'bk', sizeBytes: 1, path: '/data' }),
@@ -1747,7 +1877,7 @@ describe('the egg catalogue fills in the version list (#311)', () => {
     const app = express();
     app.use(express.json());
     app.use(asPrincipal());
-    app.use(createApiRouter({ repo, checkQuota: allowQuota, publish: async () => true, minecraftVersions: versions }));
+    app.use(createApiRouter({ repo, checkQuota: allowQuota, getEntitlements: noPlan, publish: async () => true, minecraftVersions: versions }));
     return app;
   }
 
@@ -1986,7 +2116,7 @@ describe('a server keeps its data across restarts (#324)', () => {
     failing.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota,
+        checkQuota: allowQuota, getEntitlements: noPlan,
         publish: async () => true,
         purgeDeploymentData: async () => {
           throw new Error('node agent unreachable');
@@ -2058,7 +2188,7 @@ describe('updating a server image (#239)', () => {
     statusApp.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota,
+        checkQuota: allowQuota, getEntitlements: noPlan,
         publish: async () => true,
         imageStatus: async (q) => {
           asked.push(q);
@@ -2079,7 +2209,7 @@ describe('updating a server image (#239)', () => {
     statusApp.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota,
+        checkQuota: allowQuota, getEntitlements: noPlan,
         publish: async () => true,
         imageStatus: async () => {
           throw new Error('node agent unreachable');
@@ -2111,7 +2241,7 @@ describe('backup retention and download (#232)', () => {
     app.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota,
+        checkQuota: allowQuota, getEntitlements: noPlan,
         publish: async () => true,
         snapshotBackup: async ({ path }) => ({ ref: `bk_${++n}`, sizeBytes: 3, path: path ?? '/data', offsite: null }),
         removeBackup: async (_url, ref) => void removedRefs.push(ref),
@@ -2254,7 +2384,7 @@ describe('POST /deployments/:id/migrate (#234)', () => {
     app.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota,
+        checkQuota: allowQuota, getEntitlements: noPlan,
         publish: async () => true,
         purgeDeploymentData: async () => undefined,
         migrationTransport: {

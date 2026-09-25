@@ -32,9 +32,34 @@ the panel is **not** the owner of the hardware (a hosting-provider scenario). So
 - **Usage-based, resource-scaled pricing.** Cost per server = runtime hours × a base hourly rate ×
   a resource factor derived from the server's chosen CPU/RAM limits. Rates live in `billing_plans` so
   they're tunable without a code change.
-- **Quotas per plan.** A plan also caps **how many servers and databases** a user may have (and can cap
-  other extras, e.g. backups). Enforced at create-time in the Orchestrator (409 when over quota) — only
-  in hosted edition.
+- **Quotas per plan.** A plan also caps **how many servers and databases** a user may have. Enforced at
+  create-time in the Orchestrator (409 when over quota) — only in hosted edition.
+- **Entitlements (#297).** Beyond the counts, a plan sets:
+  - **Memory**: a ceiling on the memory an account commits *across all its servers* — a total, so it
+    cannot be multiplied by creating more servers. Measured in MB on the node each server runs on (a
+    percentage cap is only a size once the node is known). Under a ceiling, every server needs a memory
+    limit: an uncapped one could take the whole node. Creating a server or raising its limit past what
+    is left is refused (409, naming the numbers). *Lowering* one is always allowed, even while the
+    account is still over, so an account the plan shrank under has a way back.
+  - **Backups per server**: a ceiling that works like `keepLast` — the next backup replaces the oldest
+    rather than being refused, because a nightly schedule that starts failing protects nothing. A
+    server's own, tighter retention still applies; the audit trail says when a backup went because of
+    the plan.
+  - **Storage is not modelled.** It could not be enforced: per-server disk quotas need filesystem
+    support most hosts lack (#278). A number the platform cannot hold to would be a promise, not a limit.
+  - `null` means no ceiling. A plan that existed before these fields keeps behaving as it did — they are
+    empty until someone sets them; a fresh install seeds the default plan with 8 GB and 10 backups.
+- **Who is measured.** A server counts against its **owner's** plan, whoever makes the change: an
+  administrator resizing somebody's server spends that person's memory. The platform role buys no
+  exemption — it is standing in the installation, not a bigger plan. Moving a server between nodes is an
+  operator's decision and is not measured.
+- **The charging model is stated, not implied.** Creating a server costs nothing, and neither does a
+  stopped one: the charge is per hour a server *runs*. The New Deployment form and the Billing page say
+  exactly that, built from the same constants the charge uses (`chargingModel` in `pricing.ts`), so the
+  sentence cannot drift from the arithmetic. It used to be unstated, and "nothing happened when I
+  created a server" read as a bug.
+- **If the Billing Bridge is down**, nothing is enforced (and it is logged) — the same fail-open decision
+  as the quota check: a billing outage must not stop people running servers.
 - **Prepaid credit wallet in NexusInfra.** Each user has a **credit balance** held in NexusInfra. Usage
   each cycle draws it down. You **top up** the balance **via FinVault** — so you can fund the wallet
   without linking a card directly to NexusInfra.

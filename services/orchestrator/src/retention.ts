@@ -34,6 +34,17 @@ export function expiredBackups(backups: ServerBackupRecord[], policy: BackupRete
   });
 }
 
+/**
+ * The policy a server actually runs under: its own, held to the plan's ceiling
+ * on backups per server (#297). The plan does not refuse a backup at the
+ * ceiling — a schedule is a standing instruction, and failing it every night
+ * protects nothing — it rotates, oldest first, like `keepLast` does.
+ */
+export function withPlanCeiling(policy: BackupRetention, ceiling: number | null | undefined): BackupRetention {
+  if (ceiling == null || ceiling < 1) return policy;
+  return { ...policy, keepLast: policy.keepLast ? Math.min(policy.keepLast, ceiling) : ceiling };
+}
+
 /** Validate a policy from a request. A zero would read as "keep none", so it is refused. */
 export function parseRetention(value: unknown): { ok: true; policy: BackupRetention } | { ok: false; error: string } {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {

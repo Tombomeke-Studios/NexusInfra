@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { NewDeployment } from './NewDeployment';
+import { EditionProvider } from '../edition';
 
 // The catalogue the orchestrator serves (#231). The form renders itself from this,
 // so a new egg needs no dashboard change — and these tests assert exactly that.
@@ -559,5 +560,65 @@ describe('NewDeployment egg options', () => {
     const call = fetchMock.mock.calls.find(([u, o]) => String(u).includes('/deployments') && o?.method === 'POST');
     const body = JSON.parse(call![1].body as string);
     expect(body.eggValues).toMatchObject({ TYPE: 'NEOFORGE', VERSION: '1.21.11' });
+  });
+});
+
+// #297: in the hosted edition the form shows the plan before anyone picks a size.
+describe('NewDeployment — plan entitlements', () => {
+  const plan = {
+    entitlements: {
+      planId: 'standard',
+      planName: 'Standard',
+      maxServers: 5,
+      maxDatabases: 5,
+      maxRamMb: 8192,
+      maxBackupsPerServer: 10,
+      charging: { basis: 'runtime-hours', pricePerHour: 0.02, currency: 'EUR', freeHoursPerMonth: 100, sizeFactor: { standardCpuPercent: 50, standardRamPercent: 50, minimum: 0.25 } },
+    },
+    usage: { servers: 1, databases: 0, ramMb: 1024, uncappedServers: 0 },
+  };
+
+  function serve(edition: 'community' | 'hosted') {
+    const fetchMock = vi.fn((url: string) => {
+      const path = String(url);
+      const json = (body: unknown) => Promise.resolve({ ok: true, status: 200, json: async () => body } as Response);
+      if (path.endsWith('/config')) return json({ edition });
+      if (path.includes('/me/entitlements')) return json(plan);
+      if (path.includes('/placement')) return json({ nodeId: null });
+      if (path.includes('/nodes')) return json([]);
+      if (path.includes('/eggs')) return json([]);
+      return json({});
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  function renderWithEdition() {
+    return render(
+      <EditionProvider>
+        <MemoryRouter initialEntries={['/new']}>
+          <Routes>
+            <Route path="/new" element={<NewDeployment />} />
+          </Routes>
+        </MemoryRouter>
+      </EditionProvider>
+    );
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('shows the plan in the hosted edition', async () => {
+    serve('hosted');
+    renderWithEdition();
+    expect(await screen.findByRole('region', { name: 'Your plan' })).toHaveTextContent('1 GB of 8 GB');
+  });
+
+  it('never asks for a plan in the community edition', async () => {
+    const fetchMock = serve('community');
+    renderWithEdition();
+    await screen.findByLabelText('Name');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole('region', { name: 'Your plan' })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/me/entitlements'))).toBe(false);
   });
 });
