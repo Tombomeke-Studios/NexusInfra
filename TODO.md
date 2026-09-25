@@ -243,7 +243,7 @@ scrolling log lines describing events that never happened.
 - [ ] Real SFTP access per server, honouring the file permissions (#235)
 - [ ] Notification service — mail/webhook on crash, suspend, node offline (#236)
 - [x] Search, filter and pagination on the Servers list (#237)
-- [ ] Bulk actions on multiple servers (#238)
+- [x] Bulk actions on multiple servers (#238)
 - [ ] Update a deployment's container image (pull + recreate) (#239)
 - [ ] `nexusctl` — a CLI client for the panel (#240)
 
