@@ -7,13 +7,13 @@ import { isValidCron } from './cron.js';
 import { runScheduleAction, type ScheduleActions } from './scheduler.js';
 import { resolveAgentUrl } from './agentUrl.js';
 import { principalOf, requirePlatformAdmin } from './auth.js';
-import { accessGuard, accessOf, requirePermission } from './accessGuard.js';
-import { isGrantableRole, resolveRole } from './access.js';
+import { accessGuard, accessOf, requirePermission, resolveAccess } from './accessGuard.js';
+import { can, isGrantableRole, resolveRole, type Permission } from './access.js';
 import { createServerTeamRouter } from './teams.js';
 import { EGGS, getEgg, buildEggDeployment, EggValidationError, type Egg } from './eggs.js';
 import { containerMemoryMb, derivedHeapMb, formatHeapMb, heapBudgetProblem, parseMemoryMb } from './memory.js';
 import { nodeCapacity, availableRamMb, availableCpuCores, isOverCommitted } from './capacity.js';
-import { containerNameFor } from './containerName.js';
+import { parsePersistPaths, startCommandFor } from './startCommand.js';
 import { planTransfer } from './transfer.js';
 import { pageOf, parseFilter, parsePage } from './deploymentQuery.js';
 import { getMinecraftVersions } from './minecraftVersions.js';
@@ -49,6 +49,16 @@ export function agentFetch(url: string, init: RequestInit = {}): Promise<globalT
 // Where the Billing Bridge's internal HTTP lives (hosted edition only).
 const BILLING_BRIDGE_URL = process.env.BILLING_BRIDGE_URL || 'http://billing-bridge:9300';
 
+/**
+ * Whether a server has a live container to act on (#321).
+ *
+ * Status as well as the id: rows stopped before #321 still carry the id of a
+ * container the agent removed, and a stop sent to it was answered "stopping".
+ */
+function isRunning(detail: DeploymentDetail): detail is DeploymentDetail & { containerId: string; nodeId: string } {
+  return detail.status === 'running' && Boolean(detail.containerId) && Boolean(detail.nodeId);
+}
+
 /** Decide whether a deployment's container can be streamed from, and which one. */
 export function resolveContainerTarget(detail: DeploymentDetail | null): { status: number; error?: string; containerId?: string } {
   if (!detail) return { status: 404, error: 'deployment not found' };
@@ -70,6 +80,39 @@ const KEY_STOP = 'infra.server.stop';
 const KEY_KILL = 'infra.server.kill';
 const KEY_RESTART = 'infra.server.restart';
 
+/** The lifecycle commands a caller can send to a server, singly or in bulk (#238). */
+export const CONTROL_ACTIONS = ['start', 'stop', 'restart', 'kill'] as const;
+export type ControlAction = (typeof CONTROL_ACTIONS)[number];
+
+export const CONTROL_PERMISSION: Record<ControlAction, Permission> = {
+  start: 'control.start',
+  stop: 'control.stop',
+  restart: 'control.restart',
+  // The same intent as stop, applied harder (#253).
+  kill: 'control.stop',
+};
+
+export function isControlAction(value: unknown): value is ControlAction {
+  return typeof value === 'string' && (CONTROL_ACTIONS as readonly string[]).includes(value);
+}
+
+/** Enough to act on a page of the server list, and a bound on one request's work. */
+export const MAX_BULK = 100;
+
+interface ControlOutcome {
+  status: number;
+  body: unknown;
+}
+
+/** One server's answer inside a bulk request — precise enough to say which failed and why. */
+export interface BulkResult {
+  id: string;
+  name?: string;
+  ok: boolean;
+  status: number;
+  error?: string;
+}
+
 export type PublishFn = (routingKey: string, envelope: EventEnvelope) => Promise<boolean>;
 export type SelectNodeFn = (nodes: NodeRecord[], now: number) => NodeRecord | null;
 
@@ -83,6 +126,13 @@ export type DeprovisionDatabaseFn = (agentUrl: string, containerId: string) => P
 export type SnapshotBackupFn = (req: { agentUrl: string; containerId: string; path?: string }) => Promise<{ ref: string; sizeBytes: number; path: string }>;
 export type RestoreBackupFn = (req: { agentUrl: string; containerId: string; ref: string; path: string }) => Promise<void>;
 export type RemoveBackupFn = (agentUrl: string, ref: string) => Promise<void>;
+
+/**
+ * Remove everything a deleted server left on its node — containers and the named
+ * volumes holding its data (#324). Never an imported host directory: those are
+ * the operator's, and the agent only removes volumes labelled as this server's.
+ */
+export type PurgeDeploymentDataFn = (agentUrl: string, deploymentId: string) => Promise<void>;
 
 /** Plan-quota check against the Billing Bridge (hosted). Fails open so billing outages never block infra. */
 export type QuotaResource = 'servers' | 'databases';
@@ -105,6 +155,7 @@ export interface ApiDeps {
    */
   minecraftVersions?: () => Promise<string[]>;
   checkQuota?: CheckQuotaFn;
+  purgeDeploymentData?: PurgeDeploymentDataFn;
 }
 
 // Default quota check: in the community edition everything is allowed (no
@@ -138,6 +189,11 @@ const defaultDeprovisionDatabase: DeprovisionDatabaseFn = async (agentUrl, conta
   await agentFetch(`${agentUrl}/databases/${containerId}`, { method: 'DELETE' });
 };
 
+const defaultPurgeDeploymentData: PurgeDeploymentDataFn = async (agentUrl, deploymentId) => {
+  const r = await agentFetch(`${agentUrl}/deployments/${encodeURIComponent(deploymentId)}/data`, { method: 'DELETE' });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `the node refused (${r.status})`);
+};
+
 const DB_PUBLIC_HOST = process.env.DATABASE_PUBLIC_HOST || 'localhost';
 
 const defaultSnapshotBackup: SnapshotBackupFn = async ({ agentUrl, ...spec }) => {
@@ -155,12 +211,6 @@ const defaultRemoveBackup: RemoveBackupFn = async (agentUrl, ref) => {
   await agentFetch(`${agentUrl}/backups/${ref}`, { method: 'DELETE' });
 };
 
-/**
- * The bind mount a server needs at start, if it imported a directory (#268).
- *
- * Where it mounts comes from the egg rather than a stored copy, so a server always
- * follows the catalogue rather than a value frozen when it was created.
- */
 /**
  * Why this server's heap will not fit its memory cap, or null when it does (#271).
  *
@@ -185,13 +235,6 @@ function heapProblemFor(
   return heapBudgetProblem({ heapMb, capMb });
 }
 
-function dataMountFor(config: ServerConfigRecord): { dataMount?: { hostPath: string; containerPath: string } } {
-  if (!config.dataPath) return {};
-  const containerPath = getEgg(config.type)?.dataPath;
-  if (!containerPath) return {};
-  return { dataMount: { hostPath: config.dataPath, containerPath } };
-}
-
 function userIdOf(req: Request): string {
   return principalOf(req).id;
 }
@@ -208,7 +251,12 @@ export function createApiRouter(deps: ApiDeps): Router {
   const removeBackup = deps.removeBackup ?? defaultRemoveBackup;
   const scheduleActions = deps.scheduleActions ?? noopScheduleActions;
   const checkQuota = deps.checkQuota ?? defaultCheckQuota;
+  const purgeDeploymentData = deps.purgeDeploymentData ?? defaultPurgeDeploymentData;
   const router = Router();
+  // Routes under `/deployments/<word>` that are not a server id must be matched
+  // before the per-server guard (#238); mounting this first guarantees it.
+  const bulkRouter = Router();
+  router.use(bulkRouter);
 
   const emit = (routingKey: string, event: NexusInfraEvent) =>
     publish(routingKey, buildEnvelope('orchestrator', event));
@@ -224,7 +272,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   // Create a deployment: persist config, place it on the least-loaded node, and
   // command the agent to start it.
   router.post('/deployments', async (req: Request, res: Response) => {
-    const { name, dockerImage, ports, env, resourceLimits, autoRestart, type, nodeId, eggId, eggValues, dataPath } = req.body ?? {};
+    const { name, dockerImage, ports, env, resourceLimits, autoRestart, type, nodeId, eggId, eggValues, dataPath, persistPaths } = req.body ?? {};
     if (typeof name !== 'string' || !name) {
       return res.status(400).json({ error: 'name is required' });
     }
@@ -259,6 +307,14 @@ export function createApiRouter(deps: ApiDeps): Router {
         env: env ?? {},
         type: typeof type === 'string' ? type : 'generic',
       };
+    }
+
+    // Directories to keep across restarts beyond the egg's own (#324).
+    let extraPersist: string[] = [];
+    if (persistPaths !== undefined) {
+      const parsed = parsePersistPaths(persistPaths);
+      if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+      extraPersist = parsed.paths;
     }
 
     // Enforce the plan's server quota (hosted edition; no-op in community).
@@ -343,6 +399,7 @@ export function createApiRouter(deps: ApiDeps): Router {
       userId,
       name,
       dataPath: importedPath,
+      persistPaths: extraPersist,
       dockerImage: spec.dockerImage,
       ports: spec.ports,
       env: spec.env,
@@ -354,19 +411,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     await repo.appendDeploymentEvent(deployment.id, 'created', `placed on node ${node.id}`);
 
     await emit('infra.deployment.created', { type: 'deployment.created', payload: { deploymentId: deployment.id, userId: config.userId, resourceLimits: config.resourceLimits } });
-    await emit(KEY_START, {
-      type: 'server.start',
-      payload: {
-        deploymentId: deployment.id,
-        nodeId: node.id,
-        dockerImage: config.dockerImage,
-        containerName: containerNameFor(config.name, deployment.id),
-        env: config.env,
-        ports: config.ports,
-        resourceLimits: config.resourceLimits,
-        ...dataMountFor(config),
-      },
-    });
+    await emit(KEY_START, { type: 'server.start', payload: startCommandFor(config, deployment.id, node.id) });
 
     const detail = await repo.getDeployment(deployment.id);
     return res.status(201).json(detail);
@@ -439,7 +484,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   // silently restarted someone's server would be a worse surprise than one that
   // waits; the panel says the change lands on the next start.
   router.patch('/deployments/:id', requirePermission('server.edit'), async (req: Request, res: Response) => {
-    const { name, dockerImage, ports, env, resourceLimits, autoRestart, eggValues } = req.body ?? {};
+    const { name, dockerImage, ports, env, resourceLimits, autoRestart, eggValues, persistPaths } = req.body ?? {};
     const patch: UpdateServerConfigInput = {};
 
     const existing = await repo.getDeploymentConfig(req.params.id);
@@ -485,6 +530,11 @@ export function createApiRouter(deps: ApiDeps): Router {
       patch.resourceLimits = resourceLimits as ServerConfigRecord['resourceLimits'];
     }
     if (autoRestart !== undefined) patch.autoRestart = Boolean(autoRestart);
+    if (persistPaths !== undefined) {
+      const parsed = parsePersistPaths(persistPaths);
+      if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+      patch.persistPaths = parsed.paths;
+    }
 
     // The heap has to keep fitting the cap after an edit, not only at creation
     // (#271) — raising the heap is exactly how someone would break it later.
@@ -543,94 +593,133 @@ export function createApiRouter(deps: ApiDeps): Router {
     return res.json(events.slice(offset, offset + limit));
   });
 
-  // Request a running deployment be stopped: command the agent, which reports
-  // server.stopped back (lifecycle.ts flips the status).
-  router.post('/deployments/:id/stop', requirePermission('control.stop'), async (req: Request, res: Response) => {
-    const detail = await repo.getDeployment(req.params.id);
-    if (!detail) return res.status(404).json({ error: 'deployment not found' });
-    if (!detail.containerId || !detail.nodeId) {
-      return res.status(409).json({ error: 'deployment is not running' });
-    }
+  // ── Control actions ──────────────────────────────────────────────────────
+  // One implementation per action, shared by the single-server routes and the
+  // bulk route (#238), so "stop ten servers" can never mean something slightly
+  // different from stopping each of them.
+  const controls: Record<ControlAction, (detail: DeploymentDetail) => Promise<ControlOutcome>> = {
+    // Request a running deployment be stopped: command the agent, which reports
+    // server.stopped back (lifecycle.ts flips the status).
+    stop: async (detail) => {
+      if (!isRunning(detail)) return { status: 409, body: { error: 'deployment is not running' } };
+      await repo.appendDeploymentEvent(detail.id, 'stop-requested', 'stop requested by user');
+      await emit(KEY_STOP, {
+        type: 'server.stop',
+        payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId },
+      });
+      return { status: 202, body: { status: 'stopping', deploymentId: detail.id } };
+    },
 
-    await repo.appendDeploymentEvent(detail.id, 'stop-requested', 'stop requested by user');
-    await emit(KEY_STOP, {
-      type: 'server.stop',
-      payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId },
-    });
-    return res.status(202).json({ status: 'stopping', deploymentId: detail.id });
-  });
+    // Force-terminate a container that ignores a graceful stop (#253). Same
+    // permission as stop — it is the same intent, applied harder — but its own
+    // command and its own audit entry, so the trail can say which one happened.
+    kill: async (detail) => {
+      if (!isRunning(detail)) return { status: 409, body: { error: 'deployment is not running' } };
+      await repo.appendDeploymentEvent(detail.id, 'kill-requested', 'force kill requested by user');
+      await emit(KEY_KILL, {
+        type: 'server.kill',
+        payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId },
+      });
+      return { status: 202, body: { status: 'killing', deploymentId: detail.id } };
+    },
 
-  // Force-terminate a container that ignores a graceful stop (#253). Same
-  // permission as stop — it is the same intent, applied harder — but its own
-  // command and its own audit entry, so the trail can say which one happened.
-  router.post('/deployments/:id/kill', requirePermission('control.stop'), async (req: Request, res: Response) => {
-    const detail = await repo.getDeployment(req.params.id);
-    if (!detail) return res.status(404).json({ error: 'deployment not found' });
-    if (!detail.containerId || !detail.nodeId) {
-      return res.status(409).json({ error: 'deployment is not running' });
-    }
+    // Start (or re-run) a deployment that isn't currently running: re-place it on a
+    // healthy node and command a fresh container from its saved config.
+    start: async (detail) => {
+      if (detail.status === 'running' || detail.status === 'pending') {
+        return { status: 409, body: { error: 'deployment is already running' } };
+      }
+      const config = await repo.getDeploymentConfig(detail.id);
+      if (!config) return { status: 404, body: { error: 'server config not found' } };
 
-    await repo.appendDeploymentEvent(detail.id, 'kill-requested', 'force kill requested by user');
-    await emit(KEY_KILL, {
-      type: 'server.kill',
-      payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId },
-    });
-    return res.status(202).json({ status: 'killing', deploymentId: detail.id });
-  });
+      const node = selectNode(await repo.listNodes(), Date.now());
+      if (!node) return { status: 503, body: { error: 'No healthy node available to place the deployment' } };
 
-  // Start (or re-run) a deployment that isn't currently running: re-place it on a
-  // healthy node and command a fresh container from its saved config.
-  router.post('/deployments/:id/start', requirePermission('control.start'), async (req: Request, res: Response) => {
-    const detail = await repo.getDeployment(req.params.id);
-    if (!detail) return res.status(404).json({ error: 'deployment not found' });
-    if (detail.status === 'running' || detail.status === 'pending') {
-      return res.status(409).json({ error: 'deployment is already running' });
-    }
-    const config = await repo.getDeploymentConfig(detail.id);
-    if (!config) return res.status(404).json({ error: 'server config not found' });
-
-    const node = selectNode(await repo.listNodes(), Date.now());
-    if (!node) return res.status(503).json({ error: 'No healthy node available to place the deployment' });
-
-    await repo.updateDeploymentStatus(detail.id, {
-      status: 'pending',
-      nodeId: node.id,
-      containerId: null,
-      startedAt: null,
-      stoppedAt: null,
-    });
-    await repo.appendDeploymentEvent(detail.id, 'start-requested', `re-placed on node ${node.id}`);
-    await emit(KEY_START, {
-      type: 'server.start',
-      payload: {
-        deploymentId: detail.id,
+      await repo.updateDeploymentStatus(detail.id, {
+        status: 'pending',
         nodeId: node.id,
-        dockerImage: config.dockerImage,
-        containerName: containerNameFor(config.name, detail.id),
-        env: config.env,
-        ports: config.ports,
-        resourceLimits: config.resourceLimits,
-        ...dataMountFor(config),
-      },
-    });
-    return res.status(202).json({ status: 'starting', deploymentId: detail.id });
-  });
+        containerId: null,
+        startedAt: null,
+        stoppedAt: null,
+      });
+      await repo.appendDeploymentEvent(detail.id, 'start-requested', `re-placed on node ${node.id}`);
+      await emit(KEY_START, { type: 'server.start', payload: startCommandFor(config, detail.id, node.id) });
+      return { status: 202, body: { status: 'starting', deploymentId: detail.id } };
+    },
 
-  // Request a running deployment be restarted — the agent restarts the container
-  // and reports server.started back.
-  router.post('/deployments/:id/restart', requirePermission('control.restart'), async (req: Request, res: Response) => {
-    const detail = await repo.getDeployment(req.params.id);
-    if (!detail) return res.status(404).json({ error: 'deployment not found' });
-    if (!detail.containerId || !detail.nodeId) {
-      return res.status(409).json({ error: 'deployment is not running' });
+    // Request a running deployment be restarted — the agent restarts the container
+    // and reports server.started back.
+    restart: async (detail) => {
+      if (!isRunning(detail)) return { status: 409, body: { error: 'deployment is not running' } };
+      await repo.appendDeploymentEvent(detail.id, 'restart-requested', 'restart requested by user');
+      await emit(KEY_RESTART, {
+        type: 'server.restart',
+        payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId },
+      });
+      return { status: 202, body: { status: 'restarting', deploymentId: detail.id } };
+    },
+  };
+
+  const controlRoute = (action: ControlAction) => async (req: Request, res: Response) => {
+    const outcome = await controls[action](accessOf(req).deployment);
+    return res.status(outcome.status).json(outcome.body);
+  };
+
+  router.post('/deployments/:id/stop', requirePermission(CONTROL_PERMISSION.stop), controlRoute('stop'));
+  router.post('/deployments/:id/kill', requirePermission(CONTROL_PERMISSION.kill), controlRoute('kill'));
+  router.post('/deployments/:id/start', requirePermission(CONTROL_PERMISSION.start), controlRoute('start'));
+  router.post('/deployments/:id/restart', requirePermission(CONTROL_PERMISSION.restart), controlRoute('restart'));
+
+  // Several servers at once (#238). Registered on the router *before* the
+  // per-server guard below would claim `/deployments/bulk` as a server called
+  // "bulk" — see the ordering note at the guard.
+  //
+  // Every id is authorized on its own with the guard's own resolver, and an id
+  // the caller cannot see reports "not found" exactly as the single route would:
+  // a bulk endpoint that said "forbidden" for some ids would be a way to probe
+  // which servers exist. Runs sequentially — placement reads the fleet, and ten
+  // concurrent starts would all read it before any of them had landed.
+  bulkRouter.post('/deployments/bulk', async (req: Request, res: Response) => {
+    const { action, ids } = req.body ?? {};
+    if (!isControlAction(action)) {
+      return res.status(400).json({ error: `action must be one of ${CONTROL_ACTIONS.join(', ')}` });
+    }
+    if (!Array.isArray(ids) || ids.length === 0 || !ids.every((id) => typeof id === 'string' && id)) {
+      return res.status(400).json({ error: 'ids must be a non-empty list of deployment ids' });
+    }
+    const unique = [...new Set(ids as string[])];
+    if (unique.length > MAX_BULK) return res.status(400).json({ error: `at most ${MAX_BULK} servers per request` });
+
+    const principal = principalOf(req);
+    const results: BulkResult[] = [];
+    for (const id of unique) {
+      const access = await resolveAccess(repo, principal, id);
+      if (!access) {
+        results.push({ id, ok: false, status: 404, error: 'deployment not found' });
+        continue;
+      }
+      if (!can(access.role, CONTROL_PERMISSION[action])) {
+        results.push({ id, name: access.deployment.name, ok: false, status: 403, error: `your role on this server (${access.role}) cannot ${action} it` });
+        continue;
+      }
+      try {
+        const outcome = await controls[action](access.deployment);
+        const ok = outcome.status < 300;
+        results.push({
+          id,
+          name: access.deployment.name,
+          ok,
+          status: outcome.status,
+          ...(ok ? {} : { error: String((outcome.body as { error?: unknown }).error ?? 'failed') }),
+        });
+      } catch (err) {
+        // One server's failure is that server's result, not the whole request's.
+        results.push({ id, name: access.deployment.name, ok: false, status: 500, error: err instanceof Error ? err.message : 'failed' });
+      }
     }
 
-    await repo.appendDeploymentEvent(detail.id, 'restart-requested', 'restart requested by user');
-    await emit(KEY_RESTART, {
-      type: 'server.restart',
-      payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId },
-    });
-    return res.status(202).json({ status: 'restarting', deploymentId: detail.id });
+    const succeeded = results.filter((r) => r.ok).length;
+    return res.json({ action, succeeded, failed: results.length - succeeded, results });
   });
 
   // Permanently delete a deployment: stop its container if running, deprovision
@@ -653,6 +742,18 @@ export function createApiRouter(deps: ApiDeps): Router {
         } catch {
           // Best-effort: still remove the record so nothing is orphaned in the UI.
         }
+      }
+    }
+    // The server's data lives in volumes on its node now (#324), and the delete
+    // dialog promises its files go with it. Best-effort like the databases above:
+    // a node that is gone cannot be asked, and that must not strand the record.
+    // The agent force-removes the container itself, so this does not wait on the
+    // stop command above to land first.
+    if (detail.nodeId) {
+      try {
+        await purgeDeploymentData(ownerAgentUrl, detail.id);
+      } catch (err) {
+        console.warn(`[orchestrator] could not remove the data of deleted server ${detail.id}: ${err instanceof Error ? err.message : err}`);
       }
     }
     await repo.deleteDeployment(detail.id);

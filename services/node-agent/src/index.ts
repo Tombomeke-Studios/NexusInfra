@@ -11,6 +11,7 @@ import { createDatabaseRouter } from './dbRoutes.js';
 import { createBackupRouter } from './bkRoutes.js';
 import { createExecRouter } from './execRoutes.js';
 import { createImportRouter, importRoot } from './imports.js';
+import { createDataRouter } from './volumes.js';
 import { attachTerminal, type TerminalSocket } from './terminal.js';
 
 // ── Node Agent ────────────────────────────────────────────────────────────────
@@ -127,6 +128,9 @@ app.use(createExecRouter(runtime));
 // Orchestrator asks here before creating a deployment, because only this process
 // can see this filesystem.
 app.use(createImportRouter({ root: importRoot(), realpath: async (p) => (await import('fs/promises')).realpath(p) }));
+
+// ── HTTP: a deleted server's leftovers (#324) — its containers and data volumes ──
+app.use(createDataRouter(runtime));
 
 // ── WebSocket: interactive terminal (#71) ─────────────────────────────────────
 // Internal WS endpoint (reached only via the Orchestrator's WS proxy) that opens

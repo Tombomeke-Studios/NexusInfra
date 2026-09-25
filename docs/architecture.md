@@ -100,6 +100,16 @@ append-only deployment-event audit trail. Schema source of truth: the service's
 The Orchestrator's node registry mirrors the same last-seen status model above (healthy < 3s ≤
 degraded < 10s ≤ offline); only `healthy` nodes are eligible for placement.
 
+**Server data (#324).** A stop removes the container (#52), so nothing a server needs to keep may live
+in it. Each server's data directories are **named Docker volumes labelled with its deployment id** —
+the egg's data directory, every `VOLUME` its image declares, and any `persistPaths` an application
+names. The agent creates them idempotently at start under deterministic names, so the next container
+mounts the same ones; deleting the server asks its node to remove everything carrying that label. An
+imported host directory (#268) is a bind mount instead, and outranks a volume on the same path.
+Before this, every stop deleted the server's files. The start command is built in one place
+(`startCommand.ts`) for creation, start and reconciliation — reconciliation's hand-written copy had
+already lost the imported mount.
+
 **Multi-node routing (#171).** Placement spans every healthy node, and start/stop/restart are addressed
 by `nodeId` over the bus. Direct agent calls (files, exec, terminal, logs/stats, backups, databases)
 must reach the node that actually hosts the deployment — previously they all went to a single

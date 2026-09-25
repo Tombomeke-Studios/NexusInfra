@@ -53,10 +53,16 @@ function buildApp(
         published.push({ key, envelope });
         return true;
       },
+      purgeDeploymentData: async (agentUrl, deploymentId) => {
+        purged.push({ agentUrl, deploymentId });
+      },
     })
   );
   return app;
 }
+
+/** What delete asked the agent to remove (#324); reset per test by whoever reads it. */
+const purged: Array<{ agentUrl: string; deploymentId: string }> = [];
 
 async function seedHealthyNode(repo: InMemoryRepository, id = 'node-local') {
   await repo.upsertNode({ id, name: id, lastHeartbeat: new Date().toISOString(), cpuPercent: 10, ramUsedMb: 1000, ramTotalMb: 8000 });
@@ -1755,5 +1761,213 @@ describe('the egg catalogue fills in the version list (#311)', () => {
     expect(minecraft.variables.find((v) => v.key === 'TYPE')!.options).toContain('NEOFORGE');
     // And nothing invented an options list for a variable that has none.
     expect(minecraft.variables.find((v) => v.key === 'MOTD')!.options).toBeUndefined();
+  });
+});
+
+describe('bulk actions (#238)', () => {
+  const GUEST = { id: 'user-guest', email: 'guest@example.com', platformRole: 'user' as const };
+  const STRANGER = { id: 'user-stranger', email: 'stranger@example.com', platformRole: 'user' as const };
+
+  let repo: InMemoryRepository;
+  let published: Array<{ key: string; envelope: EventEnvelope }>;
+  let ownerApp: express.Express;
+  let ids: { running: string; runningToo: string; stopped: string };
+
+  async function create(name: string, status: 'running' | 'stopped') {
+    const res = await request(ownerApp).post('/deployments').send({ name, dockerImage: 'nginx' });
+    await repo.updateDeploymentStatus(res.body.id, status === 'running'
+      ? { status, containerId: `c-${name}`, nodeId: 'node-local' }
+      : { status, containerId: null });
+    return res.body.id as string;
+  }
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    published = [];
+    ownerApp = buildApp(repo, published);
+    await seedUser(repo);
+    await seedUser(repo, GUEST);
+    await seedUser(repo, STRANGER);
+    await seedHealthyNode(repo);
+    ids = { running: await create('a', 'running'), runningToo: await create('b', 'running'), stopped: await create('c', 'stopped') };
+    published.length = 0;
+  });
+
+  it('stops every server named and says so for each', async () => {
+    const res = await request(ownerApp).post('/deployments/bulk').send({ action: 'stop', ids: [ids.running, ids.runningToo] });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ action: 'stop', succeeded: 2, failed: 0 });
+    expect(res.body.results.map((r: { id: string; ok: boolean }) => [r.id, r.ok])).toEqual([[ids.running, true], [ids.runningToo, true]]);
+    // The same command the single route sends, once per server.
+    expect(published.filter((p) => p.key === 'infra.server.stop')).toHaveLength(2);
+  });
+
+  it('reports precisely which servers failed and why, and still acts on the rest', async () => {
+    const res = await request(ownerApp).post('/deployments/bulk').send({ action: 'stop', ids: [ids.running, ids.stopped, 'no-such-id'] });
+
+    expect(res.body).toMatchObject({ succeeded: 1, failed: 2 });
+    const byId = Object.fromEntries(res.body.results.map((r: { id: string }) => [r.id, r]));
+    expect(byId[ids.running]).toMatchObject({ ok: true, status: 202, name: 'a' });
+    expect(byId[ids.stopped]).toMatchObject({ ok: false, status: 409, error: 'deployment is not running', name: 'c' });
+    expect(byId['no-such-id']).toMatchObject({ ok: false, status: 404 });
+    expect(published.filter((p) => p.key === 'infra.server.stop')).toHaveLength(1);
+  });
+
+  it('starts stopped servers through the same placement as the single route', async () => {
+    const res = await request(ownerApp).post('/deployments/bulk').send({ action: 'start', ids: [ids.stopped] });
+    expect(res.body.succeeded).toBe(1);
+    expect((await repo.getDeployment(ids.stopped))?.status).toBe('pending');
+    expect(published.find((p) => p.key === 'infra.server.start')).toBeDefined();
+  });
+
+  it('authorizes each server on its own, with the role the guard would resolve', async () => {
+    // The guest may operate one server, view another, and has nothing on the third.
+    await repo.createSubuser({ deploymentId: ids.running, email: GUEST.email, role: 'operator', userId: GUEST.id, status: 'active' });
+    await repo.createSubuser({ deploymentId: ids.runningToo, email: GUEST.email, role: 'viewer', userId: GUEST.id, status: 'active' });
+    const guestApp = buildApp(repo, published, GUEST);
+
+    const res = await request(guestApp).post('/deployments/bulk').send({ action: 'restart', ids: [ids.running, ids.runningToo, ids.stopped] });
+
+    const byId = Object.fromEntries(res.body.results.map((r: { id: string }) => [r.id, r]));
+    expect(byId[ids.running]).toMatchObject({ ok: true });
+    expect(byId[ids.runningToo]).toMatchObject({ ok: false, status: 403 });
+    expect(byId[ids.stopped]).toMatchObject({ ok: false, status: 404 });
+    expect(published.filter((p) => p.key === 'infra.server.restart')).toHaveLength(1);
+  });
+
+  it('answers an unshared server exactly like a missing one, so bulk cannot probe ids', async () => {
+    const strangerApp = buildApp(repo, published, STRANGER);
+    const res = await request(strangerApp).post('/deployments/bulk').send({ action: 'stop', ids: [ids.running, 'no-such-id'] });
+
+    const [real, missing] = res.body.results;
+    expect({ ...real, id: undefined }).toEqual({ ...missing, id: undefined });
+    expect(real.name).toBeUndefined();
+    expect(published).toHaveLength(0);
+  });
+
+  it('counts a repeated id once', async () => {
+    const res = await request(ownerApp).post('/deployments/bulk').send({ action: 'stop', ids: [ids.running, ids.running] });
+    expect(res.body.results).toHaveLength(1);
+    expect(published.filter((p) => p.key === 'infra.server.stop')).toHaveLength(1);
+  });
+
+  it('refuses an unknown action, a missing list, and an oversized one', async () => {
+    await request(ownerApp).post('/deployments/bulk').send({ action: 'delete', ids: [ids.running] }).expect(400);
+    await request(ownerApp).post('/deployments/bulk').send({ action: 'stop' }).expect(400);
+    await request(ownerApp).post('/deployments/bulk').send({ action: 'stop', ids: [] }).expect(400);
+    await request(ownerApp).post('/deployments/bulk').send({ action: 'stop', ids: [1] }).expect(400);
+    const tooMany = Array.from({ length: 101 }, (_, i) => `id-${i}`);
+    await request(ownerApp).post('/deployments/bulk').send({ action: 'stop', ids: tooMany }).expect(400);
+    expect(published).toHaveLength(0);
+  });
+
+  it('is not mistaken for a server called "bulk"', async () => {
+    // The per-server guard would otherwise claim the path and answer 404.
+    const res = await request(ownerApp).post('/deployments/bulk').send({ action: 'kill', ids: [ids.running] });
+    expect(res.status).toBe(200);
+    expect(published.find((p) => p.key === 'infra.server.kill')).toBeDefined();
+  });
+});
+
+describe('a stopped server has no container to act on (#321)', () => {
+  it('refuses stop, kill and restart for a row still carrying a pre-fix stale id', async () => {
+    const repo = new InMemoryRepository();
+    const published: Array<{ key: string; envelope: EventEnvelope }> = [];
+    const app = buildApp(repo, published);
+    await seedUser(repo);
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'old', dockerImage: 'nginx' });
+    // What lifecycle.ts used to leave behind: stopped, but still naming the container.
+    await repo.updateDeploymentStatus(created.body.id, { status: 'stopped', containerId: 'gone', nodeId: 'node-local' });
+    published.length = 0;
+
+    for (const action of ['stop', 'kill', 'restart']) {
+      const res = await request(app).post(`/deployments/${created.body.id}/${action}`);
+      expect(res.status).toBe(409);
+    }
+    const bulk = await request(app).post('/deployments/bulk').send({ action: 'stop', ids: [created.body.id] });
+    expect(bulk.body).toMatchObject({ succeeded: 0, failed: 1 });
+    expect(published).toHaveLength(0);
+  });
+});
+
+describe('a server keeps its data across restarts (#324)', () => {
+  let repo: InMemoryRepository;
+  let published: Array<{ key: string; envelope: EventEnvelope }>;
+  let app: express.Express;
+
+  const startPayloads = () =>
+    published.filter((p) => p.key === 'infra.server.start').map((p) => readPayload(p.envelope.event) as Record<string, unknown>);
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    published = [];
+    purged.length = 0;
+    app = buildApp(repo, published);
+    await seedUser(repo);
+    await seedHealthyNode(repo);
+  });
+
+  it("tells the agent to persist an egg server's data directory", async () => {
+    const res = await request(app).post('/deployments').send({ name: 'mc', eggId: 'minecraft-java', eggValues: { EULA: 'TRUE' } });
+    expect(res.status).toBe(201);
+    expect(startPayloads()[0].persistPaths).toEqual(['/data']);
+  });
+
+  it('persists the directories a plain application names, and says so on the detail', async () => {
+    const res = await request(app).post('/deployments').send({ name: 'web', dockerImage: 'nginx', persistPaths: ['/usr/share/nginx/html/'] });
+    expect(res.status).toBe(201);
+    expect(res.body.persistPaths).toEqual(['/usr/share/nginx/html']);
+    expect(startPayloads()[0].persistPaths).toEqual(['/usr/share/nginx/html']);
+  });
+
+  it('refuses a directory that is not one', async () => {
+    const res = await request(app).post('/deployments').send({ name: 'web', dockerImage: 'nginx', persistPaths: ['/'] });
+    expect(res.status).toBe(400);
+    expect(startPayloads()).toHaveLength(0);
+  });
+
+  it('sends the same persistence again on every start, so the next container gets the same volumes', async () => {
+    const created = await request(app).post('/deployments').send({ name: 'web', dockerImage: 'nginx', persistPaths: ['/srv'] });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'stopped', containerId: null });
+
+    await request(app).post(`/deployments/${created.body.id}/start`).expect(202);
+    const [first, second] = startPayloads();
+    expect(second.persistPaths).toEqual(first.persistPaths);
+    expect(second.deploymentId).toBe(first.deploymentId);
+  });
+
+  it('can change what is persisted after creation', async () => {
+    const created = await request(app).post('/deployments').send({ name: 'web', dockerImage: 'nginx' });
+    const res = await request(app).patch(`/deployments/${created.body.id}`).send({ persistPaths: ['/var/lib/app'] });
+    expect(res.status).toBe(200);
+    expect(res.body.persistPaths).toEqual(['/var/lib/app']);
+    await request(app).patch(`/deployments/${created.body.id}`).send({ persistPaths: ['relative'] }).expect(400);
+  });
+
+  it("removes a deleted server's data from its node", async () => {
+    const created = await request(app).post('/deployments').send({ name: 'web', dockerImage: 'nginx' });
+    await request(app).delete(`/deployments/${created.body.id}`).expect(204);
+    expect(purged).toEqual([{ agentUrl: expect.any(String), deploymentId: created.body.id }]);
+  });
+
+  it('still deletes the record when the node cannot be reached', async () => {
+    const failing = express();
+    failing.use(express.json());
+    failing.use(asPrincipal());
+    failing.use(
+      createApiRouter({
+        repo,
+        checkQuota: allowQuota,
+        publish: async () => true,
+        purgeDeploymentData: async () => {
+          throw new Error('node agent unreachable');
+        },
+      })
+    );
+    const created = await request(failing).post('/deployments').send({ name: 'web', dockerImage: 'nginx' });
+    await request(failing).delete(`/deployments/${created.body.id}`).expect(204);
+    expect(await repo.getDeployment(created.body.id)).toBeNull();
   });
 });

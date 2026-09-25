@@ -309,6 +309,13 @@ default, and the egg's `fixedEnv` (such as Minecraft's `EULA=TRUE`) is applied l
 honoured, as the host-side override. `400` for an unknown egg or an invalid answer, with the message
 naming the field as the person saw it ("Player slots must be a whole number").
 
+**Keeping data across restarts (#324):** the agent removes a container on every stop, so a server's
+data lives in **named volumes owned by the deployment** instead of in the container. Three sources
+decide which directories get one: the egg's `dataPath`, every `VOLUME` the image itself declares, and
+an optional `persistPaths` list — how a plain application (`nginx`, say) names its own. `persistPaths`
+must be absolute directories (not `/`, no `..`, no `:`), at most 10; `400` otherwise. The volumes are
+mounted again on every start and removed only when the server is deleted.
+
 **Importing an existing directory (#268):** send `dataPath` alongside an egg. The directory is
 bind-mounted at the egg's `dataPath`, so the server runs against files that are already on the node
 — an existing world, config and all.
@@ -426,7 +433,7 @@ two or more nodes it could describe a machine the server was never going to land
 ### `PATCH /deployments/:id`
 
 Change an existing server's configuration (#220). Body may carry any of `name`, `dockerImage`,
-`ports`, `env`, `resourceLimits`, `autoRestart`; **an omitted field is left alone**, so a partial
+`ports`, `env`, `resourceLimits`, `autoRestart`, `persistPaths` (#324); **an omitted field is left alone**, so a partial
 edit never blanks the rest. Requires `server.edit` (server admin and up — an operator may run a
 server but not redefine it).
 
@@ -597,6 +604,28 @@ Request a running deployment be restarted — emits `infra.server.restart` with 
 the agent restarts the container and reports `server.started`. `202` while restarting, `404` if
 unknown, `409` if the deployment is not running.
 
+### `POST /deployments/bulk`
+
+Send one control command to several servers at once (#238). Body:
+`{ "action": "start" | "stop" | "restart" | "kill", "ids": ["<deploymentId>", …] }` — at most 100 ids,
+duplicates counted once. Each id is authorized **on its own**, with the same resolver the per-server
+guard uses, and runs the same code as the single-server route above; they are processed in order so
+placement sees each start land before the next.
+
+Always `200` once the request is well-formed, because the answer is per server:
+
+```json
+{ "action": "stop", "succeeded": 1, "failed": 2, "results": [
+  { "id": "d1", "name": "web", "ok": true,  "status": 202 },
+  { "id": "d2", "name": "db",  "ok": false, "status": 409, "error": "deployment is not running" },
+  { "id": "d3",                "ok": false, "status": 404, "error": "deployment not found" }
+] }
+```
+
+A server the caller cannot see answers exactly like one that does not exist (`404`, no `name`), so the
+endpoint cannot be used to probe ids. One the caller can see but not control answers `403`. `400` for
+an unknown action or a missing, empty or oversized `ids` list.
+
 ### `WS /deployments/:id/terminal`
 
 Interactive terminal (#71) — a WebSocket that opens a TTY shell (`sh`) in the running container. The JWT
@@ -611,6 +640,8 @@ token, unknown/not-running deployment, or when the shell exits.
 Permanently delete a deployment. If it is running, the container is stopped first (emits
 `infra.server.stop`); any managed database containers are deprovisioned (best-effort); then the
 deployment and all its child records (events, databases, backups, schedules, subusers) are removed.
+The owning node is asked to remove the server's containers and **data volumes** (#324) — best-effort,
+so an unreachable node does not strand the record. An imported host directory (#268) is never removed.
 `204` on success, `404` if unknown.
 
 ### `GET /nodes`
