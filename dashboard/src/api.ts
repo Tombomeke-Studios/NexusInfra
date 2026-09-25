@@ -86,6 +86,12 @@ export interface DeploymentDetail extends DeploymentView {
   env: Record<string, string>;
   resourceLimits: ResourceLimits;
   autoRestart: boolean;
+  /**
+   * Extra directories kept across restarts (#324). The egg's data directory and
+   * any `VOLUME` the image declares are kept as well, without being listed here.
+   * Absent on older responses.
+   */
+  persistPaths?: string[];
 }
 
 export interface ResourceLimits {
@@ -178,6 +184,8 @@ interface CreateDeploymentBase {
   type?: string;
   /** Pin the server to a node; omit to let the orchestrator pick the emptiest (#254). */
   nodeId?: string;
+  /** Container directories to keep across restarts, beyond the egg's own (#324). */
+  persistPaths?: string[];
 }
 
 /** Thrown when the API responds with a non-2xx status; carries the HTTP status. */
@@ -575,6 +583,7 @@ export interface UpdateDeploymentInput {
   env?: Record<string, string>;
   resourceLimits?: ResourceLimits;
   autoRestart?: boolean;
+  persistPaths?: string[];
 }
 
 /**

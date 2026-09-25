@@ -20,7 +20,9 @@ export type NexusInfraEvent =
   // `dataMount` bind-mounts an existing host directory into the container, for a
   // server whose files already live on the node (#268). Admin-only and confined to
   // the node's IMPORT_ROOT — the agent re-validates it rather than trusting this.
-  | { type: 'server.start'; payload: { deploymentId: string; nodeId: string; dockerImage: string; containerName?: string; env?: Record<string, string>; ports?: Record<string, string>; resourceLimits?: ResourceLimits; dataMount?: { hostPath: string; containerPath: string } } }
+  // persistPaths (#324): container directories kept in named volumes owned by the
+  // deployment, so they survive the container being removed on stop.
+  | { type: 'server.start'; payload: { deploymentId: string; nodeId: string; dockerImage: string; containerName?: string; env?: Record<string, string>; ports?: Record<string, string>; resourceLimits?: ResourceLimits; dataMount?: { hostPath: string; containerPath: string }; persistPaths?: string[] } }
   | { type: 'server.stop'; payload: { deploymentId: string; nodeId: string; containerId: string } }
   // Force-terminate rather than ask: SIGKILL, for a container that will not stop
   // gracefully. Distinct from server.stop so the audit trail records which it was (#253).

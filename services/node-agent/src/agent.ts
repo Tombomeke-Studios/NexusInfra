@@ -82,6 +82,10 @@ export function createAgent(deps: AgentDeps): NodeAgent {
           env: payload.env as Record<string, string> | undefined,
           ports: payload.ports as Record<string, string> | undefined,
           resourceLimits: payload.resourceLimits as ResourceLimits | undefined,
+          // Names and labels this server's data volumes, so they outlive the
+          // container (#324).
+          deploymentId,
+          persistPaths: Array.isArray(payload.persistPaths) ? (payload.persistPaths as unknown[]).map(String) : [],
         };
         try {
           // An import path is re-resolved here even though the orchestrator

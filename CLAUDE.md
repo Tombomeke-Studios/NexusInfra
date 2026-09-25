@@ -240,6 +240,7 @@ is the migrations directory.
 | `src/bkRoutes.ts` | `createBackupRouter` — internal backup HTTP: tar snapshot/restore/delete of a container path (stored on the node) |
 | `src/disk.ts` | Pure disk reporting (#276): `diskUsageFrom` (statfs blocks → GB, counting the root reserve as used) + `collectDisk`, which reports **nothing** when it cannot measure. The agent used to return `0`, which the panel rendered as an empty disk beside real meters |
 | `src/imports.ts` | Directory imports (#268): pure `isContained`/`resolveImportPath` (symlink-resolved containment against `IMPORT_ROOT`) + the internal validate router. **A bind mount is a host-escape primitive** — admin-only, off unless `IMPORT_ROOT` is set, and re-checked by the agent at start |
+| `src/volumes.ts` | Server data (#324): pure `volumeNameFor` (deterministic per deployment + path), `pathsToPersist` (requested ∪ image `VOLUME`s, minus an imported bind) and `createDataRouter` — internal `DELETE /deployments/:id/data`, which removes only what carries the `nexusinfra.deployment` label. **Stop removes the container, so anything not in one of these volumes is gone on the next start** |
 | `src/execRoutes.ts` | `createExecRouter` — internal console HTTP: one-shot `sh -c` command exec in a container (#68) |
 | `src/terminal.ts` | `attachTerminal` — pure bridge wiring a WebSocket to an interactive TTY session (`runtime.execInteractive`); JSON `input`/`resize` frames in, raw output out (#71) |
 | `src/internalAuth.ts` | `requireInternalToken` (Express) + `upgradeAuthorized` (WS handshake) — every internal route/upgrade needs the shared token; `/health` stays open (#169) |
@@ -264,6 +265,7 @@ is the migrations directory.
 | `src/containerName.ts` | Pure `containerNameFor` (#286) — display name + deployment id → a Docker-valid container name. The display name used to be passed through verbatim, so a space meant Docker refused the create and the panel showed a crash with no container. Deterministic (a restart reuses the name) **and** id-suffixed, because `start` force-removes whatever holds the name — two servers called the same thing used to delete each other |
 | `src/capacity.ts` | Pure node capacity (#275): total vs **committed** vs used, and what is left to hand out. Committed is the sum of the caps already given to servers there — the form used to answer "how much can I give away" with live usage, which is wrong twice (idle servers still hold their cap; page cache makes an empty node look full) |
 | `src/memory.ts` | Pure memory budgeting (#271, #308): `parseMemoryMb`, `containerMemoryMb`, `jvmOverheadMb`, `heapBudgetProblem`, `largestHeapForCap`, **`derivedHeapMb`**. The container cap and the JVM heap were two settings for the same RAM — the kernel enforces the cap and the JVM *commits* the heap, so a heap that does not fit is a container killed mid-save. Since #308 the heap is **derived** from the cap on every write unless the request names one, so there is one number to set; the collision was in the defaults too (50% of 4 GB vs a fixed `2G`). Mirrored by `dashboard/src/memory.ts` |
+| `src/startCommand.ts` | The one builder for `server.start` (#324): `startCommandFor` (+ `dataMountFor`, `persistPathsFor`, `parsePersistPaths`). Creation, start and reconciliation all use it — reconciliation's hand-written copy had dropped an imported server's mount. **Never build a start payload by hand** |
 | `src/cron.ts` | Pure 5-field cron matcher (`cronMatches`, `isValidCron`) for the schedule runner |
 | `src/scheduler.ts` | Schedule runner: pure `selectDue`/`tickSchedules` + `startScheduler` (1-min poll); actions injected |
 | `src/users.ts` | Account domain: bcrypt hashing, email normalisation, password rules, edition-derived signup policy, and `createUserService` (register / authenticate / change password / first-run bootstrap) (#174) |
@@ -409,6 +411,9 @@ is the migrations directory.
 - **The dashboard's `permissions.ts` is a mirror, not a second source of truth.** It exists so the
   panel doesn't offer buttons that would 403; change it in the same commit as `access.ts` or the two
   drift. Hiding a control is never a security measure — the API is.
+- **A server's data lives in named volumes, not in its container (#324).** The agent removes a container
+  on every stop and kill, so a new feature that recreates one (image update, migration) is safe only
+  because of `volumes.ts`. Moving a server to another node means moving its volumes.
 - Heartbeat cadence: 1s pulse; Control Room thresholds: degraded ≥3s, offline ≥10s.
 - All timestamps are UTC ISO-8601 strings in event payloads.
 - Dockerfiles build from the **repo root** context (they copy `shared/` + the service dir).
