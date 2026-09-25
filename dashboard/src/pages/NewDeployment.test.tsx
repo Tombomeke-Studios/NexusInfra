@@ -75,6 +75,8 @@ describe('NewDeployment', () => {
       ports: { '8080': '80' },
       env: {},
       type: 'app',
+      // Nothing typed: nothing beyond what the image declares is kept (#324).
+      persistPaths: [],
       autoRestart: true,
       resourceLimits: {
         cpuPercent: 50,
@@ -86,6 +88,18 @@ describe('NewDeployment', () => {
         oomKill: false,
       },
     });
+  });
+
+  it('sends the directories an application keeps across restarts (#324)', async () => {
+    renderForm();
+    await userEvent.type(screen.getByLabelText('Name'), 'web');
+    await userEvent.type(screen.getByLabelText('Docker image'), 'nginx');
+    await userEvent.type(screen.getByPlaceholderText('/data, /var/lib/app'), '/usr/share/nginx/html, /etc/nginx');
+    await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+    await screen.findByText('Servers page');
+
+    const call = fetchMock.mock.calls.find(([u, o]) => typeof u === 'string' && u.includes('/deployments') && o?.method === 'POST');
+    expect(JSON.parse(call![1].body as string).persistPaths).toEqual(['/usr/share/nginx/html', '/etc/nginx']);
   });
 
   it('deploys from an egg by id, letting the server derive the image', async () => {
