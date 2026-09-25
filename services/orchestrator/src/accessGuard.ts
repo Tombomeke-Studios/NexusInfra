@@ -18,6 +18,7 @@ import {
   type TeamRelation,
 } from './access.js';
 import type { DeploymentDetail, Repository, TeamRecord } from './types.js';
+import type { PlatformRole } from './users.js';
 
 /** What the guard leaves on the request for the handlers behind it. */
 export interface RequestAccess {
@@ -43,33 +44,44 @@ export function accessOf(req: Request): RequestAccess {
  */
 export function accessGuard(repo: Repository) {
   return async function guard(req: Request, res: Response, next: NextFunction): Promise<void> {
-    const deployment = await repo.getDeployment(req.params.id);
-    if (!deployment) {
+    const access = await resolveAccess(repo, principalOf(req), req.params.id);
+    if (!access) {
       res.status(404).json({ error: 'deployment not found' });
       return;
     }
-
-    const principal = principalOf(req);
-    // A share is addressed to an email and bound to the account when that person
-    // first appears (#176). Only a bound, active share grants anything — a
-    // pending invitation to an address nobody has claimed must not open a door.
-    const caller = await repo.getUser(principal.id);
-    const share = caller ? await repo.getSubuserFor(deployment.id, caller.email) : null;
-    const grant = share?.status === 'active' && share.userId === principal.id ? share : null;
-
-    // A server may also be shared with a team (#177); membership of it grants the
-    // member's team role. Where both apply, access.ts takes the stronger.
-    const membership = deployment.teamId ? await repo.getTeamMember(deployment.teamId, principal.id) : null;
-
-    const role = resolveRole({ principal, ownerId: deployment.userId, teamId: deployment.teamId, grant, membership });
-    if (!role) {
-      res.status(404).json({ error: 'deployment not found' });
-      return;
-    }
-
-    (req as AccessRequest).access = { role, deployment };
+    (req as AccessRequest).access = access;
     next();
   };
+}
+
+/**
+ * The caller's role on one server, or null for no access — what the guard asks.
+ *
+ * Exported for routes that address *several* servers in one request (bulk
+ * actions, #238): each one is authorized by this same function rather than by a
+ * second copy of the rules, which is how the two would drift.
+ */
+export async function resolveAccess(
+  repo: Repository,
+  principal: { id: string; platformRole: PlatformRole },
+  deploymentId: string,
+): Promise<RequestAccess | null> {
+  const deployment = await repo.getDeployment(deploymentId);
+  if (!deployment) return null;
+
+  // A share is addressed to an email and bound to the account when that person
+  // first appears (#176). Only a bound, active share grants anything — a
+  // pending invitation to an address nobody has claimed must not open a door.
+  const caller = await repo.getUser(principal.id);
+  const share = caller ? await repo.getSubuserFor(deployment.id, caller.email) : null;
+  const grant = share?.status === 'active' && share.userId === principal.id ? share : null;
+
+  // A server may also be shared with a team (#177); membership of it grants the
+  // member's team role. Where both apply, access.ts takes the stronger.
+  const membership = deployment.teamId ? await repo.getTeamMember(deployment.teamId, principal.id) : null;
+
+  const role = resolveRole({ principal, ownerId: deployment.userId, teamId: deployment.teamId, grant, membership });
+  return role ? { role, deployment } : null;
 }
 
 /**
