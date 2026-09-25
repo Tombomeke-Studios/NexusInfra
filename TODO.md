@@ -310,7 +310,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [x] Nothing watches the dead-letter queue — surfaces DLQ depth in the panel (#243)
 - [x] Node Agent does not reconcile containers after its own crash (#244)
 - [x] Document TLS termination / reverse proxy — the installer ships plain HTTP (#245)
-- [ ] Accessibility + small-screen audit of the panel (keyboard, focus, reduced motion) (#247)
+- [x] Accessibility + small-screen audit of the panel (keyboard, focus, reduced motion) (#247) — axe clean (WCAG 2 A/AA) on every page and server tab in both themes, and inside open dialogs; no sideways scroll at 375px; focus trapped in and restored from modals; reduced motion stops every animation
 
 ### Small cleanups / follow-ups (open)
 

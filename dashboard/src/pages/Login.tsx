@@ -63,7 +63,7 @@ export function Login({ mode = 'sign-in' }: { mode?: 'sign-in' | 'register' }) {
   };
 
   return (
-    <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>
+    <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>
       <div style={{ width: '100%', maxWidth: 392, animation: 'rise 520ms var(--ease-out) both' }}>
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
           <ThemeToggle />
@@ -212,6 +212,6 @@ export function Login({ mode = 'sign-in' }: { mode?: 'sign-in' | 'register' }) {
           </div>
         </div>
       </div>
-    </div>
+    </main>
   );
 }

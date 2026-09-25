@@ -211,11 +211,11 @@
   cursor: not-allowed;
 }
 .btn--primary {
-  background: var(--color-primary);
+  background: var(--color-primary-solid);
   color: var(--color-primary-fg);
 }
 .btn--primary:hover:not(:disabled) {
-  background: var(--color-primary-hover);
+  background: var(--color-primary-solid-hover);
 }
 .btn--secondary {
   background: var(--color-surface);
@@ -576,6 +576,13 @@
 }
 
 /* ── Table ──────────────────────────────────────────────────────────────── */
+/* Detail columns a phone has no room for (#247): the row still says what the
+   server is and what state it is in, and the server's page has the rest. */
+@media (max-width: 700px) {
+  .wide-only {
+    display: none;
+  }
+}
 .table-wrap {
   overflow-x: auto;
   border: 1px solid var(--color-border);
@@ -758,6 +765,49 @@ input[type='range']::-moz-range-thumb {
 }
 .appbar__spacer {
   flex: 1;
+}
+/* The nav and the bar's actions (#247). On a wide screen the wrapper is not a
+   box at all, so the bar lays out exactly as before; on a narrow one it folds
+   behind the Menu button. */
+.appbar__menu {
+  display: contents;
+}
+.appbar__menu-toggle {
+  display: none;
+}
+@media (max-width: 900px) {
+  .appbar {
+    justify-content: space-between;
+    padding: 0 var(--space-4);
+  }
+  .appbar__menu-toggle {
+    display: inline-flex;
+  }
+  .appbar__menu {
+    display: none;
+  }
+  .appbar__menu.is-open {
+    position: absolute;
+    top: var(--nav-height);
+    left: 0;
+    right: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-1);
+    padding: var(--space-3) var(--space-4) var(--space-4);
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+    box-shadow: var(--shadow-lg);
+    max-height: calc(100dvh - var(--nav-height));
+    overflow-y: auto;
+  }
+  .appbar__menu.is-open .appbar__nav {
+    flex-direction: column;
+  }
+  .appbar__menu.is-open .navlink {
+    padding: var(--space-3);
+  }
 }
 .navlink {
   padding: var(--space-2) var(--space-3);
@@ -1114,8 +1164,8 @@ input[type='range']::-moz-range-thumb {
 }
 /* A destructive confirmation should not look like a routine one. */
 .btn--danger-solid {
-  background: var(--color-danger);
-  border-color: var(--color-danger);
+  background: var(--color-danger-solid);
+  border-color: var(--color-danger-solid);
   color: #fff;
 }
 .btn--danger-solid:hover:not(:disabled) {

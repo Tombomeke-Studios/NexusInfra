@@ -42,7 +42,7 @@ export function ResetPassword() {
   };
 
   return (
-    <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>
+    <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>
       <div className="card" style={{ width: '100%', maxWidth: 392, padding: '28px 26px' }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9, fontWeight: 700, color: 'var(--color-primary)', marginBottom: 18 }}>
           <IconHexagon size={22} />
@@ -89,6 +89,6 @@ export function ResetPassword() {
           </form>
         )}
       </div>
-    </div>
+    </main>
   );
 }
