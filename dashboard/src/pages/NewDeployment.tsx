@@ -336,7 +336,7 @@ export function NewDeployment() {
           )}
 
           {/* Ports & env */}
-          <RowEditor legend="Ports" hint="host : container" keyPlaceholder="8080" valuePlaceholder="80" rows={ports} onChange={setPorts} />
+          <RowEditor legend="Ports" hint="host : container — write auto as the host port to take a free one from the node's range" keyPlaceholder="8080 or auto" valuePlaceholder="80" rows={ports} onChange={setPorts} />
           {/* An egg owns its environment: the fields above are that environment,
               validated server-side. Free-form rows here would let a caller set
               anything at all, which is what moving the recipe off the client fixed. */}

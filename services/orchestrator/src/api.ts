@@ -18,6 +18,8 @@ import { requestImageUpdate } from './imageUpdate.js';
 import { enforceRetention, takeBackup, type Snapshot } from './backups.js';
 import { parseRetention } from './retention.js';
 import { isMigrating, planMigration, type MigrationTransport } from './migrate.js';
+import { allocatePorts, checkPorts } from './portAllocation.js';
+import { parsePortRange } from './portPool.js';
 import { planTransfer } from './transfer.js';
 import { pageOf, parseFilter, parsePage } from './deploymentQuery.js';
 import { getMinecraftVersions } from './minecraftVersions.js';
@@ -479,6 +481,13 @@ export function createApiRouter(deps: ApiDeps): Router {
     const heapProblem = heapProblemFor(spec, limits, node);
     if (heapProblem) return res.status(400).json({ error: heapProblem });
 
+    // Host ports on this node (#233): `auto` resolved from its pool, and a port
+    // another server here already holds refused by name, instead of a start
+    // that fails on the bind.
+    const portPlan = await checkPorts(repo, node, spec.ports);
+    if (!portPlan.ok) return res.status(portPlan.status).json({ error: portPlan.error });
+    spec.ports = portPlan.ports;
+
     const config = await repo.createServerConfig({
       userId,
       name,
@@ -492,6 +501,12 @@ export function createApiRouter(deps: ApiDeps): Router {
       type: spec.type,
     });
     const deployment = await repo.createDeployment(config.id, node.id);
+    const allocated = await allocatePorts(repo, deployment.id, node, config.ports);
+    if (!allocated.ok) {
+      // Lost a race for a port between the check and the write.
+      await repo.deleteDeployment(deployment.id);
+      return res.status(allocated.status).json({ error: allocated.error });
+    }
     await repo.appendDeploymentEvent(deployment.id, 'created', `placed on node ${node.id}`);
 
     await emit('infra.deployment.created', { type: 'deployment.created', payload: { deploymentId: deployment.id, userId: config.userId, resourceLimits: config.resourceLimits } });
@@ -556,9 +571,18 @@ export function createApiRouter(deps: ApiDeps): Router {
   // Attaching a server to a team sits behind the same guard (#177).
   router.use(createServerTeamRouter({ repo }));
 
-  router.get('/deployments/:id', requirePermission('server.view'), (req: Request, res: Response) => {
+  router.get('/deployments/:id', requirePermission('server.view'), async (req: Request, res: Response) => {
     const { deployment, role } = accessOf(req);
-    res.json({ ...deployment, role, migrating: isMigrating(deployment.id) });
+    const portAllocations = (await repo.listPortAllocations({ deploymentId: deployment.id })).map((a) => ({ port: a.port, primary: a.primary }));
+    res.json({ ...deployment, role, migrating: isMigrating(deployment.id), portAllocations });
+  });
+
+  // Which of the server's ports the Network tab shows first (#233).
+  router.put('/deployments/:id/ports/primary', requirePermission('server.edit'), async (req: Request, res: Response) => {
+    const port = Number(req.body?.port);
+    if (!Number.isInteger(port)) return res.status(400).json({ error: 'port must be one of this server\'s ports' });
+    if (!(await repo.setPrimaryPort(req.params.id, port))) return res.status(404).json({ error: `this server holds no port ${port}` });
+    return res.json({ port });
   });
 
   // Change an existing server's configuration (#220). Before this a server was
@@ -646,6 +670,14 @@ export function createApiRouter(deps: ApiDeps): Router {
 
       const problem = heapProblemFor({ type: existing.type, env: nextEnv }, nextLimits, node);
       if (problem) return res.status(400).json({ error: problem });
+    }
+
+    // New ports are claimed on the server's node before they are stored (#233),
+    // so a config can never name a port that another server there holds.
+    if (patch.ports && node) {
+      const allocated = await allocatePorts(repo, req.params.id, node, patch.ports);
+      if (!allocated.ok) return res.status(allocated.status).json({ error: allocated.error });
+      patch.ports = allocated.ports;
     }
 
     const updated = await repo.updateDeploymentConfig(req.params.id, patch);
@@ -739,6 +771,13 @@ export function createApiRouter(deps: ApiDeps): Router {
         node = selectNode(nodes, Date.now());
       }
       if (!node) return { status: 503, body: { error: 'No healthy node available to place the deployment' } };
+
+      // A first placement claims its ports there (#233); on its own node it
+      // already holds them.
+      if (!home) {
+        const allocated = await allocatePorts(repo, detail.id, node, config.ports);
+        if (!allocated.ok) return { status: allocated.status, body: { error: allocated.error } };
+      }
 
       await repo.updateDeploymentStatus(detail.id, {
         status: 'pending',
@@ -987,6 +1026,29 @@ export function createApiRouter(deps: ApiDeps): Router {
       agentUrl: typeof agentUrl === 'string' ? agentUrl.trim() || null : undefined,
     });
     return res.status(201).json({ ...node, health: nodeHealth(node, Date.now()) });
+  });
+
+  // A node's host-port pool (#233). Existing allocations outside a new range
+  // are kept — servers are not renumbered behind their owners' backs — and the
+  // answer says how many there are.
+  router.patch('/nodes/:id/ports', requirePlatformAdmin, async (req: Request, res: Response) => {
+    const parsed = parsePortRange(req.body?.range === undefined ? undefined : req.body.range);
+    if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+    const existing = (await repo.listNodes()).find((n) => n.id === req.params.id);
+    if (!existing) return res.status(404).json({ error: 'node not found' });
+    const node = await repo.registerNode({ id: req.params.id, portRange: parsed.range });
+    const outside = parsed.range
+      ? (await repo.listPortAllocations({ nodeId: node.id })).filter((a) => a.port < parsed.range!.start || a.port > parsed.range!.end).length
+      : 0;
+    return res.json({ ...node, health: nodeHealth(node, Date.now()), outsideRange: outside });
+  });
+
+  // Every port held on a node, and by which server — administrators only, since
+  // it names servers the caller may not otherwise see.
+  router.get('/nodes/:id/ports', requirePlatformAdmin, async (req: Request, res: Response) => {
+    const names = new Map((await repo.listDeployments()).map((d) => [d.id, d.name]));
+    const allocations = await repo.listPortAllocations({ nodeId: req.params.id });
+    return res.json(allocations.map((a) => ({ port: a.port, deploymentId: a.deploymentId, name: names.get(a.deploymentId) ?? null, primary: a.primary })));
   });
 
   // Drain a node, or put it back in the pool (#258). Maintenance means "keep

@@ -55,6 +55,19 @@ export interface NodeRecord {
    * has, but takes nothing new. Set by an administrator, never by a heartbeat.
    */
   maintenance: boolean;
+  /** The host ports servers here may be given (#233); null for no pool. */
+  portRangeStart: number | null;
+  portRangeEnd: number | null;
+}
+
+/** One host port held by one server on one node (#233). */
+export interface PortAllocationRecord {
+  id: string;
+  nodeId: string;
+  port: number;
+  deploymentId: string;
+  primary: boolean;
+  createdAt: string;
 }
 
 export interface ServerConfigRecord {
@@ -390,6 +403,8 @@ export interface RegisterNodeInput {
   agentUrl?: string | null;
   /** Drain (or un-drain) the node — no new placements while true (#258). */
   maintenance?: boolean;
+  /** Set (or with null, remove) the node's host-port pool (#233). */
+  portRange?: { start: number; end: number } | null;
 }
 
 export interface Repository {
@@ -472,6 +487,18 @@ export interface Repository {
   getDeploymentConfig(deploymentId: string): Promise<ServerConfigRecord | null>;
   /** Remove a deployment and all of its child records (events/databases/backups/schedules/subusers). */
   deleteDeployment(id: string): Promise<void>;
+
+  // Host ports (#233).
+  listPortAllocations(filter: { nodeId?: string; deploymentId?: string }): Promise<PortAllocationRecord[]>;
+  /**
+   * Make a server's allocations exactly `ports` on `nodeId` (or none, with a
+   * null node), in one step. Throws PortConflictError when another server holds
+   * one of them — the unique constraint, not a prior read, is the guard.
+   * The primary survives when its port is kept; otherwise the first port is.
+   */
+  replacePortAllocations(deploymentId: string, nodeId: string | null, ports: number[]): Promise<PortAllocationRecord[]>;
+  /** Mark one of a server's ports as its primary. False when it holds no such port. */
+  setPrimaryPort(deploymentId: string, port: number): Promise<boolean>;
 
   // Managed databases (#109).
   createDatabase(input: CreateServerDatabaseInput): Promise<ServerDatabaseRecord>;

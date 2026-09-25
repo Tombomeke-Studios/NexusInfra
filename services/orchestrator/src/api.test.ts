@@ -1601,7 +1601,8 @@ describe('the Java heap follows the memory limit (#308)', () => {
   it('moves the heap with the limit, both ways', async () => {
     await nodeWithRam(16384);
     const small = await create({ resourceLimits: { ramPercent: 10 } });
-    const large = await create({ name: 'mc2', resourceLimits: { ramPercent: 75 } });
+    // Its own host port: two servers on one node cannot share 25565 (#233).
+    const large = await create({ name: 'mc2', resourceLimits: { ramPercent: 75 }, ports: { '25566': '25565' } });
 
     expect(await heapOf(small.body.id)).toBe('1126M');
     expect(await heapOf(large.body.id)).toBe('9830M');
@@ -2284,5 +2285,92 @@ describe('POST /deployments/:id/migrate (#234)', () => {
     expect(res.status).toBe(400);
     expect(pending).toHaveLength(0);
     await request(appFor(PLATFORM_ADMIN)).post(`/deployments/${id}/migrate`).send({}).expect(400);
+  });
+});
+
+describe('host ports per node (#233)', () => {
+  let repo: InMemoryRepository;
+  let app: express.Express;
+  let admin: express.Express;
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    app = buildApp(repo, []);
+    admin = buildApp(repo, [], PLATFORM_ADMIN);
+    await seedUser(repo);
+    await seedUser(repo, PLATFORM_ADMIN);
+    await seedHealthyNode(repo, 'node-a');
+  });
+
+  const create = (name: string, ports: Record<string, string>, extra: Record<string, unknown> = {}) =>
+    request(app).post('/deployments').send({ name, dockerImage: 'nginx', ports, nodeId: 'node-a', ...extra });
+
+  it('refuses a second server on a port the first already holds, naming it', async () => {
+    await create('first', { '8080': '80' }).expect(201);
+    const res = await create('second', { '8080': '80' });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('port 8080 is already used by first on this node');
+    expect((await repo.listDeployments()).map((d) => d.name)).toEqual(['first']);
+  });
+
+  it('gives the same port on another node without complaint', async () => {
+    await seedHealthyNode(repo, 'node-b');
+    await create('first', { '8080': '80' }).expect(201);
+    await request(app).post('/deployments').send({ name: 'second', dockerImage: 'nginx', ports: { '8080': '80' }, nodeId: 'node-b' }).expect(201);
+  });
+
+  it('frees the ports when the server is deleted', async () => {
+    const first = await create('first', { '8080': '80' });
+    await request(app).delete(`/deployments/${first.body.id}`).expect(204);
+    await create('second', { '8080': '80' }).expect(201);
+  });
+
+  it('takes "auto" from the node\'s pool, and records the port it chose', async () => {
+    await request(admin).patch('/nodes/node-a/ports').send({ range: { start: 30000, end: 30010 } }).expect(200);
+    const one = await create('one', { auto: '80' });
+    const two = await create('two', { auto: '80' });
+    expect(one.body.ports).toEqual({ '30000': '80' });
+    expect(two.body.ports).toEqual({ '30001': '80' });
+    expect((await request(app).get(`/deployments/${one.body.id}`)).body.portAllocations).toEqual([{ port: 30000, primary: true }]);
+  });
+
+  it('holds explicit ports to the pool once the node has one', async () => {
+    await request(admin).patch('/nodes/node-a/ports').send({ range: { start: 30000, end: 30010 } });
+    const res = await create('x', { '8080': '80' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/outside this node's port range/);
+  });
+
+  it('checks an edit against the other servers, and moves the claim with it', async () => {
+    const first = await create('first', { '8080': '80' });
+    const second = await create('second', { '9090': '80' });
+    await request(app).patch(`/deployments/${second.body.id}`).send({ ports: { '8080': '80' } }).expect(409);
+    await request(app).patch(`/deployments/${first.body.id}`).send({ ports: { '8081': '80' } }).expect(200);
+    await request(app).patch(`/deployments/${second.body.id}`).send({ ports: { '8080': '80' } }).expect(200);
+  });
+
+  it('lets the owner pick which port is the primary one', async () => {
+    const s = await create('game', { '27015': '27015/udp', '27016': '27016/tcp' });
+    await request(app).put(`/deployments/${s.body.id}/ports/primary`).send({ port: 27016 }).expect(200);
+    expect((await request(app).get(`/deployments/${s.body.id}`)).body.portAllocations).toEqual([
+      { port: 27015, primary: false },
+      { port: 27016, primary: true },
+    ]);
+    await request(app).put(`/deployments/${s.body.id}/ports/primary`).send({ port: 1 }).expect(404);
+  });
+
+  it('lets only administrators see or change a node\'s pool', async () => {
+    await request(app).patch('/nodes/node-a/ports').send({ range: { start: 1, end: 2 } }).expect(403);
+    await request(app).get('/nodes/node-a/ports').expect(403);
+    await create('first', { '8080': '80' });
+    const res = await request(admin).get('/nodes/node-a/ports');
+    expect(res.body).toEqual([{ port: 8080, deploymentId: expect.any(String), name: 'first', primary: true }]);
+  });
+
+  it('says how many existing ports a new range leaves outside it, without renumbering them', async () => {
+    await create('first', { '8080': '80' });
+    const res = await request(admin).patch('/nodes/node-a/ports').send({ range: { start: 30000, end: 30010 } });
+    expect(res.body.outsideRange).toBe(1);
+    expect((await repo.listPortAllocations({ nodeId: 'node-a' })).map((a) => a.port)).toEqual([8080]);
   });
 });

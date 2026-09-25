@@ -727,3 +727,36 @@ describe('ServerDetail moving a server (#234)', () => {
     expect(screen.getByRole('button', { name: 'Move server' })).toBeDisabled();
   });
 });
+
+describe('ServerDetail primary port (#233)', () => {
+  beforeEach(() => vi.resetAllMocks());
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('lists the primary port first and lets an admin choose another', async () => {
+    renderDetail('owner', {
+      ports: { '27015': '27015/udp', '27016': '27016/tcp' },
+      portAllocations: [
+        { port: 27015, primary: false },
+        { port: 27016, primary: true },
+      ],
+    });
+    await userEvent.click(await screen.findByRole('button', { name: 'network' }));
+    const rows = await screen.findAllByText(/^2701[56]$/, { selector: '.mono' });
+    expect(rows[0]).toHaveTextContent('27016');
+    expect(screen.getByText('Primary')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Make 27015 the primary port' }));
+    await waitFor(() => {
+      const put = (globalThis.fetch as unknown as { mock: { calls: [string, RequestInit?][] } }).mock.calls.find(
+        ([u, o]) => String(u).endsWith('/ports/primary') && o?.method === 'PUT'
+      );
+      expect(JSON.parse(String(put![1]!.body))).toEqual({ port: 27015 });
+    });
+  });
+
+  it('offers no choice to a role that cannot edit the server', async () => {
+    renderDetail('viewer', { ports: { '1': '1', '2': '2' }, portAllocations: [{ port: 1, primary: true }, { port: 2, primary: false }] });
+    await userEvent.click(await screen.findByRole('button', { name: 'network' }));
+    expect(screen.queryByRole('button', { name: /Make .* the primary port/ })).not.toBeInTheDocument();
+  });
+});

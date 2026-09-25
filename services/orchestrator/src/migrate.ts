@@ -1,5 +1,6 @@
 import { nodeHealth } from './nodeRegistry.js';
-import type { Repository } from './types.js';
+import type { NodeRecord, Repository } from './types.js';
+import { allocatePorts, checkPorts } from './portAllocation.js';
 
 // Moving a server to another node (#234).
 //
@@ -67,10 +68,14 @@ export async function planMigration(deps: MigrationDeps, deploymentId: string, t
     return { ok: false, status: 409, error: `node ${source.id} is offline, and the server's data is on it — it can be moved once that node is back` };
   }
 
+  // Its ports have to be free there too (#233) — checked now, claimed at the switch.
+  const ports = await checkPorts(repo, target, config.ports, deploymentId);
+  if (!ports.ok) return { ok: false, status: 409, error: `cannot move to ${target.id}: ${ports.error}` };
+
   inFlight.add(deploymentId);
   const run = async () => {
     try {
-      await migrate(deps, deploymentId, config.dockerImage, source?.id ?? null, target.id);
+      await migrate(deps, deploymentId, config.dockerImage, config.ports, source?.id ?? null, target);
     } finally {
       inFlight.delete(deploymentId);
     }
@@ -78,12 +83,25 @@ export async function planMigration(deps: MigrationDeps, deploymentId: string, t
   return { ok: true, run };
 }
 
-async function migrate(deps: MigrationDeps, deploymentId: string, image: string, fromNode: string | null, toNode: string): Promise<void> {
+async function migrate(
+  deps: MigrationDeps,
+  deploymentId: string,
+  image: string,
+  ports: Record<string, string>,
+  fromNode: string | null,
+  target: NodeRecord,
+): Promise<void> {
   const { repo, transport } = deps;
+  const toNode = target.id;
   await repo.appendDeploymentEvent(deploymentId, 'migration-started', `moving from ${fromNode ?? 'no node'} to ${toNode}`);
 
   // Never placed: nothing to carry, only a record to change.
   if (!fromNode) {
+    const claimed = await allocatePorts(repo, deploymentId, target, ports);
+    if (!claimed.ok) {
+      await repo.appendDeploymentEvent(deploymentId, 'migration-failed', `could not move to ${toNode}: ${claimed.error}`);
+      return;
+    }
     await repo.updateDeploymentStatus(deploymentId, { nodeId: toNode });
     await repo.appendDeploymentEvent(deploymentId, 'migrated', `assigned to ${toNode} (it held no data yet)`);
     return;
@@ -104,6 +122,9 @@ async function migrate(deps: MigrationDeps, deploymentId: string, image: string,
       await transport.copyBackup(fromUrl, toUrl, backup.ref);
       copiedBackups.push(backup.ref);
     }
+    // Claim its ports on the target last, so a failure above leaves them free.
+    const claimed = await allocatePorts(repo, deploymentId, target, ports);
+    if (!claimed.ok) throw new Error(claimed.error);
   } catch (err) {
     // Undo exactly what this migration created, and nothing else.
     for (const path of imported) await transport.removeVolume(toUrl, deploymentId, path).catch(() => undefined);

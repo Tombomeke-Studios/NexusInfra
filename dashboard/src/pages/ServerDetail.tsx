@@ -48,6 +48,7 @@ import {
   type ServerSchedule,
   type ScheduleAction,
   type ImageStatus,
+  setPrimaryPort,
   type NodeView,
   migrateDeployment,
   getCurrentUser,
@@ -241,7 +242,9 @@ export function ServerDetail() {
       {activeTab === 'files' && <FilesTab id={d.id} running={running} />}
       {activeTab === 'databases' && <DatabasesTab id={d.id} running={running} />}
       {activeTab === 'backups' && <BackupsTab id={d.id} running={running} retention={d.backupRetention ?? {}} onRetentionSaved={load} />}
-      {activeTab === 'network' && <NetworkTab ports={d.ports ?? {}} />}
+      {activeTab === 'network' && (
+        <NetworkTab id={d.id} ports={d.ports ?? {}} allocations={d.portAllocations ?? []} canEdit={allows('server.edit')} onChanged={load} />
+      )}
       {activeTab === 'schedules' && <SchedulesTab id={d.id} />}
       {activeTab === 'subusers' && <SubusersTab id={d.id} />}
       {activeTab === 'startup' && (
@@ -926,8 +929,32 @@ function BackupsTab({
 // The server's real port mappings, as configured at creation and carried on the
 // detail response (#217). This used to render two invented allocations and an
 // SFTP endpoint nothing in the stack listens on; real SFTP is its own work (#235).
-function NetworkTab({ ports }: { ports: Record<string, string> }) {
-  const allocs = Object.entries(ports);
+function NetworkTab({
+  id,
+  ports,
+  allocations,
+  canEdit,
+  onChanged,
+}: {
+  id: string;
+  ports: Record<string, string>;
+  allocations: Array<{ port: number; primary: boolean }>;
+  canEdit: boolean;
+  onChanged: () => Promise<void> | void;
+}) {
+  const { toast } = useToast();
+  const primary = allocations.find((a) => a.primary)?.port;
+  // The primary port first — it is "the" address of the server (#233).
+  const allocs = Object.entries(ports).sort(([a], [b]) => (Number(a) === primary ? -1 : Number(b) === primary ? 1 : 0));
+  const makePrimary = async (port: number) => {
+    try {
+      await setPrimaryPort(id, port);
+      toast(`Port ${port} is now the primary port`, 'success', 'Network');
+      await onChanged();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not change the primary port', 'error', 'Network');
+    }
+  };
   return (
     <>
       <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 12 }}>
@@ -958,6 +985,16 @@ function NetworkTab({ ports }: { ports: Record<string, string> }) {
                   {(protocol ?? 'tcp').replace('+', ' + ').toUpperCase()}
                 </span>
                 <span className="muted" style={{ flex: 1, fontSize: '.84rem' }}>in the container</span>
+                {Number(hostPort) === primary ? (
+                  <span className="badge" style={{ fontSize: '.72rem' }}>Primary</span>
+                ) : (
+                  canEdit &&
+                  allocations.length > 1 && (
+                    <button className="btn btn--ghost btn--sm" onClick={() => void makePrimary(Number(hostPort))} aria-label={`Make ${hostPort} the primary port`}>
+                      Make primary
+                    </button>
+                  )
+                )}
               </div>
             );
           })}

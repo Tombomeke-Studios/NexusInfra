@@ -108,4 +108,18 @@ describe('moving a server between nodes (#234)', () => {
     await repo.upsertNode({ id: 'node-a', lastHeartbeat: new Date(Date.now() - 60_000).toISOString() });
     expect(await planMigration(deps, id, 'node-b')).toMatchObject({ ok: false, status: 409, error: expect.stringMatching(/node-a is offline/) });
   });
+
+  it("refuses a target where another server holds the server's ports, and claims them on a move (#233)", async () => {
+    await repo.updateDeploymentConfig(id, { ports: { '25565': '25565' } });
+    await repo.replacePortAllocations(id, 'node-a', [25565]);
+    const squatterCfg = await repo.createServerConfig({ userId: 'u', name: 'squatter', dockerImage: 'x' });
+    const squatter = (await repo.createDeployment(squatterCfg.id, 'node-b')).id;
+    await repo.replacePortAllocations(squatter, 'node-b', [25565]);
+
+    expect(await planMigration(deps, id, 'node-b')).toMatchObject({ ok: false, status: 409, error: expect.stringMatching(/25565 is already used by squatter/) });
+
+    await repo.replacePortAllocations(squatter, 'node-b', []);
+    await move();
+    expect((await repo.listPortAllocations({ deploymentId: id })).map((a) => [a.nodeId, a.port])).toEqual([['node-b', 25565]]);
+  });
 });

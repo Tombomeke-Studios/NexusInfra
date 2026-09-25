@@ -238,7 +238,7 @@ scrolling log lines describing events that never happened.
 - [x] Add Minecraft Bedrock and Palworld eggs (#315)
 - [x] Import an existing server directory into the panel (#268)
 - [x] Backup retention, download, and off-site (S3) targets (#232)
-- [ ] Port allocation management per node — pool, conflicts, primary port (#233)
+- [x] Port allocation management per node — pool, conflicts, primary port (#233)
 - [x] Migrate a server to another node (#234)
 - [ ] Real SFTP access per server, honouring the file permissions (#235)
 - [ ] Notification service — mail/webhook on crash, suspend, node offline (#236)

@@ -114,6 +114,10 @@ model Node {
   diskUsedGb    Float?
   diskTotalGb   Float?
   maintenance   Boolean      @default(false)
+  // The host ports servers here may be given (#233). Both null means no pool:
+  // any free port may be named, and "auto" has nothing to choose from.
+  portRangeStart Int?
+  portRangeEnd   Int?
   createdAt     DateTime     @default(now())
   deployments   Deployment[]
 }
@@ -260,4 +264,20 @@ model ApiToken {
   expiresAt  DateTime?
 
   @@index([userId])
+}
+
+// One host port held by one server on one node (#233). The unique constraint is
+// what makes double-booking impossible rather than merely unlikely: two creates
+// that both checked and both found the port free cannot both write it.
+model PortAllocation {
+  id           String   @id
+  nodeId       String
+  port         Int
+  deploymentId String
+  // The one the Network tab shows first — "the" address of the server.
+  primary      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@unique([nodeId, port])
+  @@index([deploymentId])
 }
