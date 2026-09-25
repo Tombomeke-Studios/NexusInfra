@@ -126,6 +126,12 @@ describe('backup router', () => {
       expect(runtime.restored).toEqual([{ id: 'c1', path: '/data', size: runtime.payload.length }]);
     });
 
+    it('keeps the off-site copy when only the node copy is removed, as after a migration (#234)', async () => {
+      const make = await request(offApp).post('/backups').send({ containerId: 'c1', path: '/data' });
+      await request(offApp).delete(`/backups/${make.body.ref}?localOnly=true`).expect(204);
+      expect(bucket.objects.has(make.body.ref)).toBe(true);
+    });
+
     it('deletes the off-site copy with the backup', async () => {
       const make = await request(offApp).post('/backups').send({ containerId: 'c1', path: '/data' });
       await request(offApp).delete(`/backups/${make.body.ref}`).expect(204);

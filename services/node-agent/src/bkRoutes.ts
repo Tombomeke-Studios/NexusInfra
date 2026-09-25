@@ -105,7 +105,9 @@ export function createBackupRouter(runtime: ContainerRuntime, opts: { dir?: stri
       await fs.unlink(backupFilePath(dir, req.params.ref)).catch(() => {});
       // Retention (#232) deletes through here, so a copy left behind off-site
       // would be a bill that grows forever for backups the panel says are gone.
-      if (offsite) await offsite.delete(req.params.ref);
+      // `localOnly` is for a backup that moved to another node with its server
+      // (#234): the off-site copy is still that backup's, and still wanted.
+      if (offsite && req.query.localOnly !== 'true') await offsite.delete(req.params.ref);
       res.status(204).end();
     } catch (err) {
       fail(res, err);

@@ -31,6 +31,14 @@ class FakeRuntime implements ContainerRuntime {
     this.calls.push(`kill:${containerId}`);
     if (this.failOn === 'kill') throw new Error('no such container');
   }
+  async listDeploymentVolumes() {
+    return [];
+  }
+  async exportVolume(): Promise<NodeJS.ReadableStream> {
+    throw new Error('not in this test');
+  }
+  async importVolume(): Promise<void> {}
+  async removeDeploymentVolume(): Promise<void> {}
   pulls: string[] = [];
   async pullImage(image: string): Promise<{ imageId: string; digest: string | null }> {
     this.calls.push(`pull:${image}`);

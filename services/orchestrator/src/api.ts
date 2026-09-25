@@ -17,6 +17,7 @@ import { parsePersistPaths, startCommandFor } from './startCommand.js';
 import { requestImageUpdate } from './imageUpdate.js';
 import { enforceRetention, takeBackup, type Snapshot } from './backups.js';
 import { parseRetention } from './retention.js';
+import { isMigrating, planMigration, type MigrationTransport } from './migrate.js';
 import { planTransfer } from './transfer.js';
 import { pageOf, parseFilter, parsePage } from './deploymentQuery.js';
 import { getMinecraftVersions } from './minecraftVersions.js';
@@ -139,6 +140,9 @@ export type DownloadBackupFn = (agentUrl: string, ref: string) => Promise<global
  */
 export type PurgeDeploymentDataFn = (agentUrl: string, deploymentId: string) => Promise<void>;
 
+/** Moving a server's data between nodes (#234); injectable so tests need no agents. */
+export type { MigrationTransport };
+
 /** Ask the owning node whether a newer image exists for a server's tag (#239). */
 export type ImageStatusFn = (req: { agentUrl: string; image: string; containerId: string | null }) => Promise<Record<string, unknown>>;
 
@@ -166,6 +170,9 @@ export interface ApiDeps {
   checkQuota?: CheckQuotaFn;
   purgeDeploymentData?: PurgeDeploymentDataFn;
   imageStatus?: ImageStatusFn;
+  migrationTransport?: MigrationTransport;
+  /** Runs a planned migration; tests await it, production lets it run in the background. */
+  runMigration?: (run: () => Promise<void>) => void;
 }
 
 // Default quota check: in the community edition everything is allowed (no
@@ -210,6 +217,52 @@ const defaultImageStatus: ImageStatusFn = async ({ agentUrl, image, containerId 
   const body = (await r.json().catch(() => ({}))) as Record<string, unknown>;
   if (!r.ok) throw new Error(typeof body.error === 'string' ? body.error : `the node refused (${r.status})`);
   return body;
+};
+
+const defaultMigrationTransport: MigrationTransport = {
+  async listVolumes(agentUrl, deploymentId) {
+    const r = await agentFetch(`${agentUrl}/deployments/${encodeURIComponent(deploymentId)}/volumes`);
+    if (!r.ok) throw new Error(`the source node could not list the server's volumes (${r.status})`);
+    return (await r.json()) as { path: string }[];
+  },
+  async copyVolume(fromUrl, toUrl, deploymentId, path, image) {
+    const query = new URLSearchParams({ path, image });
+    const id = encodeURIComponent(deploymentId);
+    const source = await agentFetch(`${fromUrl}/deployments/${id}/volumes/export?${query}`);
+    if (!source.ok || !source.body) throw new Error(`the source node could not export ${path} (${source.status})`);
+    // Streamed straight through: a world of several gigabytes is never held here.
+    const target = await agentFetch(`${toUrl}/deployments/${id}/volumes/import?${query}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/x-tar' },
+      body: source.body,
+      duplex: 'half',
+    } as RequestInit);
+    if (!target.ok) {
+      const body = (await target.json().catch(() => ({}))) as { error?: string };
+      throw new Error(`the target node could not import ${path}: ${body.error ?? target.status}`);
+    }
+  },
+  async removeVolume(agentUrl, deploymentId, path) {
+    await agentFetch(`${agentUrl}/deployments/${encodeURIComponent(deploymentId)}/volumes?${new URLSearchParams({ path })}`, { method: 'DELETE' });
+  },
+  async copyBackup(fromUrl, toUrl, ref) {
+    const source = await agentFetch(`${fromUrl}/backups/${encodeURIComponent(ref)}/download`);
+    if (!source.ok || !source.body) throw new Error(`backup ${ref} could not be read from the source node (${source.status})`);
+    const target = await agentFetch(`${toUrl}/backups/${encodeURIComponent(ref)}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/x-tar' },
+      body: source.body,
+      duplex: 'half',
+    } as RequestInit);
+    if (!target.ok) throw new Error(`backup ${ref} could not be stored on the target node (${target.status})`);
+  },
+  async removeBackupFile(agentUrl, ref) {
+    const r = await agentFetch(`${agentUrl}/backups/${encodeURIComponent(ref)}?localOnly=true`, { method: 'DELETE' });
+    if (!r.ok && r.status !== 404) throw new Error(`the node refused (${r.status})`);
+  },
+  async purge(agentUrl, deploymentId) {
+    await defaultPurgeDeploymentData(agentUrl, deploymentId);
+  },
 };
 
 const DB_PUBLIC_HOST = process.env.DATABASE_PUBLIC_HOST || 'localhost';
@@ -277,6 +330,12 @@ export function createApiRouter(deps: ApiDeps): Router {
   const checkQuota = deps.checkQuota ?? defaultCheckQuota;
   const purgeDeploymentData = deps.purgeDeploymentData ?? defaultPurgeDeploymentData;
   const imageStatus = deps.imageStatus ?? defaultImageStatus;
+  const migrationTransport = deps.migrationTransport ?? defaultMigrationTransport;
+  const runMigration =
+    deps.runMigration ??
+    ((run: () => Promise<void>) => {
+      void run().catch((err) => console.error('[orchestrator] migration crashed:', err));
+    });
   const router = Router();
   // Routes under `/deployments/<word>` that are not a server id must be matched
   // before the per-server guard (#238); mounting this first guarantees it.
@@ -498,7 +557,8 @@ export function createApiRouter(deps: ApiDeps): Router {
   router.use(createServerTeamRouter({ repo }));
 
   router.get('/deployments/:id', requirePermission('server.view'), (req: Request, res: Response) => {
-    res.json({ ...accessOf(req).deployment, role: accessOf(req).role });
+    const { deployment, role } = accessOf(req);
+    res.json({ ...deployment, role, migrating: isMigrating(deployment.id) });
   });
 
   // Change an existing server's configuration (#220). Before this a server was
@@ -651,6 +711,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     // Start (or re-run) a deployment that isn't currently running: re-place it on a
     // healthy node and command a fresh container from its saved config.
     start: async (detail) => {
+      if (isMigrating(detail.id)) return { status: 409, body: { error: 'this server is being moved to another node' } };
       if (detail.status === 'running' || detail.status === 'pending') {
         return { status: 409, body: { error: 'deployment is already running' } };
       }
@@ -788,8 +849,22 @@ export function createApiRouter(deps: ApiDeps): Router {
   // not a control permission: this changes which software runs, which is the
   // server admin's call rather than an operator's.
   router.post('/deployments/:id/update', requirePermission('server.edit'), async (req: Request, res: Response) => {
+    if (isMigrating(req.params.id)) return res.status(409).json({ error: 'this server is being moved to another node' });
     const outcome = await requestImageUpdate({ repo, publish }, req.params.id, 'user');
     return res.status(outcome.status).json(outcome.body);
+  });
+
+  // Move a stopped server to another node (#234). A platform administrator's
+  // call: it moves data between machines, which is fleet management, not
+  // something a server role decides. Answers once the move is validated; the
+  // copy runs in the background and reports in the audit trail.
+  router.post('/deployments/:id/migrate', requirePlatformAdmin, async (req: Request, res: Response) => {
+    const nodeId = typeof req.body?.nodeId === 'string' ? req.body.nodeId : '';
+    if (!nodeId) return res.status(400).json({ error: 'nodeId is required' });
+    const plan = await planMigration({ repo, transport: migrationTransport, agentUrlFor }, req.params.id, nodeId);
+    if (!plan.ok) return res.status(plan.status).json({ error: plan.error });
+    runMigration(plan.run);
+    return res.status(202).json({ status: 'migrating', deploymentId: req.params.id, nodeId });
   });
 
   // Permanently delete a deployment: stop its container if running, deprovision
@@ -797,6 +872,8 @@ export function createApiRouter(deps: ApiDeps): Router {
   router.delete('/deployments/:id', requirePermission('server.delete'), async (req: Request, res: Response) => {
     const detail = await repo.getDeployment(req.params.id);
     if (!detail) return res.status(404).json({ error: 'deployment not found' });
+    // Its data is between two nodes right now; deleting would strand one half.
+    if (isMigrating(detail.id)) return res.status(409).json({ error: 'this server is being moved to another node' });
 
     if (detail.containerId && detail.nodeId) {
       await emit(KEY_STOP, {

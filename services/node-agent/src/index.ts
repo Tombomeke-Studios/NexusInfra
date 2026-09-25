@@ -13,6 +13,7 @@ import { createExecRouter } from './execRoutes.js';
 import { createImportRouter, importRoot } from './imports.js';
 import { createDataRouter } from './volumes.js';
 import { createImageRouter } from './images.js';
+import { createMigrationRouter } from './migrateRoutes.js';
 import { attachTerminal, type TerminalSocket } from './terminal.js';
 
 // ── Node Agent ────────────────────────────────────────────────────────────────
@@ -135,6 +136,9 @@ app.use(createDataRouter(runtime));
 
 // ── HTTP: is there a newer image for a server's tag (#239) ────────────────────
 app.use(createImageRouter(runtime));
+
+// ── HTTP: moving a server between nodes (#234) — its volumes and backups ─────
+app.use(createMigrationRouter(runtime));
 
 // ── WebSocket: interactive terminal (#71) ─────────────────────────────────────
 // Internal WS endpoint (reached only via the Orchestrator's WS proxy) that opens

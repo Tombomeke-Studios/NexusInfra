@@ -111,6 +111,12 @@ Before this, every stop deleted the server's files. The start command is built i
 (`startCommand.ts`) for creation, start and reconciliation — reconciliation's hand-written copy had
 already lost the imported mount.
 
+**Moving a server (#234).** Because a server's data is a set of volumes on one node, moving it is
+moving those: the orchestrator streams each from the source agent's volume export into the target
+agent's import (a created-never-started container of the server's own image carries the volume, so
+no helper image is needed), then the backup tars, then switches the record, then cleans the source.
+Start never moves a server by itself (#329) — it starts on the node that has the data.
+
 **Multi-node routing (#171).** Placement spans every healthy node, and start/stop/restart are addressed
 by `nodeId` over the bus. Direct agent calls (files, exec, terminal, logs/stats, backups, databases)
 must reach the node that actually hosts the deployment — previously they all went to a single

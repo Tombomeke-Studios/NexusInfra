@@ -2212,3 +2212,77 @@ describe('a stopped server starts where its data is (#329)', () => {
     expect(startNode()).toBe('node-b');
   });
 });
+
+describe('POST /deployments/:id/migrate (#234)', () => {
+  let repo: InMemoryRepository;
+  let id: string;
+  let pending: Array<() => Promise<void>>;
+  let release: () => void;
+  let gate: Promise<void>;
+
+  function appFor(principal: { id: string; platformRole: 'owner' | 'admin' | 'user' }) {
+    const app = express();
+    app.use(express.json());
+    app.use(asPrincipal(principal));
+    app.use(
+      createApiRouter({
+        repo,
+        checkQuota: allowQuota,
+        publish: async () => true,
+        purgeDeploymentData: async () => undefined,
+        migrationTransport: {
+          listVolumes: async () => [{ path: '/data' }],
+          copyVolume: async () => {
+            await gate;
+          },
+          removeVolume: async () => undefined,
+          copyBackup: async () => undefined,
+          removeBackupFile: async () => undefined,
+          purge: async () => undefined,
+        },
+        runMigration: (run) => void pending.push(run),
+      })
+    );
+    return app;
+  }
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    pending = [];
+    gate = new Promise((r) => (release = r));
+    await seedUser(repo);
+    await seedUser(repo, PLATFORM_ADMIN);
+    await seedHealthyNode(repo, 'node-a');
+    await seedHealthyNode(repo, 'node-b');
+    const created = await request(appFor(OWNER)).post('/deployments').send({ name: 'world', dockerImage: 'nginx', nodeId: 'node-a' });
+    id = created.body.id;
+    await repo.updateDeploymentStatus(id, { status: 'stopped', containerId: null });
+  });
+
+  it('is for platform administrators, not server owners', async () => {
+    await request(appFor(OWNER)).post(`/deployments/${id}/migrate`).send({ nodeId: 'node-b' }).expect(403);
+  });
+
+  it('answers at once, moves in the background, and blocks start and delete meanwhile', async () => {
+    const admin = appFor(PLATFORM_ADMIN);
+    const res = await request(admin).post(`/deployments/${id}/migrate`).send({ nodeId: 'node-b' });
+    expect(res.status).toBe(202);
+    expect((await request(admin).get(`/deployments/${id}`)).body.migrating).toBe(true);
+
+    const running = pending[0]();
+    expect((await request(admin).post(`/deployments/${id}/start`)).status).toBe(409);
+    expect((await request(admin).delete(`/deployments/${id}`)).status).toBe(409);
+
+    release();
+    await running;
+    const after = await request(admin).get(`/deployments/${id}`);
+    expect(after.body).toMatchObject({ nodeId: 'node-b', migrating: false });
+  });
+
+  it('passes a refusal straight back', async () => {
+    const res = await request(appFor(PLATFORM_ADMIN)).post(`/deployments/${id}/migrate`).send({ nodeId: 'node-a' });
+    expect(res.status).toBe(400);
+    expect(pending).toHaveLength(0);
+    await request(appFor(PLATFORM_ADMIN)).post(`/deployments/${id}/migrate`).send({}).expect(400);
+  });
+});
