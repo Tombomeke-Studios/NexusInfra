@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
+import { parseRetention, type BackupRetention } from './retention.js';
 import type {
   CreateServerConfigInput,
   DeploymentDetail,
@@ -158,6 +159,26 @@ function toNodeRecord(n: PrismaNode): NodeRecord {
   };
 }
 
+/** A stored JSON list of strings; anything else reads as empty rather than throwing. */
+function parseStringList(raw: string | null | undefined): string[] {
+  try {
+    const value = JSON.parse(raw ?? '[]');
+    return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** A stored retention policy; anything unreadable keeps every backup rather than deleting any. */
+function parseRetentionColumn(raw: string | null | undefined): BackupRetention {
+  try {
+    const parsed = parseRetention(JSON.parse(raw ?? '{}'));
+    return parsed.ok ? parsed.policy : {};
+  } catch {
+    return {};
+  }
+}
+
 function toConfigRecord(c: PrismaConfig): ServerConfigRecord {
   return {
     id: c.id,
@@ -170,6 +191,8 @@ function toConfigRecord(c: PrismaConfig): ServerConfigRecord {
     resourceLimits: parseLimits(c.resourceLimits),
     autoRestart: c.autoRestart,
     dataPath: c.dataPath,
+    persistPaths: parseStringList(c.persistPaths),
+    backupRetention: parseRetentionColumn(c.backupRetention),
     type: c.type,
     createdAt: c.createdAt.toISOString(),
   };
@@ -201,6 +224,7 @@ function toBackupRecord(b: PrismaBackup): ServerBackupRecord {
     sizeBytes: b.sizeBytes,
     status: b.status,
     createdAt: b.createdAt.toISOString(),
+    offsite: b.offsite ?? null,
   };
 }
 
@@ -522,6 +546,7 @@ export class PrismaRepository implements Repository {
         resourceLimits: JSON.stringify(input.resourceLimits ?? {}),
         autoRestart: input.autoRestart ?? false,
         dataPath: input.dataPath ?? null,
+        persistPaths: JSON.stringify(input.persistPaths ?? []),
         type: input.type ?? 'generic',
       },
     });
@@ -615,6 +640,8 @@ export class PrismaRepository implements Repository {
         ...(provided(patch.env) ? { environmentVars: JSON.stringify(patch.env) } : {}),
         ...(provided(patch.resourceLimits) ? { resourceLimits: JSON.stringify(patch.resourceLimits) } : {}),
         ...(provided(patch.autoRestart) ? { autoRestart: patch.autoRestart } : {}),
+        ...(provided(patch.persistPaths) ? { persistPaths: JSON.stringify(patch.persistPaths) } : {}),
+        ...(provided(patch.backupRetention) ? { backupRetention: JSON.stringify(patch.backupRetention) } : {}),
       },
     });
     return toConfigRecord(updated);
@@ -841,6 +868,8 @@ export class PrismaRepository implements Repository {
       env: config.env,
       resourceLimits: config.resourceLimits,
       autoRestart: config.autoRestart,
+      persistPaths: config.persistPaths,
+      backupRetention: config.backupRetention,
       events: d.events.map((e) => ({
         id: e.id,
         deploymentId: e.deploymentId,

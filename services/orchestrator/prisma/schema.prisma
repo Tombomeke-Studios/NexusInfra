@@ -135,6 +135,13 @@ model ServerConfig {
   // An existing host directory on the node, mounted as this server's data
   // directory (#268). Null for the normal case of a server that starts empty.
   dataPath        String?
+  // Extra container directories kept in named volumes across restarts (#324),
+  // as a JSON list. The egg's own data directory is not stored here — it
+  // follows the catalogue, like dataPath's mount point does.
+  persistPaths    String       @default("[]")
+  // How many backups to keep, and for how long (#232), as JSON. Empty keeps
+  // everything, which is what every server did before this existed.
+  backupRetention String       @default("{}")
   type            String       @default("generic")
   createdAt       DateTime     @default(now())
   deployments     Deployment[]
@@ -206,6 +213,9 @@ model ServerBackup {
   ref          String
   sizeBytes    Int        @default(0)
   status       String     @default("ready")
+  // Whether a copy left the node (#232): null when the node has no off-site
+  // target, "stored" or "failed" otherwise.
+  offsite      String?
   createdAt    DateTime   @default(now())
 }
 
