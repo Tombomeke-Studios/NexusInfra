@@ -265,4 +265,8 @@ describe('the eggs added in #315', () => {
       expect(getEgg(id)!.dataPath).toMatch(/^\//);
     }
   });
+
+  it('takes Valheim from where its project publishes now (#317)', () => {
+    expect(getEgg('valheim')?.dockerImage).toBe('ghcr.io/community-valheim-tools/valheim-server');
+  });
 });

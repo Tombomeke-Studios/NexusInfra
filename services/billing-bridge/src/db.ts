@@ -49,6 +49,8 @@ function toPlan(p: PrismaPlan): BillingPlan {
     freeHoursPerMonth: p.freeHoursPerMonth,
     maxServers: p.maxServers,
     maxDatabases: p.maxDatabases,
+    maxRamMb: p.maxRamMb ?? null,
+    maxBackupsPerServer: p.maxBackupsPerServer ?? null,
   };
 }
 

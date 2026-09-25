@@ -309,6 +309,13 @@ default, and the egg's `fixedEnv` (such as Minecraft's `EULA=TRUE`) is applied l
 honoured, as the host-side override. `400` for an unknown egg or an invalid answer, with the message
 naming the field as the person saw it ("Player slots must be a whole number").
 
+**Keeping data across restarts (#324):** the agent removes a container on every stop, so a server's
+data lives in **named volumes owned by the deployment** instead of in the container. Three sources
+decide which directories get one: the egg's `dataPath`, every `VOLUME` the image itself declares, and
+an optional `persistPaths` list — how a plain application (`nginx`, say) names its own. `persistPaths`
+must be absolute directories (not `/`, no `..`, no `:`), at most 10; `400` otherwise. The volumes are
+mounted again on every start and removed only when the server is deleted.
+
 **Importing an existing directory (#268):** send `dataPath` alongside an egg. The directory is
 bind-mounted at the egg's `dataPath`, so the server runs against files that are already on the node
 — an existing world, config and all.
@@ -426,7 +433,7 @@ two or more nodes it could describe a machine the server was never going to land
 ### `PATCH /deployments/:id`
 
 Change an existing server's configuration (#220). Body may carry any of `name`, `dockerImage`,
-`ports`, `env`, `resourceLimits`, `autoRestart`; **an omitted field is left alone**, so a partial
+`ports`, `env`, `resourceLimits`, `autoRestart`, `persistPaths` (#324); **an omitted field is left alone**, so a partial
 edit never blanks the rest. Requires `server.edit` (server admin and up — an operator may run a
 server but not redefine it).
 
@@ -455,9 +462,86 @@ indefinitely. Requires `server.view`.
 
 ### `POST /deployments/:id/start`
 
-Start (or re-run) a deployment that is **not** currently running — re-places it on a healthy node and
-emits `infra.server.start` from the saved config. `202` while starting, `404` if unknown, `409` if it
-is already running/pending, `503` if no healthy node is available.
+Start (or re-run) a deployment that is **not** currently running — emits `infra.server.start` from the
+saved config. A server that has run before starts **on its own node**, because its data is there
+(#329, #324); if that node is offline or in maintenance the start is refused with `409` naming it,
+never quietly placed on a node without the data — moving a server is `POST …/migrate` (#234). A server
+with no node yet (or whose node was deregistered) is placed on the least-loaded healthy one. `202`
+while starting, `404` if unknown, `409` if it is already running/pending or its node is unavailable,
+`503` if no healthy node is available.
+
+### Notifications (#236)
+
+Where the signed-in account hears about events. Always the caller's own; another account's channel
+answers `404`.
+
+| Method + path | Purpose |
+|---|---|
+| `GET /me/notifications` | `{ channels, capabilities: { email, events } }` — `events` lists what this account may subscribe to |
+| `POST /me/notifications` | `{ kind: "webhook", target, format?, events }` or `{ kind: "email", events }` → `201`. A webhook's `secret` is in this response **only** |
+| `PATCH /me/notifications/:id` | `{ enabled?, events? }` |
+| `DELETE /me/notifications/:id` | Remove it and anything still queued for it → `204` |
+| `POST /me/notifications/:id/test` | Send a test now → `{ ok: true }`, or `502 { ok: false, error }` with what the receiver said |
+| `GET /me/notifications/:id/deliveries` | The last 20 deliveries: `status` (`pending`/`sent`/`failed`), `attempts`, `lastError`, `summary` |
+
+Events: `server.crashed` and `server.suspended` go to everyone with access to the server who
+subscribed (owner, shares, team); `node.offline` and `node.recovered` are for platform
+administrators. `format` is `json` (the whole notification, below), `discord` (`{ content }`) or
+`slack` (`{ text }`). Email needs `SMTP_URL` on the orchestrator and always goes to the account's
+own address.
+
+```json
+{ "event": "server.crashed", "occurredAt": "2026-09-25T03:00:00.000Z",
+  "summary": "survival crashed: exited with code 137 — killed by the OOM killer: it ran out of memory for its limit",
+  "server": { "id": "…", "name": "survival" }, "details": { "reason": "…" } }
+```
+
+Deliveries are rows, retried with backoff (30 s, 2 min, 10 min, 30 min, 2 h, 12 h) and then given
+up; a `4xx` other than `408`/`429` is not retried. Headers: `X-NexusInfra-Event`,
+`X-NexusInfra-Delivery` (stable across retries), `X-NexusInfra-Signature` — see security.md.
+
+### Host ports (#233)
+
+Two servers on one node can never hold the same host port. Every server's host ports are recorded
+per node, with a **unique (node, port)** constraint as the guard — so even two concurrent creates
+for one port cannot both succeed. A clash answers `409` naming the holder: *"port 25565 is already
+used by survival on this node"*. Checked on create, on a `ports` edit (`PATCH /deployments/:id`),
+on first placement, and on the target of a migration; released on delete.
+
+A node may have a **port range**. Then explicit ports must lie inside it (`400` otherwise), and a
+host port written as **`auto`** — `{ "ports": { "auto": "25565" } }` — takes the lowest free port in
+the range (`409` when the range is full). Without a range, any free port may be named and `auto` is
+refused.
+
+| Method + path | Purpose |
+|---|---|
+| `PATCH /nodes/:id/ports` | Platform admin. `{ range: { start, end } }`, or `{ range: null }` to remove it. Existing ports outside a new range are **kept**, not renumbered; the answer says how many (`outsideRange`). |
+| `GET /nodes/:id/ports` | Platform admin. `[{ port, deploymentId, name, primary }]` |
+| `PUT /deployments/:id/ports/primary` | `server.edit`. `{ port }` — which of the server's ports the Network tab shows first. `404` if it holds no such port. |
+
+`GET /deployments/:id` carries `portAllocations: [{ port, primary }]`. Servers created before this
+are recorded once at orchestrator start; of two old servers already sharing a port, the first keeps it.
+
+### `POST /deployments/:id/migrate`
+
+Move a **stopped** server to another node (#234) — body `{ nodeId }`. **Platform administrators only**:
+it moves data between machines, which is fleet management rather than a server role's call.
+
+Answers `202 { status: "migrating" }` once the move is validated, and runs in the background (a
+large world takes longer than a proxy holds a request open); `GET /deployments/:id` carries
+`migrating: true` meanwhile, and start, update and delete answer `409`. The order is the safety:
+
+1. each of the server's volumes is **streamed** from the source node into a new volume on the target
+   (nothing is buffered in the orchestrator), then each backup tar;
+2. only when all of it arrived does the server's node change (`migrated` in the audit trail);
+3. then the source is cleaned — best-effort, recorded as `migration-cleanup-incomplete` if not.
+
+A failure before step 2 removes **only what this migration created** on the target and leaves the
+server untouched on its node (`migration-failed`). The target refuses to import over a volume or
+backup it already has, so two agents sharing one Docker daemon cannot lose the source.
+
+`400` unknown / same node or no `nodeId`; `409` running, already moving, target unhealthy or in
+maintenance, source node offline, or an imported directory (#268), which exists only on its node.
 
 ### `GET /deployments/:id/logs`
 
@@ -511,21 +595,49 @@ bad engine, `502` if provisioning on the agent fails.
 
 ### Backups  *(running deployment)*
 
-A backup is a tar snapshot of the server's data path (default `/data`), stored on the owning node and
-restorable back into the container (#110). `404` if the deployment/backup is unknown, `409` if it is
-not running, `502` if the node operation fails.
+A backup is a tar snapshot of the server's data directory, stored on the owning node and restorable
+back into the container (#110). The default path is the server's own data directory — the egg's, an
+imported one, or the first `persistPaths` entry (#324) — and `/data` only when none is known. When the
+node has an off-site bucket (#232), each backup is copied there too and `offsite` says whether that
+worked (`stored` / `failed`; `null` = no bucket). `404` if the deployment/backup is unknown, `409` if
+it is not running, `502` if the node operation fails.
 
 | Method + path | Purpose |
 |---|---|
-| `GET /deployments/:id/backups` | List the server's backups (newest first) — `{ name, path, sizeBytes, createdAt, … }` |
-| `POST /deployments/:id/backups` | Snapshot the data path → `201` with the backup record |
-| `POST /deployments/:id/backups/:backupId/restore` | Extract the snapshot back into the running container |
+| `GET /deployments/:id/backups` | List the server's backups (newest first) — `{ name, path, sizeBytes, createdAt, offsite, … }` |
+| `POST /deployments/:id/backups` | Snapshot the data path (body `{ path? }`; default: the server's own data directory) → `201` with the backup record plus `expired`, how many old ones retention removed. `404` when the container has nothing at that path (#342) — the panel then asks which directory to back up |
+| `PUT /deployments/:id/backups/retention` | Set `{ keepLast, keepDays }` (#232) — whole numbers ≥ 1, `null`/absent for no limit. Both are limits; the newest backup is never removed. Applied at once → `{ backupRetention, expired }` |
+| `GET /deployments/:id/backups/:backupId/download` | The tar, as an attachment (#232) — from the node, or from off-site when the node lost it. `404` when the archive is in neither place (#339) |
+| `POST /deployments/:id/backups/:backupId/restore` | Extract the snapshot back where it came from in the running container: files in the backup replace the current ones, files created since are kept. (Before #327 it nested the snapshot inside the directory and restored nothing.) `404` when the node no longer has the archive (#339) |
 | `DELETE /deployments/:id/backups/:backupId` | Delete the stored tar and drop the record → `204` |
+
+### Image updates (#239)
+
+| Method + path | Purpose |
+|---|---|
+| `GET /deployments/:id/image` | Ask the owning node whether the registry has a newer image for the server's tag. Needs `server.view`. |
+| `POST /deployments/:id/update` | Pull the tag afresh; a running server is **recreated** from the new image, a stopped one uses it on its next start. Needs `server.edit`. `202 { status: "updating", recreate }` |
+
+`GET …/image` answers `{ image, status, remoteDigest, localDigest, checkedAt }`, where `status` is:
+
+| `status` | Meaning |
+|---|---|
+| `current` | The registry, the node and the running container all agree |
+| `update-available` | The registry has a digest this node has never pulled |
+| `pulled-not-applied` | A newer image is on the node, but the container was created from an older one |
+| `unknown` | The registry could not be asked (offline, rate-limited, private) — **not** the same as current |
+
+`502` when the node cannot be reached. The update is a command over the bus (`infra.server.update`):
+the agent **pulls first** and recreates only if the pull succeeded, so a registry outage or a missing
+tag leaves a running server exactly as it was and records `update-failed` in the audit trail. The
+recreate keeps the server's data, which lives in its volumes (#324), and it stays on its node.
+`409` while the server is still being placed.
 
 ### Schedules
 
 Recurring tasks the Orchestrator runs on a 5-field cron (minute hour day-of-month month day-of-week, UTC);
-actions are `restart` or `backup` (#111). The scheduler polls once a minute. `404` if the deployment/schedule
+actions are `restart`, `backup` (#111) or `update` — pull the image afresh and recreate a running server
+from it (#239). The scheduler polls once a minute. `404` if the deployment/schedule
 is unknown, `400` on a bad cron or action.
 
 | Method + path | Purpose |
@@ -597,6 +709,28 @@ Request a running deployment be restarted — emits `infra.server.restart` with 
 the agent restarts the container and reports `server.started`. `202` while restarting, `404` if
 unknown, `409` if the deployment is not running.
 
+### `POST /deployments/bulk`
+
+Send one control command to several servers at once (#238). Body:
+`{ "action": "start" | "stop" | "restart" | "kill", "ids": ["<deploymentId>", …] }` — at most 100 ids,
+duplicates counted once. Each id is authorized **on its own**, with the same resolver the per-server
+guard uses, and runs the same code as the single-server route above; they are processed in order so
+placement sees each start land before the next.
+
+Always `200` once the request is well-formed, because the answer is per server:
+
+```json
+{ "action": "stop", "succeeded": 1, "failed": 2, "results": [
+  { "id": "d1", "name": "web", "ok": true,  "status": 202 },
+  { "id": "d2", "name": "db",  "ok": false, "status": 409, "error": "deployment is not running" },
+  { "id": "d3",                "ok": false, "status": 404, "error": "deployment not found" }
+] }
+```
+
+A server the caller cannot see answers exactly like one that does not exist (`404`, no `name`), so the
+endpoint cannot be used to probe ids. One the caller can see but not control answers `403`. `400` for
+an unknown action or a missing, empty or oversized `ids` list.
+
 ### `WS /deployments/:id/terminal`
 
 Interactive terminal (#71) — a WebSocket that opens a TTY shell (`sh`) in the running container. The JWT
@@ -611,6 +745,8 @@ token, unknown/not-running deployment, or when the shell exits.
 Permanently delete a deployment. If it is running, the container is stopped first (emits
 `infra.server.stop`); any managed database containers are deprovisioned (best-effort); then the
 deployment and all its child records (events, databases, backups, schedules, subusers) are removed.
+The owning node is asked to remove the server's containers and **data volumes** (#324) — best-effort,
+so an unreachable node does not strand the record. An imported host directory (#268) is never removed.
 `204` on success, `404` if unknown.
 
 ### `GET /nodes`
@@ -668,6 +804,19 @@ and **injects the caller's authenticated userId** from the JWT (the client never
 Each forwards to the matching Billing Bridge route below for the authenticated user. `502` if the
 Billing Bridge is unreachable. These are inert in the community edition (no Billing Bridge running).
 
+### `GET /me/entitlements` — hosted edition
+
+Your plan and how much of it you have spent (#297): `{ entitlements, usage }`, where `entitlements` is
+the Billing Bridge answer below and `usage` is `{ servers, databases, ramMb, uncappedServers }` measured
+by the Orchestrator (memory in MB on each server's own node). `404` where no plan applies — the
+community edition, or a Billing Bridge that cannot answer (in which case nothing is enforced either).
+
+Enforced against the **server owner's** plan: `POST /deployments` and a `PATCH /deployments/:id` that
+raises `resourceLimits` answer `409` with a sentence naming the numbers when the memory does not fit
+(`this server needs 3 GB of memory, and your plan has 2 GB of its 3 GB left`), or when a server has no
+memory limit under a memory ceiling. Backups are never refused for the plan: past `maxBackupsPerServer`,
+the oldest goes.
+
 ## Billing Bridge (`:9300`) — hosted edition only
 
 Usage-based billing for the hosted edition. In the community edition only `GET /health` is served (it
@@ -692,6 +841,14 @@ The append-only credit ledger (top-ups + charges), newest first.
 
 The user's pricing/quota plan (rate, free hours, `maxServers`, `maxDatabases`).
 
+### `GET /billing/:userId/entitlements`
+
+What the user's plan allows and how it charges (#297): `{ planId, planName, maxServers, maxDatabases,
+maxRamMb, maxBackupsPerServer, charging }`. `null` means no ceiling. `charging` is `{ basis:
+"runtime-hours", pricePerHour, currency, freeHoursPerMonth, sizeFactor: { standardCpuPercent,
+standardRamPercent, minimum } }` — the same constants the charge is computed with. The Orchestrator
+measures usage against it; see [billing.md](billing.md).
+
 ### `GET /billing/:userId/quota?resource=servers|databases&current=N`
 
 Quota check used by the Orchestrator (#148): `{ allowed, limit }` — whether creating one more of
@@ -706,18 +863,36 @@ entry and emits `payment.request` to FinVault; credit is added only on `payment.
 ## API Gateway (`:9400`)
 
 The single external entry point (#20). It applies **CORS**, **per-client rate limiting** (token bucket,
-per authenticated user or IP), and **JWT validation** on protected routes, then reverse-proxies to the
+per authenticated user or IP), and **token validation** on protected routes, then reverse-proxies to the
 backend (the Orchestrator, which itself fronts Billing Bridge + Control Room). Public routes (`/auth/*`,
-`/config`) skip auth; everything else requires a valid `Authorization: Bearer <jwt>`. The gateway
-forwards the token and adds `x-user-id`/`x-forwarded-for` for the backend.
+`/config`) skip auth; everything else requires `Authorization: Bearer <token>`. The gateway forwards the
+token and adds `x-user-id`/`x-forwarded-for` for the backend; an `x-user-id` sent by the caller is
+dropped, never forwarded.
 
+- A **JWT** is verified here (signature and expiry) before anything is proxied.
+- An **API token** (`nxi_…`, #228) is passed through unverified: it is an opaque secret whose hash only
+  the Orchestrator holds, so the Orchestrator is the one that accepts or refuses it (and enforces its
+  scope). Such callers are rate-limited by address, since an unverified token names nobody.
 - `GET /health` — the gateway's own liveness (not proxied).
 - Any other path → matched by longest prefix and proxied: `401` (missing/invalid token on a protected
   route), `404` (no route), `429` (rate limit exceeded), `502` (backend unreachable), else the backend's
   response verbatim.
 
-The WebSocket proxy for the interactive terminal (#69/#71) is not built yet. The dashboard currently
-calls the Orchestrator directly; routing it through the gateway is a follow-up.
+**Responses stream.** Nothing is buffered, so live logs and stats (`/deployments/:id/logs`, `/stats` —
+server-sent events) arrive as they happen and backup downloads keep their `content-disposition` and
+`content-length`. When the client disconnects, the request to the backend is aborted with it. Backend
+redirects are relayed, not followed.
+
+**WebSocket upgrades** (#69) pass the same gate — route, rate limit, token — and are then proxied byte
+for byte to the backend, so the interactive terminal works through the gateway:
+`ws://<gateway>/deployments/:id/terminal?token=<jwt>&cols=&rows=`. Browsers cannot set headers on a
+handshake, so the token rides in `?token=`; an `Authorization` header works too. A refused handshake is
+answered with its status (`401`, `404`, `429`) before the backend is dialed; a backend that refuses —
+the Orchestrator hangs up on a caller without console access, or on an API token — surfaces as `502`.
+Closing either side closes the other.
+
+The dashboard's nginx still calls the Orchestrator directly; the gateway is the entry point for
+scripts, `nexusctl` and anything else that should sit behind its rate limit.
 
 ## Event contract (bus API)
 
