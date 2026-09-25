@@ -65,7 +65,8 @@ const suspend = createSuspendHandler({ repo });
 const scheduleActions: ScheduleActions = {
   async restart(deploymentId) {
     const detail = await repo.getDeployment(deploymentId);
-    if (!detail?.containerId || !detail.nodeId) return;
+    // Status too: a row stopped before #321 still names a removed container.
+    if (detail?.status !== 'running' || !detail.containerId || !detail.nodeId) return;
     await publishRabbitEvent(
       'infra.server.restart',
       buildEnvelope('orchestrator', { type: 'server.restart', payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId } })
@@ -74,7 +75,7 @@ const scheduleActions: ScheduleActions = {
   },
   async backup(deploymentId) {
     const detail = await repo.getDeployment(deploymentId);
-    if (!detail?.containerId) return;
+    if (detail?.status !== 'running' || !detail.containerId) return;
     const r = await agentFetch(`${await agentUrlFor(detail.nodeId)}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ containerId: detail.containerId }) });
     if (!r.ok) throw new Error('scheduled backup failed');
     const snap = (await r.json()) as { ref: string; sizeBytes: number; path: string };

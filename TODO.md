@@ -243,7 +243,7 @@ scrolling log lines describing events that never happened.
 - [ ] Real SFTP access per server, honouring the file permissions (#235)
 - [ ] Notification service — mail/webhook on crash, suspend, node offline (#236)
 - [x] Search, filter and pagination on the Servers list (#237)
-- [ ] Bulk actions on multiple servers (#238)
+- [x] Bulk actions on multiple servers (#238)
 - [ ] Update a deployment's container image (pull + recreate) (#239)
 - [ ] `nexusctl` — a CLI client for the panel (#240)
 
@@ -252,6 +252,7 @@ scrolling log lines describing events that never happened.
 - [x] The Java heap and the RAM limit are two settings for the same memory (#308)
 - [x] The New Deployment form guesses the placement node itself, and can guess wrong (#309) 🐛
 - [x] Servers list shows invented limits and labels every egg server as an app (#318) 🐛
+- [x] A stopped server keeps the id of a container that no longer exists (#321) 🐛
 
 - [x] Delete server button is a no-op — wire `DELETE /deployments/:id` end to end (#156)
 - [x] Node Agent internal API was unauthenticated + host-published — token-guard it (#169)
@@ -273,7 +274,7 @@ Found while running the hosted release bundle live for the first time (2026-08-2
 far better shape than hosted; these are the gaps between "the code exists" and "a customer could use
 it". Every item carries the `edition:hosted` label on GitHub.
 
-- [ ] The credit balance never refreshes on its own — a stale balance is a wrong answer stated with confidence (#296)
+- [x] The credit balance never refreshes on its own — a stale balance is a wrong answer stated with confidence (#296)
 - [ ] Creating a server is never charged and the form shows no plan entitlements (RAM ceiling, storage, backups, databases) (#297)
 - [ ] The FinVault integration has never been exercised end to end — written, not verified; a mismatched message key fails *silently* (#298)
 - [x] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)
