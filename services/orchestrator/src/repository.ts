@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
-import type {
+import { PortConflictError } from './portPool.js';
+import type { NotificationChannelRecord, NotificationDeliveryRecord, PortAllocationRecord,
   CreateServerBackupInput,
   CreateServerConfigInput,
   CreateServerDatabaseInput,
@@ -45,6 +46,9 @@ export class InMemoryRepository implements Repository {
   private teams = new Map<string, TeamRecord>();
   private teamMembers = new Map<string, TeamMemberRecord>();
   private nodes = new Map<string, NodeRecord>();
+  private portAllocations = new Map<string, PortAllocationRecord>();
+  private channels = new Map<string, NotificationChannelRecord>();
+  private deliveries = new Map<string, NotificationDeliveryRecord>();
   private configs = new Map<string, ServerConfigRecord>();
   private deployments = new Map<string, DeploymentRecord>();
   private events: DeploymentEventRecord[] = [];
@@ -158,6 +162,9 @@ export class InMemoryRepository implements Repository {
       // Maintenance is an administrator's decision; a liveness beat never touches
       // it, or the node would silently re-enter the pool a second later (#258).
       maintenance: existing?.maintenance ?? false,
+      // An administrator's setting, like maintenance: a heartbeat never touches it.
+      portRangeStart: existing?.portRangeStart ?? null,
+      portRangeEnd: existing?.portRangeEnd ?? null,
     };
     this.nodes.set(node.id, node);
     return node;
@@ -169,6 +176,7 @@ export class InMemoryRepository implements Repository {
 
   // ── Sessions (#227) ────────────────────────────────────────────────────────
   private sessions = new Map<string, SessionRecord>();
+  private passwordResets = new Map<string, { userId: string; expiresAt: string; usedAt: string | null }>();
 
   async createSession(input: CreateSessionInput): Promise<SessionRecord> {
     const at = new Date().toISOString();
@@ -202,6 +210,20 @@ export class InMemoryRepository implements Repository {
     for (const [id, session] of this.sessions) {
       if (session.userId === userId && id !== exceptId) this.sessions.delete(id);
     }
+  }
+
+  async createPasswordReset(input: { userId: string; tokenHash: string; expiresAt: string }): Promise<void> {
+    for (const [hash, reset] of this.passwordResets) {
+      if (reset.userId === input.userId && !reset.usedAt) this.passwordResets.delete(hash);
+    }
+    this.passwordResets.set(input.tokenHash, { userId: input.userId, expiresAt: input.expiresAt, usedAt: null });
+  }
+
+  async consumePasswordReset(tokenHash: string, now: string): Promise<string | null> {
+    const reset = this.passwordResets.get(tokenHash);
+    if (!reset || reset.usedAt || reset.expiresAt <= now) return null;
+    reset.usedAt = now;
+    return reset.userId;
   }
 
   async touchSession(id: string, at: string): Promise<void> {
@@ -289,6 +311,9 @@ export class InMemoryRepository implements Repository {
           location: input.location !== undefined ? input.location : existing.location,
           agentUrl: input.agentUrl !== undefined ? input.agentUrl : existing.agentUrl,
           maintenance: input.maintenance !== undefined ? input.maintenance : existing.maintenance,
+          ...(input.portRange !== undefined
+            ? { portRangeStart: input.portRange?.start ?? null, portRangeEnd: input.portRange?.end ?? null }
+            : {}),
         }
       : {
           id: input.id,
@@ -305,6 +330,8 @@ export class InMemoryRepository implements Repository {
           diskUsedGb: null,
           diskTotalGb: null,
           maintenance: input.maintenance ?? false,
+          portRangeStart: input.portRange?.start ?? null,
+          portRangeEnd: input.portRange?.end ?? null,
         };
     this.nodes.set(node.id, node);
     return node;
@@ -315,6 +342,8 @@ export class InMemoryRepository implements Repository {
     for (const [depId, d] of this.deployments) {
       if (d.nodeId === id) this.deployments.set(depId, { ...d, nodeId: null });
     }
+    // Ports on a machine that is gone are held by nothing (#233).
+    for (const [key, a] of this.portAllocations) if (a.nodeId === id) this.portAllocations.delete(key);
     this.nodes.delete(id);
   }
 
@@ -330,6 +359,8 @@ export class InMemoryRepository implements Repository {
       resourceLimits: input.resourceLimits ?? {},
       autoRestart: input.autoRestart ?? false,
       dataPath: input.dataPath ?? null,
+      persistPaths: input.persistPaths ?? [],
+      backupRetention: {},
       type: input.type ?? 'generic',
       createdAt: new Date().toISOString(),
     };
@@ -412,6 +443,8 @@ export class InMemoryRepository implements Repository {
       env: config.env,
       resourceLimits: config.resourceLimits,
       autoRestart: config.autoRestart,
+      persistPaths: config.persistPaths ?? [],
+      backupRetention: config.backupRetention ?? {},
     };
   }
 
@@ -424,6 +457,7 @@ export class InMemoryRepository implements Repository {
     for (const [key, b] of this.backups) if (b.deploymentId === id) this.backups.delete(key);
     for (const [key, s] of this.schedules) if (s.deploymentId === id) this.schedules.delete(key);
     for (const [key, su] of this.subusers) if (su.deploymentId === id) this.subusers.delete(key);
+    for (const [key, a] of this.portAllocations) if (a.deploymentId === id) this.portAllocations.delete(key);
     this.deployments.delete(id);
     this.configs.delete(deployment.serverConfigId);
   }
@@ -442,6 +476,8 @@ export class InMemoryRepository implements Repository {
       env: patch.env ?? config.env,
       resourceLimits: patch.resourceLimits ?? config.resourceLimits,
       autoRestart: patch.autoRestart ?? config.autoRestart,
+      persistPaths: patch.persistPaths ?? config.persistPaths,
+      backupRetention: patch.backupRetention ?? config.backupRetention,
     };
     this.configs.set(config.id, next);
     return next;
@@ -507,6 +543,108 @@ export class InMemoryRepository implements Repository {
     this.databases.delete(id);
   }
 
+  async createNotificationChannel(input: Omit<NotificationChannelRecord, 'id' | 'lastDeliveryAt' | 'lastError' | 'createdAt'>): Promise<NotificationChannelRecord> {
+    const c: NotificationChannelRecord = { ...input, id: randomUUID(), lastDeliveryAt: null, lastError: null, createdAt: new Date().toISOString() };
+    this.channels.set(c.id, c);
+    return c;
+  }
+
+  async listNotificationChannels(userIds: string[]): Promise<NotificationChannelRecord[]> {
+    return [...this.channels.values()].filter((c) => userIds.includes(c.userId));
+  }
+
+  async getNotificationChannel(id: string): Promise<NotificationChannelRecord | null> {
+    return this.channels.get(id) ?? null;
+  }
+
+  async updateNotificationChannel(
+    id: string,
+    patch: Partial<Pick<NotificationChannelRecord, 'events' | 'enabled' | 'lastDeliveryAt' | 'lastError'>>,
+  ): Promise<NotificationChannelRecord | null> {
+    const c = this.channels.get(id);
+    if (!c) return null;
+    const next = { ...c, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) };
+    this.channels.set(id, next);
+    return next;
+  }
+
+  async deleteNotificationChannel(id: string): Promise<void> {
+    this.channels.delete(id);
+    for (const [key, d] of this.deliveries) if (d.channelId === id) this.deliveries.delete(key);
+  }
+
+  async enqueueDeliveries(rows: Array<{ channelId: string; event: string; payload: string }>): Promise<NotificationDeliveryRecord[]> {
+    const now = new Date().toISOString();
+    return rows.map((r) => {
+      const d: NotificationDeliveryRecord = { ...r, id: randomUUID(), status: 'pending', attempts: 0, nextAttemptAt: now, lastError: null, createdAt: now, sentAt: null };
+      this.deliveries.set(d.id, d);
+      return d;
+    });
+  }
+
+  async listDueDeliveries(now: string, limit: number): Promise<NotificationDeliveryRecord[]> {
+    return [...this.deliveries.values()]
+      .filter((d) => d.status === 'pending' && d.nextAttemptAt <= now)
+      .sort((a, b) => a.nextAttemptAt.localeCompare(b.nextAttemptAt))
+      .slice(0, limit);
+  }
+
+  async claimDelivery(id: string, attempts: number): Promise<boolean> {
+    const d = this.deliveries.get(id);
+    if (!d || d.status !== 'pending' || d.attempts !== attempts) return false;
+    // In memory the claim is the attempt counter moving; sending follows at once.
+    this.deliveries.set(id, { ...d, attempts: attempts + 1 });
+    return true;
+  }
+
+  async updateDelivery(id: string, patch: Partial<Pick<NotificationDeliveryRecord, 'status' | 'attempts' | 'nextAttemptAt' | 'lastError' | 'sentAt'>>): Promise<void> {
+    const d = this.deliveries.get(id);
+    if (d) this.deliveries.set(id, { ...d, ...patch });
+  }
+
+  async listDeliveries(channelId: string, limit: number): Promise<NotificationDeliveryRecord[]> {
+    // Reversed first so the stable sort keeps the newer of two rows written in
+    // the same millisecond ahead of the older one.
+    return [...this.deliveries.values()]
+      .reverse()
+      .filter((d) => d.channelId === channelId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, limit);
+  }
+
+  async listPortAllocations(filter: { nodeId?: string; deploymentId?: string }): Promise<PortAllocationRecord[]> {
+    return [...this.portAllocations.values()]
+      .filter((a) => (!filter.nodeId || a.nodeId === filter.nodeId) && (!filter.deploymentId || a.deploymentId === filter.deploymentId))
+      .sort((a, b) => a.port - b.port);
+  }
+
+  async replacePortAllocations(deploymentId: string, nodeId: string | null, ports: number[]): Promise<PortAllocationRecord[]> {
+    const mine = [...this.portAllocations.values()].filter((a) => a.deploymentId === deploymentId);
+    // The unique (node, port) check, as the database would make it — before any write.
+    if (nodeId) {
+      for (const port of ports) {
+        const clash = [...this.portAllocations.values()].find((a) => a.nodeId === nodeId && a.port === port && a.deploymentId !== deploymentId);
+        if (clash) throw new PortConflictError(port, nodeId);
+      }
+    }
+    const primary = mine.find((a) => a.primary)?.port;
+    for (const a of mine) this.portAllocations.delete(a.id);
+    if (!nodeId) return [];
+    const keepPrimary = primary !== undefined && ports.includes(primary) ? primary : ports[0];
+    return ports.map((port) => {
+      const record: PortAllocationRecord = { id: randomUUID(), nodeId, port, deploymentId, primary: port === keepPrimary, createdAt: new Date().toISOString() };
+      this.portAllocations.set(record.id, record);
+      return record;
+    });
+  }
+
+  async setPrimaryPort(deploymentId: string, port: number): Promise<boolean> {
+    const mine = [...this.portAllocations.values()].filter((a) => a.deploymentId === deploymentId);
+    if (!mine.some((a) => a.port === port)) return false;
+    for (const a of mine) this.portAllocations.set(a.id, { ...a, primary: a.port === port });
+    return true;
+  }
+
   async createBackup(input: CreateServerBackupInput): Promise<ServerBackupRecord> {
     const backup: ServerBackupRecord = {
       id: randomUUID(),
@@ -517,6 +655,7 @@ export class InMemoryRepository implements Repository {
       sizeBytes: input.sizeBytes,
       status: 'ready',
       createdAt: new Date().toISOString(),
+      offsite: input.offsite ?? null,
     };
     this.backups.set(backup.id, backup);
     return backup;

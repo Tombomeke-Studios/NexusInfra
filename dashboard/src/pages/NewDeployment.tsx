@@ -4,9 +4,13 @@ import { createDeployment, listNodes, listEggs, getPlacement, variableApplies, t
 import { IconPlus } from '../components/Icons';
 import { useToast } from '../components/Toast';
 import { InfoHint } from '../components/InfoHint';
+import { parsePathList } from '../format';
 import { VersionSelect } from '../components/VersionSelect';
 import { getDeploymentDefaults } from '../prefs';
 import { parseMemoryMb, jvmOverheadMb, derivedHeapMb, formatHeapMb } from '../memory';
+import { PlanPanel } from '../components/PlanPanel';
+import { BILLING_INCLUDED } from '../buildEdition';
+import { useEdition } from '../edition';
 
 // New Deployment — ported from the redesign. The deploy sends name, image, ports,
 // env, the resource limits + restart policy, the kind and the chosen placement,
@@ -40,6 +44,7 @@ function withoutKey(values: Record<string, string>, key: string): Record<string,
 export function NewDeployment() {
   // Seed the form from the user's saved defaults (#124); each field stays editable.
   const defaults = getDeploymentDefaults();
+  const { isHosted } = useEdition();
   const [kind, setKind] = useState<'app' | 'game'>(defaults.type);
   const [name, setName] = useState('');
   const [dockerImage, setDockerImage] = useState('');
@@ -59,6 +64,9 @@ export function NewDeployment() {
   const [dataPath, setDataPath] = useState('');
   const [ports, setPorts] = useState<Row[]>([{ key: '', value: '' }]);
   const [env, setEnv] = useState<Row[]>([{ key: '', value: '' }]);
+  // Directories an application keeps across restarts (#324). An egg knows its
+  // own; an arbitrary image does not, unless it declares a VOLUME.
+  const [persist, setPersist] = useState('');
   const [nodes, setNodes] = useState<NodeView[]>([]);
   const [placement, setPlacement] = useState('auto');
   const [cpu, setCpu] = useState(defaults.cpu);
@@ -126,7 +134,7 @@ export function NewDeployment() {
               ports: rowsToRecord(ports),
               ...(dataPath.trim() ? { dataPath: dataPath.trim() } : {}),
             }
-          : { dockerImage, ports: rowsToRecord(ports), env: rowsToRecord(env), type: 'app' }),
+          : { dockerImage, ports: rowsToRecord(ports), env: rowsToRecord(env), type: 'app', persistPaths: parsePathList(persist) }),
         // 'auto' means "you pick"; anything else is a deliberate pin the API honours (#254).
         nodeId: placement === 'auto' ? undefined : placement,
         autoRestart: restart !== 'no',
@@ -332,12 +340,30 @@ export function NewDeployment() {
           )}
 
           {/* Ports & env */}
-          <RowEditor legend="Ports" hint="host : container" keyPlaceholder="8080" valuePlaceholder="80" rows={ports} onChange={setPorts} />
+          <RowEditor legend="Ports" hint="host : container — write auto as the host port to take a free one from the node's range" keyPlaceholder="8080 or auto" valuePlaceholder="80" rows={ports} onChange={setPorts} />
           {/* An egg owns its environment: the fields above are that environment,
               validated server-side. Free-form rows here would let a caller set
               anything at all, which is what moving the recipe off the client fixed. */}
           {kind === 'app' && (
-            <RowEditor legend="Environment" hint="KEY : value" keyPlaceholder="KEY" valuePlaceholder="value" rows={env} onChange={setEnv} />
+            <>
+              <RowEditor legend="Environment" hint="KEY : value" keyPlaceholder="KEY" valuePlaceholder="value" rows={env} onChange={setEnv} />
+              <div className="field">
+                <label className="field__label" htmlFor="persist-paths">
+                  Persistent directories
+                  <InfoHint
+                    text="Directories inside the container that keep their contents when the server stops, restarts or is updated. Anything else is reset on every start. Directories the image itself declares as volumes are kept automatically."
+                    label="Persistent directories help"
+                  />
+                </label>
+                <input
+                  id="persist-paths"
+                  className="input mono"
+                  value={persist}
+                  onChange={(e) => setPersist(e.target.value)}
+                  placeholder="/data, /var/lib/app"
+                />
+              </div>
+            </>
           )}
 
           <div style={{ height: 1, background: 'var(--color-border)', margin: '6px 0 20px' }} />
@@ -401,6 +427,17 @@ export function NewDeployment() {
               )}
             </div>
           </div>
+
+          {/* The plan's boundaries beside the size being chosen (hosted, #297). */}
+          {BILLING_INCLUDED && isHosted && (
+            <PlanPanel
+              requestedRamMb={requestedRamMb}
+              onUseRamMb={(mb) => {
+                setRamUnit('mb');
+                setRamMb(mb);
+              }}
+            />
+          )}
 
           {/* Resource limits */}
           <div style={{ marginBottom: 20 }}>
