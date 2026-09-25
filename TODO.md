@@ -252,6 +252,7 @@ scrolling log lines describing events that never happened.
 - [x] The Java heap and the RAM limit are two settings for the same memory (#308)
 - [x] The New Deployment form guesses the placement node itself, and can guess wrong (#309) 🐛
 - [x] Servers list shows invented limits and labels every egg server as an app (#318) 🐛
+- [x] A stopped server keeps the id of a container that no longer exists (#321) 🐛
 
 - [x] Delete server button is a no-op — wire `DELETE /deployments/:id` end to end (#156)
 - [x] Node Agent internal API was unauthenticated + host-published — token-guard it (#169)
