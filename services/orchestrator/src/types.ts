@@ -205,7 +205,7 @@ export interface CreateServerSubuserInput {
   status?: string;
 }
 
-export type ScheduleAction = 'restart' | 'backup';
+export type ScheduleAction = 'restart' | 'backup' | 'update';
 
 export interface ServerScheduleRecord {
   id: string;

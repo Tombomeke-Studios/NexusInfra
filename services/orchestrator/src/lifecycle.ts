@@ -61,6 +61,29 @@ export function createLifecycle(repo: Repository): Lifecycle {
         return;
       }
 
+      // The outcome of an image update (#239). A recreate also sends
+      // server.started, which is what moves the container id; these only record
+      // what happened, so the trail can say which version is running and why.
+      case 'server.image-updated': {
+        const digest = payload.digest ? String(payload.digest).slice(0, 19) : 'unknown digest';
+        const recreated = payload.recreated === true;
+        await repo.appendDeploymentEvent(
+          deploymentId,
+          'image-updated',
+          `pulled ${String(payload.image ?? '')} (${digest})${recreated ? ' and recreated the container' : ' — applies on next start'}`,
+        );
+        return;
+      }
+
+      case 'server.update-failed': {
+        await repo.appendDeploymentEvent(
+          deploymentId,
+          'update-failed',
+          `could not pull ${String(payload.image ?? '')}: ${String(payload.reason ?? 'unknown')} — the server was left as it was`,
+        );
+        return;
+      }
+
       default:
         return;
     }

@@ -638,6 +638,29 @@ export function bulkDeploymentAction(action: BulkAction, ids: string[]): Promise
   return request('/deployments/bulk', { method: 'POST', body: JSON.stringify({ action, ids }) });
 }
 
+/**
+ * Whether the registry has a newer image than this server runs (#239).
+ * `unknown` means the registry could not be asked — not that nothing is new.
+ */
+export type ImageUpdateStatus = 'current' | 'update-available' | 'pulled-not-applied' | 'unknown';
+
+export interface ImageStatus {
+  image: string;
+  status: ImageUpdateStatus;
+  remoteDigest: string | null;
+  localDigest: string | null;
+  checkedAt: string;
+}
+
+export function getImageStatus(id: string): Promise<ImageStatus> {
+  return request(`/deployments/${id}/image`);
+}
+
+/** Pull the tag afresh; a running server is recreated from it, keeping its data (#239). */
+export function updateImage(id: string): Promise<{ status: string; recreate: boolean }> {
+  return request(`/deployments/${id}/update`, { method: 'POST' });
+}
+
 /** Permanently delete a deployment (stops it first if running). */
 export function deleteDeployment(id: string): Promise<void> {
   return request(`/deployments/${id}`, { method: 'DELETE' });
@@ -800,7 +823,7 @@ export function deleteBackup(id: string, backupId: string): Promise<void> {
 }
 
 // ── Schedules (#111) ──────────────────────────────────────────────────────────
-export type ScheduleAction = 'restart' | 'backup';
+export type ScheduleAction = 'restart' | 'backup' | 'update';
 
 export interface ServerSchedule {
   id: string;

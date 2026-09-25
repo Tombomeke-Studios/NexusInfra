@@ -1971,3 +1971,99 @@ describe('a server keeps its data across restarts (#324)', () => {
     expect(await repo.getDeployment(created.body.id)).toBeNull();
   });
 });
+
+describe('updating a server image (#239)', () => {
+  const OPERATOR = { id: 'user-op', email: 'op@example.com', platformRole: 'user' as const };
+  let repo: InMemoryRepository;
+  let published: Array<{ key: string; envelope: EventEnvelope }>;
+  let app: express.Express;
+  let id: string;
+
+  const updates = () => published.filter((p) => p.key === 'infra.server.update').map((p) => readPayload(p.envelope.event) as Record<string, unknown>);
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    published = [];
+    app = buildApp(repo, published);
+    await seedUser(repo);
+    await seedUser(repo, OPERATOR);
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'web', dockerImage: 'nginx:alpine', persistPaths: ['/srv'] });
+    id = created.body.id;
+    published.length = 0;
+  });
+
+  it('pulls and recreates a running server on the node it is on, keeping its volumes', async () => {
+    await repo.updateDeploymentStatus(id, { status: 'running', containerId: 'c1', nodeId: 'node-local' });
+    const res = await request(app).post(`/deployments/${id}/update`);
+
+    expect(res.status).toBe(202);
+    expect(res.body).toMatchObject({ status: 'updating', recreate: true });
+    expect(updates()).toEqual([expect.objectContaining({ deploymentId: id, nodeId: 'node-local', dockerImage: 'nginx:alpine', persistPaths: ['/srv'], recreate: true })]);
+    expect((await repo.getDeployment(id))?.events.map((e) => e.event)).toContain('update-requested');
+  });
+
+  it('only pulls for a stopped server — the new image applies on its next start', async () => {
+    await repo.updateDeploymentStatus(id, { status: 'stopped', containerId: null, nodeId: 'node-local' });
+    const res = await request(app).post(`/deployments/${id}/update`);
+    expect(res.body.recreate).toBe(false);
+    expect(updates()[0].recreate).toBe(false);
+  });
+
+  it('refuses while the server is still being placed', async () => {
+    await request(app).post(`/deployments/${id}/update`).expect(409);
+    expect(updates()).toHaveLength(0);
+  });
+
+  it('is a server admin decision, not an operator one', async () => {
+    await repo.updateDeploymentStatus(id, { status: 'running', containerId: 'c1' });
+    await repo.createSubuser({ deploymentId: id, email: OPERATOR.email, role: 'operator', userId: OPERATOR.id, status: 'active' });
+    await request(buildApp(repo, published, OPERATOR)).post(`/deployments/${id}/update`).expect(403);
+    expect(updates()).toHaveLength(0);
+  });
+
+  it("asks the owning node whether there is a newer image, naming the server's container", async () => {
+    await repo.updateDeploymentStatus(id, { status: 'running', containerId: 'c1', nodeId: 'node-local' });
+    const asked: unknown[] = [];
+    const statusApp = express();
+    statusApp.use(express.json());
+    statusApp.use(asPrincipal());
+    statusApp.use(
+      createApiRouter({
+        repo,
+        checkQuota: allowQuota,
+        publish: async () => true,
+        imageStatus: async (q) => {
+          asked.push(q);
+          return { status: 'update-available', remoteDigest: 'sha256:b' };
+        },
+      })
+    );
+    const res = await request(statusApp).get(`/deployments/${id}/image`);
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('update-available');
+    expect(asked).toEqual([{ agentUrl: expect.any(String), image: 'nginx:alpine', containerId: 'c1' }]);
+  });
+
+  it('says so when the node cannot be asked', async () => {
+    const statusApp = express();
+    statusApp.use(express.json());
+    statusApp.use(asPrincipal());
+    statusApp.use(
+      createApiRouter({
+        repo,
+        checkQuota: allowQuota,
+        publish: async () => true,
+        imageStatus: async () => {
+          throw new Error('node agent unreachable');
+        },
+      })
+    );
+    await request(statusApp).get(`/deployments/${id}/image`).expect(502);
+  });
+
+  it('can be scheduled', async () => {
+    const res = await request(app).post(`/deployments/${id}/schedules`).send({ name: 'weekly update', cron: '0 4 * * 1', action: 'update' });
+    expect(res.status).toBe(201);
+  });
+});

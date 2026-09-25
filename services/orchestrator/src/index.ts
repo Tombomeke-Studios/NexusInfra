@@ -20,6 +20,7 @@ import { createNodeRegistry } from './nodeRegistry.js';
 import { createLifecycle } from './lifecycle.js';
 import { createSuspendHandler, type SuspendPayload } from './suspend.js';
 import { startScheduler, type ScheduleActions } from './scheduler.js';
+import { requestImageUpdate } from './imageUpdate.js';
 import { createReconcileHandler } from './reconcile.js';
 
 // ── Orchestrator ────────────────────────────────────────────────────────────
@@ -72,6 +73,10 @@ const scheduleActions: ScheduleActions = {
       buildEnvelope('orchestrator', { type: 'server.restart', payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId } })
     );
     await repo.appendDeploymentEvent(detail.id, 'schedule-restart', 'restarted by schedule');
+  },
+  async update(deploymentId) {
+    const outcome = await requestImageUpdate({ repo, publish: publishRabbitEvent }, deploymentId, 'schedule');
+    if (outcome.status >= 300) throw new Error(outcome.body.error ?? 'scheduled update failed');
   },
   async backup(deploymentId) {
     const detail = await repo.getDeployment(deploymentId);
@@ -246,6 +251,9 @@ async function start() {
         'infra.server.started',
         'infra.server.stopped',
         'infra.server.crashed',
+        // Image updates (#239): what was pulled, or why it could not be.
+        'infra.server.image-updated',
+        'infra.server.update-failed',
         // What a node reports when its agent restarts, so our records stop
         // describing a machine that no longer matches (#244).
         'infra.node.inventory',
