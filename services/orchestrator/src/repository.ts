@@ -331,6 +331,7 @@ export class InMemoryRepository implements Repository {
       autoRestart: input.autoRestart ?? false,
       dataPath: input.dataPath ?? null,
       persistPaths: input.persistPaths ?? [],
+      backupRetention: {},
       type: input.type ?? 'generic',
       createdAt: new Date().toISOString(),
     };
@@ -414,6 +415,7 @@ export class InMemoryRepository implements Repository {
       resourceLimits: config.resourceLimits,
       autoRestart: config.autoRestart,
       persistPaths: config.persistPaths ?? [],
+      backupRetention: config.backupRetention ?? {},
     };
   }
 
@@ -445,6 +447,7 @@ export class InMemoryRepository implements Repository {
       resourceLimits: patch.resourceLimits ?? config.resourceLimits,
       autoRestart: patch.autoRestart ?? config.autoRestart,
       persistPaths: patch.persistPaths ?? config.persistPaths,
+      backupRetention: patch.backupRetention ?? config.backupRetention,
     };
     this.configs.set(config.id, next);
     return next;
@@ -520,6 +523,7 @@ export class InMemoryRepository implements Repository {
       sizeBytes: input.sizeBytes,
       status: 'ready',
       createdAt: new Date().toISOString(),
+      offsite: input.offsite ?? null,
     };
     this.backups.set(backup.id, backup);
     return backup;

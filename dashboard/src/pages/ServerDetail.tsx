@@ -48,6 +48,9 @@ import {
   type ServerSchedule,
   type ScheduleAction,
   type ImageStatus,
+  type BackupRetention,
+  setBackupRetention,
+  downloadBackup,
   type ImageUpdateStatus,
   getImageStatus,
   updateImage,
@@ -227,7 +230,7 @@ export function ServerDetail() {
       {activeTab === 'terminal' && <TerminalTab id={d.id} running={running} />}
       {activeTab === 'files' && <FilesTab id={d.id} running={running} />}
       {activeTab === 'databases' && <DatabasesTab id={d.id} running={running} />}
-      {activeTab === 'backups' && <BackupsTab id={d.id} running={running} />}
+      {activeTab === 'backups' && <BackupsTab id={d.id} running={running} retention={d.backupRetention ?? {}} onRetentionSaved={load} />}
       {activeTab === 'network' && <NetworkTab ports={d.ports ?? {}} />}
       {activeTab === 'schedules' && <SchedulesTab id={d.id} />}
       {activeTab === 'subusers' && <SubusersTab id={d.id} />}
@@ -743,12 +746,61 @@ function DatabasesTab({ id, running }: { id: string; running: boolean }) {
 }
 
 // ── Backups — real tar snapshots of the server's data volume (#110) ─────────
-function BackupsTab({ id, running }: { id: string; running: boolean }) {
+function BackupsTab({
+  id,
+  running,
+  retention,
+  onRetentionSaved,
+}: {
+  id: string;
+  running: boolean;
+  retention: BackupRetention;
+  onRetentionSaved: () => Promise<void> | void;
+}) {
   const { toast } = useToast();
   const { confirm } = useDialog();
   const [backups, setBackups] = useState<ServerBackup[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Blank means "no limit" — the policy every server had before #232.
+  const [keepLast, setKeepLast] = useState(retention.keepLast ? String(retention.keepLast) : '');
+  const [keepDays, setKeepDays] = useState(retention.keepDays ? String(retention.keepDays) : '');
+  const [savingPolicy, setSavingPolicy] = useState(false);
+
+  const savePolicy = async () => {
+    const toLimit = (v: string) => (v.trim() ? Number(v) : null);
+    setSavingPolicy(true);
+    try {
+      const r = await setBackupRetention(id, { keepLast: toLimit(keepLast), keepDays: toLimit(keepDays) });
+      toast(
+        r.expired ? `Retention saved — ${r.expired} old backup${r.expired === 1 ? ' was' : 's were'} removed` : 'Retention saved',
+        'success',
+        'Backups',
+      );
+      await load();
+      await onRetentionSaved();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not save retention', 'error', 'Backups');
+    } finally {
+      setSavingPolicy(false);
+    }
+  };
+
+  const download = async (b: ServerBackup) => {
+    try {
+      const { blob, filename } = await downloadBackup(id, b.id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Download failed', 'error', 'Backup');
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -767,7 +819,8 @@ function BackupsTab({ id, running }: { id: string; running: boolean }) {
     setBusy(true);
     try {
       const b = await createBackup(id);
-      toast(`Backup ${b.name} created`, 'success', 'Backup');
+      const extra = (b as ServerBackup & { expired?: number }).expired;
+      toast(`Backup ${b.name} created${extra ? ` — retention removed ${extra} older` : ''}`, 'success', 'Backup');
       await load();
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Backup failed', 'error', 'Backup');
@@ -812,20 +865,44 @@ function BackupsTab({ id, running }: { id: string; running: boolean }) {
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, gap: 12 }}>
-        <strong style={{ fontSize: '.92rem' }}>Backups<InfoHint text="A backup is a tar snapshot of the server's data directory, stored on its node. Restore extracts it back into the running container. Requires the server to be running." label="Backups help" /></strong>
+        <strong style={{ fontSize: '.92rem' }}>Backups<InfoHint text="A backup is a tar snapshot of the server's data directory, stored on its node — and copied to the node's off-site bucket when one is configured. Restore extracts it back into the running container; download keeps a copy of your own. Requires the server to be running." label="Backups help" /></strong>
         <button className="btn btn--primary btn--sm" data-ripple data-burst="primary" onClick={create} disabled={busy || !running} title={running ? '' : 'Start the server first'}>
           {busy ? 'Snapshotting…' : 'Create backup'}
         </button>
       </div>
       {!running && <p className="subtle" style={{ fontSize: '.84rem', marginBottom: 12 }}>Start the server to snapshot or restore its data.</p>}
+      <div className="card" style={{ padding: '14px 16px', marginBottom: 14, display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <label style={{ flex: '0 1 140px' }}>
+          <span className="field__label" style={{ fontSize: '.78rem' }}>
+            Keep the last
+            <InfoHint text="The most backups to keep. Older ones are deleted after each new backup — from the node and from off-site. Blank keeps them all. The newest backup is never deleted." label="Keep last help" />
+          </span>
+          <input className="input" type="number" min={1} value={keepLast} onChange={(e) => setKeepLast(e.target.value)} placeholder="all" aria-label="Keep the last N backups" />
+        </label>
+        <label style={{ flex: '0 1 140px' }}>
+          <span className="field__label" style={{ fontSize: '.78rem' }}>
+            Keep for days
+            <InfoHint text="Delete backups older than this many days, checked hourly. Blank keeps them however old. When both are set, a backup that breaks either limit goes." label="Keep days help" />
+          </span>
+          <input className="input" type="number" min={1} value={keepDays} onChange={(e) => setKeepDays(e.target.value)} placeholder="forever" aria-label="Keep backups for N days" />
+        </label>
+        <button className="btn btn--secondary btn--sm" data-ripple onClick={() => void savePolicy()} disabled={savingPolicy} style={{ minHeight: 40 }}>
+          {savingPolicy ? 'Saving…' : 'Save retention'}
+        </button>
+      </div>
       {error && <p role="alert" className="alert alert--error" style={{ marginBottom: 12 }}>{error}</p>}
       <div style={listCard}>
         {backups.map((b) => (
           <div key={b.id} style={{ ...rowCss, gap: 12 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="mono" style={{ fontSize: '.84rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</div>
-              <div className="subtle" style={{ fontSize: '.76rem', marginTop: 2 }}>{fmtSize(b.sizeBytes)} · <span className="mono">{b.path}</span></div>
+              <div className="subtle" style={{ fontSize: '.76rem', marginTop: 2 }}>
+                {fmtSize(b.sizeBytes)} · <span className="mono">{b.path}</span>
+                {b.offsite === 'stored' && <> · <span style={{ color: 'var(--color-success)' }}>copied off-site</span></>}
+                {b.offsite === 'failed' && <> · <span style={{ color: 'var(--color-warning)' }}>on the node only — the off-site copy failed</span></>}
+              </div>
             </div>
+            <button className="btn btn--secondary btn--sm" data-ripple onClick={() => void download(b)} aria-label={`Download ${b.name}`}>Download</button>
             <button className="btn btn--secondary btn--sm" data-ripple onClick={() => restore(b)} disabled={!running}>Restore</button>
             <button className="icon-btn" data-ripple aria-label={`Delete ${b.name}`} onClick={() => remove(b)}>🗑</button>
           </div>

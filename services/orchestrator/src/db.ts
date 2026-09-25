@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
+import { parseRetention, type BackupRetention } from './retention.js';
 import type {
   CreateServerConfigInput,
   DeploymentDetail,
@@ -168,6 +169,16 @@ function parseStringList(raw: string | null | undefined): string[] {
   }
 }
 
+/** A stored retention policy; anything unreadable keeps every backup rather than deleting any. */
+function parseRetentionColumn(raw: string | null | undefined): BackupRetention {
+  try {
+    const parsed = parseRetention(JSON.parse(raw ?? '{}'));
+    return parsed.ok ? parsed.policy : {};
+  } catch {
+    return {};
+  }
+}
+
 function toConfigRecord(c: PrismaConfig): ServerConfigRecord {
   return {
     id: c.id,
@@ -181,6 +192,7 @@ function toConfigRecord(c: PrismaConfig): ServerConfigRecord {
     autoRestart: c.autoRestart,
     dataPath: c.dataPath,
     persistPaths: parseStringList(c.persistPaths),
+    backupRetention: parseRetentionColumn(c.backupRetention),
     type: c.type,
     createdAt: c.createdAt.toISOString(),
   };
@@ -212,6 +224,7 @@ function toBackupRecord(b: PrismaBackup): ServerBackupRecord {
     sizeBytes: b.sizeBytes,
     status: b.status,
     createdAt: b.createdAt.toISOString(),
+    offsite: b.offsite ?? null,
   };
 }
 
@@ -628,6 +641,7 @@ export class PrismaRepository implements Repository {
         ...(provided(patch.resourceLimits) ? { resourceLimits: JSON.stringify(patch.resourceLimits) } : {}),
         ...(provided(patch.autoRestart) ? { autoRestart: patch.autoRestart } : {}),
         ...(provided(patch.persistPaths) ? { persistPaths: JSON.stringify(patch.persistPaths) } : {}),
+        ...(provided(patch.backupRetention) ? { backupRetention: JSON.stringify(patch.backupRetention) } : {}),
       },
     });
     return toConfigRecord(updated);
@@ -855,6 +869,7 @@ export class PrismaRepository implements Repository {
       resourceLimits: config.resourceLimits,
       autoRestart: config.autoRestart,
       persistPaths: config.persistPaths,
+      backupRetention: config.backupRetention,
       events: d.events.map((e) => ({
         id: e.id,
         deploymentId: e.deploymentId,

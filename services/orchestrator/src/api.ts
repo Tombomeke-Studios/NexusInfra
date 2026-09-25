@@ -15,6 +15,8 @@ import { containerMemoryMb, derivedHeapMb, formatHeapMb, heapBudgetProblem, pars
 import { nodeCapacity, availableRamMb, availableCpuCores, isOverCommitted } from './capacity.js';
 import { parsePersistPaths, startCommandFor } from './startCommand.js';
 import { requestImageUpdate } from './imageUpdate.js';
+import { enforceRetention, takeBackup, type Snapshot } from './backups.js';
+import { parseRetention } from './retention.js';
 import { planTransfer } from './transfer.js';
 import { pageOf, parseFilter, parsePage } from './deploymentQuery.js';
 import { getMinecraftVersions } from './minecraftVersions.js';
@@ -124,9 +126,11 @@ export type ProvisionDatabaseFn = (req: { agentUrl: string; engine: string; name
 export type DeprovisionDatabaseFn = (agentUrl: string, containerId: string) => Promise<void>;
 
 /** Snapshot / restore / delete a container backup on the owning Node Agent. */
-export type SnapshotBackupFn = (req: { agentUrl: string; containerId: string; path?: string }) => Promise<{ ref: string; sizeBytes: number; path: string }>;
+export type SnapshotBackupFn = (req: { agentUrl: string; containerId: string; path?: string }) => Promise<Snapshot>;
 export type RestoreBackupFn = (req: { agentUrl: string; containerId: string; ref: string; path: string }) => Promise<void>;
 export type RemoveBackupFn = (agentUrl: string, ref: string) => Promise<void>;
+/** Stream one backup's tar from its node (#232). */
+export type DownloadBackupFn = (agentUrl: string, ref: string) => Promise<globalThis.Response>;
 
 /**
  * Remove everything a deleted server left on its node — containers and the named
@@ -151,6 +155,7 @@ export interface ApiDeps {
   snapshotBackup?: SnapshotBackupFn;
   restoreBackup?: RestoreBackupFn;
   removeBackup?: RemoveBackupFn;
+  downloadBackup?: DownloadBackupFn;
   scheduleActions?: ScheduleActions;
   /**
    * The Minecraft versions to offer (#311). Injected so tests never reach
@@ -212,7 +217,7 @@ const DB_PUBLIC_HOST = process.env.DATABASE_PUBLIC_HOST || 'localhost';
 const defaultSnapshotBackup: SnapshotBackupFn = async ({ agentUrl, ...spec }) => {
   const r = await agentFetch(`${agentUrl}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(spec) });
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? 'backup failed');
-  return (await r.json()) as { ref: string; sizeBytes: number; path: string };
+  return (await r.json()) as Snapshot;
 };
 
 const defaultRestoreBackup: RestoreBackupFn = async ({ agentUrl, ...spec }) => {
@@ -221,8 +226,13 @@ const defaultRestoreBackup: RestoreBackupFn = async ({ agentUrl, ...spec }) => {
 };
 
 const defaultRemoveBackup: RemoveBackupFn = async (agentUrl, ref) => {
-  await agentFetch(`${agentUrl}/backups/${ref}`, { method: 'DELETE' });
+  // Retention deletes through here (#232), so a refusal has to be an error: a
+  // backup whose file survived must not have its record dropped.
+  const r = await agentFetch(`${agentUrl}/backups/${ref}`, { method: 'DELETE' });
+  if (!r.ok && r.status !== 404) throw new Error((await r.json().catch(() => ({}))).error ?? `the node refused (${r.status})`);
 };
+
+const defaultDownloadBackup: DownloadBackupFn = (agentUrl, ref) => agentFetch(`${agentUrl}/backups/${encodeURIComponent(ref)}/download`);
 
 /**
  * Why this server's heap will not fit its memory cap, or null when it does (#271).
@@ -262,6 +272,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   const snapshotBackup = deps.snapshotBackup ?? defaultSnapshotBackup;
   const restoreBackup = deps.restoreBackup ?? defaultRestoreBackup;
   const removeBackup = deps.removeBackup ?? defaultRemoveBackup;
+  const downloadBackup = deps.downloadBackup ?? defaultDownloadBackup;
   const scheduleActions = deps.scheduleActions ?? noopScheduleActions;
   const checkQuota = deps.checkQuota ?? defaultCheckQuota;
   const purgeDeploymentData = deps.purgeDeploymentData ?? defaultPurgeDeploymentData;
@@ -1055,25 +1066,60 @@ export function createApiRouter(deps: ApiDeps): Router {
     res.json(await repo.listBackups(detail.id));
   });
 
-  router.post('/deployments/:id/backups', requirePermission('backup.manage'), async (req: Request, res: Response) => {
-    const detail = await repo.getDeployment(req.params.id);
-    if (!detail) return res.status(404).json({ error: 'deployment not found' });
-    if (!detail.containerId) return res.status(409).json({ error: 'deployment is not running' });
+  const backupDeps = () => ({ repo, snapshot: snapshotBackup, remove: removeBackup, agentUrlFor });
 
-    const path = typeof (req.body ?? {}).path === 'string' ? req.body.path : undefined;
+  // Snapshot now. Defaults to the server's own data directory (#324), then lets
+  // the retention policy (#232) drop what it no longer keeps.
+  router.post('/deployments/:id/backups', requirePermission('backup.manage'), async (req: Request, res: Response) => {
+    const path = typeof (req.body ?? {}).path === 'string' && req.body.path ? req.body.path : undefined;
+    const outcome = await takeBackup(backupDeps(), req.params.id, { path, by: 'user' });
+    if (!outcome.ok) return res.status(outcome.status).json({ error: outcome.error });
+    return res.status(201).json({ ...outcome.backup, expired: outcome.expired });
+  });
+
+  // How many backups to keep, and for how long (#232). Applied at once, so the
+  // answer says what it cost rather than leaving that to the next backup.
+  router.put('/deployments/:id/backups/retention', requirePermission('backup.manage'), async (req: Request, res: Response) => {
+    const parsed = parseRetention(req.body ?? {});
+    if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+    await repo.updateDeploymentConfig(req.params.id, { backupRetention: parsed.policy });
+    const expired = await enforceRetention(backupDeps(), req.params.id, new Date());
+    await repo.appendDeploymentEvent(
+      req.params.id,
+      'backup-retention-changed',
+      parsed.policy.keepLast || parsed.policy.keepDays
+        ? `keep ${[parsed.policy.keepLast && `the last ${parsed.policy.keepLast}`, parsed.policy.keepDays && `${parsed.policy.keepDays} days`].filter(Boolean).join(', at most ')}`
+        : 'keep every backup',
+    );
+    return res.json({ backupRetention: parsed.policy, expired });
+  });
+
+  // Download a backup's tar (#232) — so it can leave the machine it protects.
+  router.get('/deployments/:id/backups/:backupId/download', requirePermission('backup.manage'), async (req: Request, res: Response) => {
+    const backup = await repo.getBackup(req.params.backupId);
+    if (!backup || backup.deploymentId !== req.params.id) return res.status(404).json({ error: 'backup not found' });
+    let upstream: globalThis.Response;
     try {
-      const snap = await snapshotBackup({ agentUrl: await agentUrlFor(detail.nodeId), containerId: detail.containerId, path });
-      const backup = await repo.createBackup({
-        deploymentId: detail.id,
-        name: `backup-${new Date().toISOString().replace(/[:.]/g, '-')}`,
-        path: snap.path,
-        ref: snap.ref,
-        sizeBytes: snap.sizeBytes,
-      });
-      return res.status(201).json(backup);
-    } catch (err) {
-      return res.status(502).json({ error: err instanceof Error ? err.message : 'backup failed' });
+      upstream = await downloadBackup(await agentUrlFor(accessOf(req).deployment.nodeId), backup.ref);
+    } catch {
+      return res.status(502).json({ error: 'node agent unreachable' });
     }
+    if (!upstream.ok || !upstream.body) {
+      const body = (await upstream.json().catch(() => ({}))) as { error?: string };
+      return res.status(upstream.status === 404 ? 404 : 502).json({ error: body.error ?? 'the node could not produce this backup' });
+    }
+    const filename = `${accessOf(req).deployment.name.replace(/[^A-Za-z0-9._-]+/g, '-')}-${backup.name}.tar`;
+    res.setHeader('content-type', 'application/x-tar');
+    res.setHeader('content-disposition', `attachment; filename="${filename}"`);
+    const length = upstream.headers.get('content-length');
+    if (length) res.setHeader('content-length', length);
+    const reader = upstream.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(Buffer.from(value));
+    }
+    return res.end();
   });
 
   router.post('/deployments/:id/backups/:backupId/restore', requirePermission('backup.manage'), async (req: Request, res: Response) => {

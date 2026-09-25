@@ -237,7 +237,7 @@ scrolling log lines describing events that never happened.
 - [x] Every published port was mapped as TCP, so the UDP game servers were unreachable (#313) 🐛
 - [x] Add Minecraft Bedrock and Palworld eggs (#315)
 - [x] Import an existing server directory into the panel (#268)
-- [ ] Backup retention, download, and off-site (S3) targets (#232)
+- [x] Backup retention, download, and off-site (S3) targets (#232)
 - [ ] Port allocation management per node — pool, conflicts, primary port (#233)
 - [ ] Migrate a server to another node (#234)
 - [ ] Real SFTP access per server, honouring the file permissions (#235)

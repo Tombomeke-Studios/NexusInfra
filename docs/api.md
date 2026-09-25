@@ -518,14 +518,19 @@ bad engine, `502` if provisioning on the agent fails.
 
 ### Backups  *(running deployment)*
 
-A backup is a tar snapshot of the server's data path (default `/data`), stored on the owning node and
-restorable back into the container (#110). `404` if the deployment/backup is unknown, `409` if it is
-not running, `502` if the node operation fails.
+A backup is a tar snapshot of the server's data directory, stored on the owning node and restorable
+back into the container (#110). The default path is the server's own data directory — the egg's, an
+imported one, or the first `persistPaths` entry (#324) — and `/data` only when none is known. When the
+node has an off-site bucket (#232), each backup is copied there too and `offsite` says whether that
+worked (`stored` / `failed`; `null` = no bucket). `404` if the deployment/backup is unknown, `409` if
+it is not running, `502` if the node operation fails.
 
 | Method + path | Purpose |
 |---|---|
-| `GET /deployments/:id/backups` | List the server's backups (newest first) — `{ name, path, sizeBytes, createdAt, … }` |
-| `POST /deployments/:id/backups` | Snapshot the data path → `201` with the backup record |
+| `GET /deployments/:id/backups` | List the server's backups (newest first) — `{ name, path, sizeBytes, createdAt, offsite, … }` |
+| `POST /deployments/:id/backups` | Snapshot the data path → `201` with the backup record plus `expired`, how many old ones retention removed |
+| `PUT /deployments/:id/backups/retention` | Set `{ keepLast, keepDays }` (#232) — whole numbers ≥ 1, `null`/absent for no limit. Both are limits; the newest backup is never removed. Applied at once → `{ backupRetention, expired }` |
+| `GET /deployments/:id/backups/:backupId/download` | The tar, as an attachment (#232) — from the node, or from off-site when the node lost it |
 | `POST /deployments/:id/backups/:backupId/restore` | Extract the snapshot back into the running container |
 | `DELETE /deployments/:id/backups/:backupId` | Delete the stored tar and drop the record → `204` |
 

@@ -2067,3 +2067,83 @@ describe('updating a server image (#239)', () => {
     expect(res.status).toBe(201);
   });
 });
+
+describe('backup retention and download (#232)', () => {
+  let repo: InMemoryRepository;
+  let app: express.Express;
+  let id: string;
+  const removedRefs: string[] = [];
+  let n = 0;
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    removedRefs.length = 0;
+    app = express();
+    app.use(express.json());
+    app.use(asPrincipal());
+    app.use(
+      createApiRouter({
+        repo,
+        checkQuota: allowQuota,
+        publish: async () => true,
+        snapshotBackup: async ({ path }) => ({ ref: `bk_${++n}`, sizeBytes: 3, path: path ?? '/data', offsite: null }),
+        removeBackup: async (_url, ref) => void removedRefs.push(ref),
+        downloadBackup: async (_url, ref) =>
+          ref === 'bk_gone' ? new Response(JSON.stringify({ error: 'this backup is on neither the node nor the off-site store' }), { status: 404 }) : new Response(Buffer.from('TARBYTES'), { headers: { 'content-length': '8' } }),
+      })
+    );
+    await seedUser(repo);
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'My Web', dockerImage: 'nginx', persistPaths: ['/srv'] });
+    id = created.body.id;
+    await repo.updateDeploymentStatus(id, { status: 'running', containerId: 'c1', nodeId: 'node-local' });
+  });
+
+  it("backs up the server's own directory when none is named (#324)", async () => {
+    const res = await request(app).post(`/deployments/${id}/backups`).send({});
+    expect(res.status).toBe(201);
+    expect(res.body.path).toBe('/srv');
+  });
+
+  it('sets a policy, applies it at once, and says what it removed', async () => {
+    for (let i = 0; i < 3; i++) {
+      await request(app).post(`/deployments/${id}/backups`).send({});
+      await new Promise((r) => setTimeout(r, 2));
+    }
+    const res = await request(app).put(`/deployments/${id}/backups/retention`).send({ keepLast: 1 });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ backupRetention: { keepLast: 1 }, expired: 2 });
+    expect(await repo.listBackups(id)).toHaveLength(1);
+    expect((await request(app).get(`/deployments/${id}`)).body.backupRetention).toEqual({ keepLast: 1 });
+  });
+
+  it('refuses a policy that reads as "keep none"', async () => {
+    await request(app).put(`/deployments/${id}/backups/retention`).send({ keepLast: 0 }).expect(400);
+  });
+
+  it('downloads a backup as a named tar', async () => {
+    const made = await request(app).post(`/deployments/${id}/backups`).send({});
+    const res = await request(app).get(`/deployments/${id}/backups/${made.body.id}/download`).buffer(true).parse((r, cb) => {
+      const chunks: Buffer[] = [];
+      r.on('data', (c: Buffer) => chunks.push(c));
+      r.on('end', () => cb(null, Buffer.concat(chunks)));
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toBe('application/x-tar');
+    expect(res.headers['content-disposition']).toMatch(/^attachment; filename="My-Web-backup-.*\.tar"$/);
+    expect((res.body as Buffer).toString()).toBe('TARBYTES');
+  });
+
+  it("does not hand out another server's backup by id", async () => {
+    const other = await request(app).post('/deployments').send({ name: 'other', dockerImage: 'nginx' });
+    const made = await request(app).post(`/deployments/${id}/backups`).send({});
+    await request(app).get(`/deployments/${other.body.id}/backups/${made.body.id}/download`).expect(404);
+  });
+
+  it('passes on that a backup is gone from everywhere', async () => {
+    const b = await repo.createBackup({ deploymentId: id, name: 'x', path: '/srv', ref: 'bk_gone', sizeBytes: 1 });
+    const res = await request(app).get(`/deployments/${id}/backups/${b.id}/download`);
+    expect(res.status).toBe(404);
+    expect(res.body.error).toContain('neither the node nor the off-site store');
+  });
+});

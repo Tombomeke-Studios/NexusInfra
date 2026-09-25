@@ -92,6 +92,8 @@ export interface DeploymentDetail extends DeploymentView {
    * Absent on older responses.
    */
   persistPaths?: string[];
+  /** Absent on older responses. */
+  backupRetention?: BackupRetention;
 }
 
 export interface ResourceLimits {
@@ -804,6 +806,37 @@ export interface ServerBackup {
   sizeBytes: number;
   status: string;
   createdAt: string;
+  /** Whether a copy left the node (#232): null when the node has no off-site target. */
+  offsite?: 'stored' | 'failed' | null;
+}
+
+/** How many backups a server keeps, and for how long (#232). Both absent keeps all. */
+export interface BackupRetention {
+  keepLast?: number;
+  keepDays?: number;
+}
+
+export function setBackupRetention(id: string, policy: { keepLast: number | null; keepDays: number | null }): Promise<{ backupRetention: BackupRetention; expired: number }> {
+  return request(`/deployments/${id}/backups/retention`, { method: 'PUT', body: JSON.stringify(policy) });
+}
+
+/**
+ * A backup's tar, fetched with the session's token (#232). A plain link cannot
+ * carry the Authorization header, so the bytes come through here and are handed
+ * to the browser as a file.
+ */
+export async function downloadBackup(id: string, backupId: string): Promise<{ blob: Blob; filename: string }> {
+  const token = getToken();
+  const res = await fetch(`${BASE}/deployments/${id}/backups/${backupId}/download`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new ApiError(res.status, body?.error ?? res.statusText, body);
+  }
+  const disposition = res.headers.get('content-disposition') ?? '';
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? `backup-${backupId}.tar`;
+  return { blob: await res.blob(), filename };
 }
 
 export function listBackups(id: string): Promise<ServerBackup[]> {
