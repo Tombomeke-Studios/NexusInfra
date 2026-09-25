@@ -31,7 +31,7 @@ export function createBackupRouter(runtime: ContainerRuntime, opts: { dir?: stri
     } catch (err) {
       if (!offsite) throw err;
       const remote = await offsite.get(ref);
-      if (!remote) throw new Error('this backup is on neither the node nor the off-site store');
+      if (!remote) throw new Error('this backup is on neither the node nor the off-site store', { cause: err });
       return remote;
     }
   };
