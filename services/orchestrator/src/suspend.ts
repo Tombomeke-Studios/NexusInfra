@@ -11,6 +11,8 @@ export type PublishFn = (routingKey: string, envelope: EventEnvelope) => Promise
 export interface SuspendDeps {
   repo: Repository;
   publish?: PublishFn;
+  /** Tell the people on the server (#236); a failure here never blocks the stop. */
+  onSuspended?(deploymentId: string, reason: string): Promise<void> | void;
 }
 
 export interface SuspendPayload {
@@ -35,6 +37,7 @@ export function createSuspendHandler(deps: SuspendDeps) {
         })
       );
       await repo.appendDeploymentEvent(detail.id, 'suspended', `suspended by billing: ${payload.reason}`);
+      await (async () => deps.onSuspended?.(detail.id, payload.reason))().catch(() => undefined);
     }
   };
 }

@@ -22,3 +22,16 @@ export function backupFilePath(dir: string, ref: string): string {
   if (!isSafeRef(ref)) throw new Error('invalid backup reference');
   return path.join(dir, `${ref}.tar`);
 }
+
+/**
+ * Where to extract a backup of `containerPath` (#327).
+ *
+ * Docker's archive of a directory contains the directory itself — a backup of
+ * `/data` is entries named `data/…` — so it goes back into the *parent*. Every
+ * restore used to extract into the path itself, writing `/data/data/…`, report
+ * success, and leave the server running on the files it already had.
+ */
+export function restoreTargetFor(containerPath: string): string {
+  const parent = path.posix.dirname(path.posix.normalize(containerPath).replace(/\/+$/, '') || '/');
+  return parent || '/';
+}
