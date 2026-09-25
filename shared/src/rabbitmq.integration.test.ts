@@ -22,6 +22,11 @@ describe.skipIf(!URL)('RabbitMQ (#242)', () => {
   beforeAll(async () => {
     process.env.FINVAULT_MESSAGE_KEY = KEY;
     shared = await import('./index.js');
+    // The app's own topology first. A fresh broker has no `finvault.events`
+    // until a service connects, and the tap below binds to it directly — this
+    // passed against a broker the running stack had already set up, and failed
+    // on CI's empty one.
+    await shared.connectRabbitMQ(1, 0);
     raw = await amqp.connect(URL!);
     rawChannel = await raw.createChannel();
   });
