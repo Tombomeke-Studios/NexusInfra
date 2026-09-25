@@ -61,6 +61,7 @@ import { InfoHint } from '../components/InfoHint';
 import { VersionSelect } from '../components/VersionSelect';
 import { permissionsFor, ROLE_LABELS, type ServerPermission, type ServerRole } from '../permissions';
 import { Terminal } from '../components/Terminal';
+import { isGameServer } from '../format';
 
 // Server detail — ported from the redesign, and now backed end to end: header
 // actions, live stats, logs, terminal, files, databases, backups, schedules,
@@ -154,7 +155,7 @@ export function ServerDetail() {
   if (error) return <div className="page"><p role="alert" className="alert alert--error">{error}</p></div>;
   if (!d) return <div className="page"><div className="empty">Loading…</div></div>;
 
-  const isGame = d.type === 'game' || d.dockerImage.startsWith('nexusinfra/');
+  const isGame = isGameServer(d);
   const running = d.status === 'running';
   // What this caller may do here. Absent on older responses, in which case
   // permissionsFor allows everything and the API remains the real gate.

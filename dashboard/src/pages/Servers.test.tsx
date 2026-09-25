@@ -36,6 +36,27 @@ describe('Servers', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
+  it('shows each server its own limits and kind rather than a fixed line (#318)', async () => {
+    const own = [
+      { ...deployments[0], type: 'valheim', resourceLimits: { cpuPercent: 40, ramMb: 4096 } },
+      { ...deployments[1], type: 'app', resourceLimits: {} },
+    ];
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => (url.includes('/me') ? ME : { items: own, total: own.length, limit: 25, offset: 0 }),
+      } as Response)
+    );
+    renderServers();
+    await screen.findByText('my-nginx');
+
+    expect(screen.getByText('cpu 40% · ram 4096 MB')).toBeInTheDocument();
+    expect(screen.queryByText('cpu 50% · ram 50%')).not.toBeInTheDocument();
+    expect(screen.getByText('game')).toBeInTheDocument();
+    expect(screen.getByText('app')).toBeInTheDocument();
+  });
+
   it('lists deployments with status and container id', async () => {
     renderServers();
     expect(await screen.findByText('my-nginx')).toBeInTheDocument();
