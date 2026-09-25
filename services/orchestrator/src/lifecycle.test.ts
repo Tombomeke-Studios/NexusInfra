@@ -96,4 +96,18 @@ describe('createLifecycle', () => {
     expect(detail?.status).toBe('running');
     expect(detail?.events.find((e) => e.event === 'update-failed')?.message).toContain('manifest unknown');
   });
+
+  it('matches a report that names only the container (#332)', async () => {
+    const d = await seedDeployment(repo);
+    await repo.updateDeploymentStatus(d.id, { status: 'running', containerId: 'old-c' });
+    await lifecycle.handleReport(report({ type: 'server.crashed', payload: { deploymentId: '', containerId: 'old-c', reason: 'exited with code 1' } }));
+    expect((await repo.getDeployment(d.id))?.status).toBe('crashed');
+  });
+
+  it('ignores a crash of a container the server has since replaced (#332)', async () => {
+    const d = await seedDeployment(repo);
+    await repo.updateDeploymentStatus(d.id, { status: 'running', containerId: 'new-c' });
+    await lifecycle.handleReport(report({ type: 'server.crashed', payload: { deploymentId: d.id, containerId: 'old-c', reason: 'exited with code 137' } }));
+    expect((await repo.getDeployment(d.id))?.status).toBe('running');
+  });
 });

@@ -31,10 +31,32 @@ export interface AgentDeps {
    * uses fs.realpath and IMPORT_ROOT.
    */
   resolveMount?: (hostPath: string) => Promise<string>;
+  /**
+   * How long to let a container settle after it dies before looking at it
+   * (#332) — long enough for the agent's own removal, or a restart policy, to
+   * have happened. Zero in tests.
+   */
+  settleMs?: number;
+}
+
+/** A Docker event for a container this agent manages (#332). */
+export interface ContainerEvent {
+  action: 'die' | 'start';
+  containerId: string;
+  /** From the container's label; null for containers created before #324. */
+  deploymentId: string | null;
+  exitCode?: number;
 }
 
 export interface NodeAgent {
   handleCommand(envelope: EventEnvelope): Promise<void>;
+  /**
+   * React to a container stopping or starting without being asked (#332). The
+   * agent used to report only the outcome of its own commands, so a container
+   * that died on its own — a crash, the OOM killer, `docker kill` — stayed
+   * "running" in the panel indefinitely.
+   */
+  handleContainerEvent(event: ContainerEvent): Promise<void>;
   /**
    * Report what this node is actually running (#244).
    *
@@ -63,6 +85,26 @@ export function createAgent(deps: AgentDeps): NodeAgent {
       return resolveImportPath(hostPath, { root: importRoot(), realpath });
     });
   const source = `node-agent:${nodeId}`;
+  const settleMs = deps.settleMs ?? 1500;
+
+  // Containers the agent is restarting itself, so their stop is not a crash.
+  // Marked for the duration of the restart plus a short grace for the event to
+  // arrive — a longer window would swallow a real crash that follows it.
+  const ownRestarts = new Map<string, number>();
+  const OWN_GRACE_MS = 5_000;
+  const markOwn = (containerId: string) => ownRestarts.set(containerId, Number.POSITIVE_INFINITY);
+  const releaseOwn = (containerId: string) => ownRestarts.set(containerId, Date.now() + OWN_GRACE_MS);
+  const isOwn = (containerId: string) => {
+    const until = ownRestarts.get(containerId);
+    if (until === undefined) return false;
+    if (until < Date.now()) {
+      ownRestarts.delete(containerId);
+      return false;
+    }
+    return true;
+  };
+  // Containers reported down by the watcher, so a later start is news.
+  const reportedDown = new Set<string>();
 
   const emit = (routingKey: string, event: NexusInfraEvent) =>
     publish(routingKey, buildEnvelope(source, event));
@@ -193,8 +235,9 @@ export function createAgent(deps: AgentDeps): NodeAgent {
 
       case 'server.restart': {
         const containerId = String(payload.containerId ?? '');
+        markOwn(containerId);
         try {
-          await runtime.restart(containerId);
+          await runtime.restart(containerId).finally(() => releaseOwn(containerId));
           await emit(KEY_STARTED, {
             type: 'server.started',
             payload: { deploymentId, containerId, nodeId },
@@ -224,7 +267,50 @@ export function createAgent(deps: AgentDeps): NodeAgent {
     }
   }
 
-  return { handleCommand, reportInventory };
+  async function handleContainerEvent(event: ContainerEvent): Promise<void> {
+    const { containerId } = event;
+    const deploymentId = event.deploymentId ?? '';
+
+    if (event.action === 'start') {
+      // Only news when we said it was down: every start the agent makes itself
+      // is already reported by the command that made it.
+      if (!reportedDown.delete(containerId)) return;
+      await emit(KEY_STARTED, { type: 'server.started', payload: { deploymentId, containerId, nodeId } });
+      return;
+    }
+
+    if (isOwn(containerId)) return;
+    if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs));
+
+    const state = await runtime.inspectContainer(containerId);
+    // Gone: the agent removed it — a stop, a kill, a recreate, a delete.
+    if (!state) return;
+    if (isOwn(containerId)) return;
+
+    const exitCode = event.exitCode ?? state.exitCode;
+    const why = `exited with code ${exitCode}${state.oomKilled ? ' — killed by the OOM killer: it ran out of memory for its limit' : ''}`;
+
+    if (state.running) {
+      // Its restart policy already brought it back. A crash still happened and
+      // is still worth knowing about; a clean exit is a stop, not a crash.
+      if (exitCode === 0 && !state.oomKilled) {
+        await emit(KEY_STOPPED, { type: 'server.stopped', payload: { deploymentId, containerId } });
+      } else {
+        await emit(KEY_CRASHED, { type: 'server.crashed', payload: { deploymentId, containerId, reason: `${why}, and was restarted by its restart policy` } });
+      }
+      await emit(KEY_STARTED, { type: 'server.started', payload: { deploymentId, containerId, nodeId } });
+      return;
+    }
+
+    reportedDown.add(containerId);
+    if (exitCode === 0 && !state.oomKilled) {
+      await emit(KEY_STOPPED, { type: 'server.stopped', payload: { deploymentId, containerId } });
+    } else {
+      await emit(KEY_CRASHED, { type: 'server.crashed', payload: { deploymentId, containerId, reason: why } });
+    }
+  }
+
+  return { handleCommand, handleContainerEvent, reportInventory };
 }
 
 function errMessage(err: unknown): string {
