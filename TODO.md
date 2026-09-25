@@ -299,7 +299,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [~] Node Agent: offline event queue / replay on reconnect (#167 — **done**, in-memory outbox for lifecycle reports) + auto-restart on crash (still to do)
 - [x] Control Room: uptime % / history (#165), DLQ monitoring (#243), and alerting — node offline/recovered and crashes are notified by webhook or email (#236)
 - [ ] Metrics: InfluxDB + Grafana dashboards
-- [ ] Prometheus `/metrics` on every service — the cheap half of the above (#246)
+- [x] Prometheus `/metrics` on every service — the cheap half of the above (#246)
 - [~] Security: service-to-service auth (#169 — **done**, token-guarded agent API) + rate limiting (done in the gateway, #20); secrets-at-rest, token rotation, mTLS/HTTPS still to do
 - [ ] Production docker-compose + deployment docs; migrate SQLite → PostgreSQL via Prisma (#241)
 - [ ] Integration tests: RabbitMQ / DB-backed end to end (Docker Compose test target) (#242)

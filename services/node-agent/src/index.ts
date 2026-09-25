@@ -2,7 +2,7 @@ import os from 'os';
 import { createServer } from 'http';
 import express from 'express';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, isDefaultInternalToken, publishRabbitEvent, PublishOutbox, startNodeHeartbeat, startOutboxFlusher } from 'shared';
+import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, isDefaultInternalToken, publishRabbitEvent, PublishOutbox, startNodeHeartbeat, startOutboxFlusher, MetricsRegistry, registerBuildInfo, httpMetrics, metricsHandler } from 'shared';
 import { requireInternalToken, upgradeAuthorized } from './internalAuth.js';
 import { DockerodeRuntime } from './runtime.js';
 import { createAgent } from './agent.js';
@@ -58,14 +58,35 @@ const agent = createAgent({ nodeId: NODE_ID, runtime, publish: (key, envelope) =
 // the outbox, so a broker that has not come up yet does not lose it.
 void agent.reportInventory();
 
-// Containers that die or come back without being asked (#332). Without this a
-// crashed server stayed "running" in the panel until the agent itself restarted.
-runtime.watchContainers((event) => {
-  void agent.handleContainerEvent(event).catch((err) => console.error(`[Node Agent ${NODE_ID}] could not report a container event:`, err));
-});
 
 // ── HTTP: health probe ────────────────────────────────────────────────────────
 const app = express();
+
+// Prometheus metrics (#246) — open like /health (the agent's port is not meant
+// to be published at all), or behind METRICS_TOKEN when set.
+const metrics = new MetricsRegistry();
+registerBuildInfo(metrics, 'node-agent', buildInfo());
+app.use(httpMetrics(metrics, 'node-agent'));
+const commandsHandled = metrics.counter('nexusinfra_agent_commands_total', 'Server commands this node received, by type.');
+const containerEvents = metrics.counter('nexusinfra_agent_container_events_total', 'Containers that stopped or came back without being asked (#332), by action.');
+metrics.gauge('nexusinfra_agent_containers', 'Containers this agent manages, by state.', ['state'], async () => {
+  const managed = await runtime.listManaged();
+  const running = managed.filter((c) => c.running).length;
+  return [
+    { labels: { state: 'running' }, value: running },
+    { labels: { state: 'stopped' }, value: managed.length - running },
+  ];
+});
+metrics.gauge('nexusinfra_outbox_pending', 'Lifecycle reports held while the broker is unreachable (#167).', [], () => reportOutbox.pending);
+metrics.gauge('nexusinfra_outbox_dropped', 'Lifecycle reports lost because the outbox was full, since start.', [], () => reportOutbox.droppedCount);
+app.get('/metrics', metricsHandler(metrics));
+
+// Containers that die or come back without being asked (#332). Without this a
+// crashed server stayed "running" in the panel until the agent itself restarted.
+runtime.watchContainers((event) => {
+  containerEvents.inc({ action: event.action });
+  void agent.handleContainerEvent(event).catch((err) => console.error(`[Node Agent ${NODE_ID}] could not report a container event:`, err));
+});
 app.use(express.json({ limit: '4mb' })); // file writes carry content in the body
 app.get('/health', (_req, res) => {
   res.json({
@@ -194,7 +215,10 @@ async function start() {
     await consumeRabbitQueue(
       `nexusinfra.node-agent.${NODE_ID}`,
       ['infra.server.start', 'infra.server.stop', 'infra.server.kill', 'infra.server.restart', 'infra.server.update'],
-      (envelope) => agent.handleCommand(envelope)
+      (envelope) => {
+        commandsHandled.inc({ type: envelope.event.type });
+        return agent.handleCommand(envelope);
+      }
     );
     console.log(`[Node Agent ${NODE_ID}] Listening for server commands`);
 

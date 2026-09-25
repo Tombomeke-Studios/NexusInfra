@@ -2,7 +2,7 @@ import { createServer } from 'http';
 import express from 'express';
 import cors from 'cors';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
-import { assertEditionIsRunnable, buildEnvelope, buildInfo, consumeRabbitQueue, getInternalToken, INTERNAL_TOKEN_HEADER, publishRabbitEvent, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
+import { assertEditionIsRunnable, buildEnvelope, buildInfo, consumeRabbitQueue, getInternalToken, INTERNAL_TOKEN_HEADER, publishRabbitEvent, readPayload, startHeartbeat, type EventEnvelope, MetricsRegistry, registerBuildInfo, httpMetrics, metricsHandler } from 'shared';
 import { PrismaRepository } from './db.js';
 import { agentFetch, createApiRouter, resolveContainerTarget } from './api.js';
 import { catchAsync, errorHandler, installProcessGuards } from './errorBoundary.js';
@@ -21,6 +21,7 @@ import { createLifecycle } from './lifecycle.js';
 import { createNotifier, defaultTransports } from './notifier.js';
 import { createNotificationRouter } from './notificationRoutes.js';
 import { nodeTransitions } from './notify.js';
+import { nodeHealth } from './nodeRegistry.js';
 import type { NodeHealth } from './types.js';
 import { createSuspendHandler, type SuspendPayload } from './suspend.js';
 import { startScheduler, type ScheduleActions } from './scheduler.js';
@@ -54,6 +55,34 @@ const NODE_AGENT_URL = process.env.NODE_AGENT_URL || 'http://node-agent:9100';
 
 const repo = new PrismaRepository();
 
+// Prometheus metrics (#246). Created first: the publishers and consumers below
+// count into it.
+const metrics = new MetricsRegistry();
+registerBuildInfo(metrics, 'orchestrator', buildInfo());
+const published = metrics.counter('nexusinfra_events_published_total', 'Events this service published, by routing key and outcome.');
+const reports = metrics.counter('nexusinfra_lifecycle_reports_total', 'Lifecycle reports received from node agents, by type.');
+const notificationOutcomes = metrics.counter('nexusinfra_notifications_total', 'Notification delivery attempts, by outcome and channel kind (#236).');
+/** publishRabbitEvent, counted: a publish that returns false is an event the broker never took. */
+const countedPublish: typeof publishRabbitEvent = async (routingKey, envelope) => {
+  const ok = await publishRabbitEvent(routingKey, envelope);
+  published.inc({ routing_key: routingKey, outcome: ok ? 'ok' : 'failed' });
+  return ok;
+};
+metrics.gauge('nexusinfra_deployments', 'Servers, by status.', ['status'], async () => {
+  const counts: Record<string, number> = { pending: 0, running: 0, stopped: 0, crashed: 0, failed: 0 };
+  for (const d of await repo.listDeployments()) counts[d.status] = (counts[d.status] ?? 0) + 1;
+  return Object.entries(counts).map(([status, value]) => ({ labels: { status }, value }));
+});
+metrics.gauge('nexusinfra_nodes', 'Nodes, by health; draining nodes counted separately.', ['health'], async () => {
+  const counts: Record<string, number> = { healthy: 0, degraded: 0, offline: 0, maintenance: 0 };
+  const now = Date.now();
+  for (const n of await repo.listNodes()) {
+    counts[nodeHealth(n, now)]++;
+    if (n.maintenance) counts.maintenance++;
+  }
+  return Object.entries(counts).map(([health, value]) => ({ labels: { health }, value }));
+});
+
 /** Base URL of the agent owning `nodeId`, falling back to the single-node default (#171). */
 async function agentUrlFor(nodeId: string | null): Promise<string> {
   if (!nodeId) return resolveAgentUrl(null, NODE_AGENT_URL);
@@ -63,13 +92,14 @@ async function agentUrlFor(nodeId: string | null): Promise<string> {
 
 const users = createUserService({ repo });
 const registry = createNodeRegistry(repo);
-const reconcile = createReconcileHandler({ repo, publish: publishRabbitEvent });
+const reconcile = createReconcileHandler({ repo, publish: countedPublish });
 // Notifications (#236): channels per account, durable deliveries, retried until
 // they land. Email is on when SMTP_URL is set.
 const notifier = createNotifier({
   repo,
   transports: defaultTransports(process.env.SMTP_URL, process.env.SMTP_FROM || 'NexusInfra <nexusinfra@localhost>'),
   emailEnabled: Boolean(process.env.SMTP_URL),
+  onOutcome: (outcome, kind) => notificationOutcomes.inc({ outcome, kind }),
 });
 const lifecycle = createLifecycle(repo, {
   onCrashed: (deploymentId, reason) =>
@@ -103,14 +133,14 @@ const scheduleActions: ScheduleActions = {
     const detail = await repo.getDeployment(deploymentId);
     // Status too: a row stopped before #321 still names a removed container.
     if (detail?.status !== 'running' || !detail.containerId || !detail.nodeId) return;
-    await publishRabbitEvent(
+    await countedPublish(
       'infra.server.restart',
       buildEnvelope('orchestrator', { type: 'server.restart', payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId } })
     );
     await repo.appendDeploymentEvent(detail.id, 'schedule-restart', 'restarted by schedule');
   },
   async update(deploymentId) {
-    const outcome = await requestImageUpdate({ repo, publish: publishRabbitEvent }, deploymentId, 'schedule');
+    const outcome = await requestImageUpdate({ repo, publish: countedPublish }, deploymentId, 'schedule');
     if (outcome.status >= 300) throw new Error(outcome.body.error ?? 'scheduled update failed');
   },
   async backup(deploymentId) {
@@ -142,8 +172,12 @@ if (process.env.TRUST_PROXY && process.env.TRUST_PROXY !== '0') {
   app.set('trust proxy', /^\d+$/.test(value) ? Number(value) : value);
 }
 
+app.use(httpMetrics(metrics, 'orchestrator'));
 app.use(cors());
 app.use(express.json());
+// Aggregates only — no names, no ids. Behind METRICS_TOKEN when set, which it
+// should be: the dashboard's /api proxy makes this path public.
+app.get('/metrics', metricsHandler(metrics));
 app.get('/health', (_req, res) => {
   res.json({ service: 'orchestrator', status: 'healthy', ...buildInfo(), uptimeSec: Math.round(process.uptime()) });
 });
@@ -167,7 +201,7 @@ app.use(catchAsync(createAccountRouter({ users, repo })));
 app.use(catchAsync(createNotificationRouter({ repo, notifier })));
 app.use(catchAsync(createUserAdminRouter({ users, repo })));
 app.use(catchAsync(createTeamRouter({ repo })));
-app.use(catchAsync(createApiRouter({ repo, scheduleActions })));
+app.use(catchAsync(createApiRouter({ repo, scheduleActions, publish: countedPublish })));
 // Authenticated billing proxy → Billing Bridge (hosted edition; injects the JWT user id).
 app.use(catchAsync(createBillingProxyRouter()));
 // Surfaces the Control Room's live service/node monitoring to the dashboard (#157).
@@ -331,6 +365,7 @@ async function start() {
         } else if (envelope.event.type === 'billing.server.suspend') {
           await suspend(readPayload(envelope.event) as unknown as SuspendPayload);
         } else {
+          reports.inc({ type: envelope.event.type });
           await lifecycle.handleReport(envelope);
         }
       }

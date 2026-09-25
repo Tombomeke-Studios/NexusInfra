@@ -15,6 +15,8 @@ export interface RouteRule {
 export interface MatchedRoute {
   target: string;
   public: boolean;
+  /** The rule's prefix — a bounded label for metrics (#246). */
+  prefix: string;
 }
 
 // Backends. In the dev/compose stack the NexusInfra client API is served by the
@@ -50,5 +52,5 @@ export function matchRoute(path: string, routes: RouteRule[]): MatchedRoute | nu
       best = rule;
     }
   }
-  return best ? { target: best.target, public: best.public === true } : null;
+  return best ? { target: best.target, public: best.public === true, prefix: best.prefix } : null;
 }
