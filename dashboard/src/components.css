@@ -679,6 +679,23 @@ input[type='range']::-moz-range-thumb {
   color: var(--color-success);
 }
 
+/* A button that reads as a link (#344): an action, not a navigation, so it is a
+   <button> and keyboard-operable — but it sits in running text. The global
+   :focus-visible ring still applies. */
+.link-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--color-primary);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.link-button:hover {
+  text-decoration-thickness: 2px;
+}
+
 /* ── Auth (login) ───────────────────────────────────────────────────────── */
 .auth-wrap {
   min-height: 100dvh;

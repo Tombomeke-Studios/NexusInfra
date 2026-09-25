@@ -26,6 +26,9 @@ model BillingPlan {
   freeHoursPerMonth Float    @default(0)
   maxServers        Int      @default(5)
   maxDatabases      Int      @default(5)
+  // Null means no ceiling (#297).
+  maxRamMb            Int?
+  maxBackupsPerServer Int?
   createdAt         DateTime @default(now())
 }
 
