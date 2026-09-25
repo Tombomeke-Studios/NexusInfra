@@ -629,6 +629,16 @@ it is not running, `502` if the node operation fails.
 | `POST /deployments/:id/backups/:backupId/restore` | Extract the snapshot back where it came from in the running container: files in the backup replace the current ones, files created since are kept. (Before #327 it nested the snapshot inside the directory and restored nothing.) `404` when the node no longer has the archive (#339) |
 | `DELETE /deployments/:id/backups/:backupId` | Delete the stored tar and drop the record → `204` |
 
+### Disk usage (#347)
+
+| Method + path | Purpose |
+|---|---|
+| `GET /deployments/:id/disk` | How much disk this server uses (`server.stats`): `{ measuredAt, volumesBytes, writableBytes, volumes: [{ name, path, bytes }] }` — its data volumes and its container's own layer, measured by the node that holds them. `null` is something Docker could not measure, never a 0. `502` when the node cannot answer |
+| `GET /nodes/:id/disk` | Every server on the node by disk use, largest first — platform administrators only. Each row also carries `name` and `known`; `known: false` is data whose server the panel no longer has |
+
+The node caches its measurement for a minute: Docker walks every volume to take it. Nothing here
+limits anything — enforcing a cap is #278.
+
 ### Image updates (#239)
 
 | Method + path | Purpose |

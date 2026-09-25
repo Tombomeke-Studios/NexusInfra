@@ -63,6 +63,8 @@ import {
   setServerTeam,
   transferOwnership,
   type Team,
+  type DeploymentDisk,
+  getDeploymentDisk,
   type ServerSubuser,
   type SubuserRole,
   ApiError,
@@ -74,7 +76,7 @@ import { InfoHint } from '../components/InfoHint';
 import { VersionSelect } from '../components/VersionSelect';
 import { permissionsFor, ROLE_LABELS, type ServerPermission, type ServerRole } from '../permissions';
 import { Terminal } from '../components/Terminal';
-import { isGameServer, parsePathList } from '../format';
+import { formatBytes, formatRelative, isGameServer, parsePathList } from '../format';
 
 // Server detail — ported from the redesign, and now backed end to end: header
 // actions, live stats, logs, terminal, files, databases, backups, schedules,
@@ -267,7 +269,8 @@ export function ServerDetail() {
  * server. Nothing here invents a number now — before the first sample, and after
  * a stream failure, the tiles read `—` and the indicator says why.
  *
- * There is no Disk tile because `docker stats` does not report disk, and no
+ * Disk is not from `docker stats` (which does not report it) but from the
+ * node's own measurement of the server's volumes and writable layer (#347). No
  * Players/TPS tile because nothing in the stack can measure game telemetry (#252).
  */
 function LiveStats({ id, running, containerId, startedAt }: { id: string; running: boolean; containerId: string | null; startedAt: string | null }) {
@@ -307,6 +310,27 @@ function LiveStats({ id, running, containerId, startedAt }: { id: string; runnin
     };
   }, [id, running, containerId]);
 
+  // Disk is measured whether or not the server runs: its volumes are there
+  // either way. The node caches the measurement for a minute; so does this.
+  const [disk, setDisk] = useState<DeploymentDisk | null>(null);
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      getDeploymentDisk(id)
+        .then((d) => live && setDisk(d))
+        .catch(() => live && setDisk(null));
+    void load();
+    const timer = setInterval(load, 60_000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [id]);
+  const diskTotal = disk && disk.volumesBytes != null ? disk.volumesBytes + (disk.writableBytes ?? 0) : null;
+  const diskDetail = disk
+    ? `Data volumes ${formatBytes(disk.volumesBytes)} · container layer ${formatBytes(disk.writableBytes)} — measured ${formatRelative(disk.measuredAt)}`
+    : 'Not measured — the node agent did not answer';
+
   const mins = running && startedAt ? Math.floor((Date.now() - new Date(startedAt).getTime()) / 60000) : 0;
   const uptime = running && startedAt ? `${Math.floor(mins / 60)}h ${mins % 60}m` : '—';
   const net = s ? (s.netKb >= 1024 ? `${(s.netKb / 1024).toFixed(1)} MB/s` : `${s.netKb} KB/s`) : '—';
@@ -326,16 +350,23 @@ function LiveStats({ id, running, containerId, startedAt }: { id: string; runnin
         <StatBox label="Memory" value={s ? `${s.ram}%` : '—'} />
         <StatBox label="Network" value={net} />
         <StatBox label="Uptime" value={uptime} />
+        <StatBox
+          label="Disk"
+          value={formatBytes(diskTotal)}
+          title={diskDetail}
+          note={disk ? `data ${formatBytes(disk.volumesBytes)} · layer ${formatBytes(disk.writableBytes)}` : undefined}
+        />
       </div>
     </div>
   );
 }
 
-function StatBox({ label, value }: { label: string; value: string }) {
+function StatBox({ label, value, title, note }: { label: string; value: string; title?: string; note?: string }) {
   return (
-    <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', padding: '13px 16px' }}>
+    <div title={title} style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', padding: '13px 16px' }}>
       <div style={{ fontSize: '.74rem', textTransform: 'uppercase', letterSpacing: '.04em', color: 'var(--color-text-subtle)', marginBottom: 4 }}>{label}</div>
       <div className="tnum" style={{ fontSize: '1.3rem', fontWeight: 700 }}>{value}</div>
+      {note && <div className="tnum" style={{ fontSize: '.72rem', color: 'var(--color-text-subtle)', marginTop: 2 }}>{note}</div>}
     </div>
   );
 }

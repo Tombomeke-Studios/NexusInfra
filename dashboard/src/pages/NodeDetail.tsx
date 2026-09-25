@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { listNodes, listAllDeployments, deregisterNode, getCurrentUser, listNodePorts, setNodePortRange, type NodeView, type DeploymentView, type NodePortAllocation } from '../api';
+import { listNodes, listAllDeployments, deregisterNode, getCurrentUser, listNodePorts, setNodePortRange, getNodeDisk, type NodeView, type DeploymentView, type NodePortAllocation } from '../api';
+import { formatBytes, formatRelative } from '../format';
 import { InfoHint } from '../components/InfoHint';
 import { StatusBadge } from '../components/StatusBadge';
 import { useToast } from '../components/Toast';
@@ -106,6 +107,7 @@ export function NodeDetail() {
       </div>
 
       <PortPool node={node} />
+      <DiskByServer nodeId={node.id} />
 
       <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 12 }}>Servers on this node</strong>
       <div style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface)', overflow: 'hidden' }}>
@@ -219,6 +221,81 @@ function PortPool({ node }: { node: NodeView }) {
           </tbody>
         </table>
       )}
+    </div>
+  );
+}
+
+/**
+ * Which server is using this node's disk (#347), largest first. Administrators
+ * only, like the port pool: it names every account's servers. A volume the
+ * panel has no server for is data a deletion left behind — named, because it is
+ * the first place to look when a disk fills.
+ */
+function DiskByServer({ nodeId }: { nodeId: string }) {
+  const navigate = useNavigate();
+  const [usage, setUsage] = useState<Awaited<ReturnType<typeof getNodeDisk>> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void getCurrentUser()
+      .then((me) => {
+        if (me.platformRole !== 'admin' && me.platformRole !== 'owner') return;
+        return getNodeDisk(nodeId).then((u) => live && setUsage(u));
+      })
+      .catch((e) => live && setError(e instanceof Error ? e.message : 'Could not measure'));
+    return () => {
+      live = false;
+    };
+  }, [nodeId]);
+
+  if (!usage && !error) return null;
+  const rows = Array.isArray(usage?.deployments) ? usage.deployments : [];
+  const total = (d: { volumesBytes: number | null; writableBytes: number | null }) => (d.volumesBytes == null ? null : d.volumesBytes + (d.writableBytes ?? 0));
+
+  return (
+    <div className="card" style={{ padding: '18px 20px', marginBottom: 24 }}>
+      <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 4 }}>
+        Disk by server
+        <InfoHint text="Each server's data volumes plus its container's own layer, as the node measures them. Measured, not limited: nothing caps a server's disk yet." label="Disk by server help" />
+      </strong>
+      {error ? (
+        <p role="alert" className="alert alert--error" style={{ marginBottom: 0 }}>{error}</p>
+      ) : rows.length === 0 ? (
+        <p className="subtle" style={{ margin: 0, fontSize: '.84rem' }}>No server keeps data on this node.</p>
+      ) : usage ? (
+        <>
+          <p className="subtle" style={{ margin: '0 0 12px', fontSize: '.8rem' }}>Measured {formatRelative(usage.measuredAt)}.</p>
+          <table className="table" style={{ fontSize: '.84rem' }}>
+            <thead>
+              <tr>
+                <th>Server</th>
+                <th>Data</th>
+                <th className="wide-only">Container layer</th>
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((d) => (
+                <tr key={d.deploymentId}>
+                  <td>
+                    {d.known ? (
+                      <button className="name-btn" onClick={() => navigate(`/servers/${d.deploymentId}`)}>{d.name}</button>
+                    ) : (
+                      <span title={d.deploymentId}>
+                        <span className="badge badge--warning">no server</span> <span className="mono subtle">{d.deploymentId.slice(0, 8)}</span>
+                      </span>
+                    )}
+                  </td>
+                  <td className="tnum">{formatBytes(d.volumesBytes)}</td>
+                  <td className="tnum wide-only">{formatBytes(d.writableBytes)}</td>
+                  <td className="tnum" style={{ fontWeight: 600 }}>{formatBytes(total(d))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      ) : null}
     </div>
   );
 }

@@ -302,6 +302,11 @@ export class DockerodeRuntime implements ContainerRuntime {
     }
   }
 
+  /** Docker's disk accounting (#347) — walks every volume, so callers cache it. */
+  async systemDf(): Promise<import('./diskUsage.js').DockerDf> {
+    return (await this.docker.df()) as import('./diskUsage.js').DockerDf;
+  }
+
   async listDeploymentVolumes(deploymentId: string): Promise<{ name: string; path: string }[]> {
     const { Volumes } = await this.docker.listVolumes({ filters: { label: [`${DEPLOYMENT_LABEL}=${deploymentId}`] } });
     return (Volumes ?? []).map((v) => ({ name: v.Name, path: v.Labels?.['nexusinfra.path'] ?? '' })).filter((v) => v.path);

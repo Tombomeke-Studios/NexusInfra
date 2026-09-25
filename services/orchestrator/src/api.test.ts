@@ -1091,6 +1091,82 @@ describe('deployment API', () => {
   });
 });
 
+describe('disk usage (#347)', () => {
+  function diskApp(repo: InMemoryRepository, principal = OWNER, asked: Array<string | undefined> = []) {
+    const app = express();
+    app.use(express.json());
+    app.use(asPrincipal(principal));
+    app.use(
+      createApiRouter({
+        repo,
+        publish: async () => true,
+        checkQuota: allowQuota,
+        getEntitlements: noPlan,
+        diskUsage: async (_agentUrl, deploymentId) => {
+          asked.push(deploymentId);
+          if (deploymentId) return { measuredAt: 't', deploymentId, volumesBytes: 2048, writableBytes: 10, volumes: [] };
+          return {
+            measuredAt: 't',
+            deployments: [
+              { deploymentId: 'gone-server', volumesBytes: 9000, writableBytes: null, volumes: [] },
+              { deploymentId: repo.lastCreatedId, volumesBytes: 2048, writableBytes: 10, volumes: [] },
+            ],
+          };
+        },
+      })
+    );
+    return app;
+  }
+
+  async function seed(repo: InMemoryRepository) {
+    await repo.upsertNode({ id: 'node-local', name: 'node-local', lastHeartbeat: new Date().toISOString(), cpuPercent: 5, ramUsedMb: 500, ramTotalMb: 8000 });
+    const created = await request(diskApp(repo)).post('/deployments').send({ name: 'world', dockerImage: 'nginx' });
+    (repo as InMemoryRepository & { lastCreatedId?: string }).lastCreatedId = created.body.id;
+    return created.body.id as string;
+  }
+
+  it("answers for one server from the node that holds it", async () => {
+    const repo = new InMemoryRepository() as InMemoryRepository & { lastCreatedId?: string };
+    const id = await seed(repo);
+    const asked: Array<string | undefined> = [];
+    const res = await request(diskApp(repo, OWNER, asked)).get(`/deployments/${id}/disk`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ volumesBytes: 2048, writableBytes: 10 });
+    expect(asked).toEqual([id]);
+  });
+
+  it('is not visible to somebody without access to the server', async () => {
+    const repo = new InMemoryRepository() as InMemoryRepository & { lastCreatedId?: string };
+    const id = await seed(repo);
+    const stranger = { id: 'user-stranger', email: 's@example.com', platformRole: 'user' as const };
+    expect((await request(diskApp(repo, stranger)).get(`/deployments/${id}/disk`)).status).toBe(404);
+  });
+
+  it('lists a node by server for administrators, naming data no server owns', async () => {
+    const repo = new InMemoryRepository() as InMemoryRepository & { lastCreatedId?: string };
+    await seed(repo);
+    const res = await request(diskApp(repo, PLATFORM_ADMIN)).get('/nodes/node-local/disk');
+    expect(res.status).toBe(200);
+    expect(res.body.deployments).toEqual([
+      expect.objectContaining({ deploymentId: 'gone-server', name: null, known: false }),
+      expect.objectContaining({ name: 'world', known: true }),
+    ]);
+    expect((await request(diskApp(repo)).get('/nodes/node-local/disk')).status).toBe(403);
+    expect((await request(diskApp(repo, PLATFORM_ADMIN)).get('/nodes/nope/disk')).status).toBe(404);
+  });
+
+  it('says so when the node cannot measure', async () => {
+    const repo = new InMemoryRepository() as InMemoryRepository & { lastCreatedId?: string };
+    const id = await seed(repo);
+    const app = express().use(express.json()).use(asPrincipal()).use(
+      createApiRouter({ repo, publish: async () => true, checkQuota: allowQuota, getEntitlements: noPlan, diskUsage: async () => { throw new Error('Docker could not measure disk use: timeout'); } })
+    );
+    const res = await request(app).get(`/deployments/${id}/disk`);
+    expect(res.status).toBe(502);
+    expect(res.body.error).toMatch(/could not measure/);
+  });
+});
+
 describe('plan entitlements (#297)', () => {
   const plan = (maxRamMb: number | null, maxBackupsPerServer: number | null = null) => ({
     planId: 'standard',

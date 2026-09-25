@@ -125,3 +125,47 @@ describe('NodeDetail host ports (#233)', () => {
     expect(await screen.findByText(/2 ports are already in use outside it and kept/)).toBeInTheDocument();
   });
 });
+
+// #347: which server is filling this node's disk.
+describe('NodeDetail disk by server (#347)', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function stub(platformRole: string) {
+    const fetchMock = vi.fn((url: string) => {
+      const path = String(url);
+      let body: unknown = [];
+      if (path.endsWith('/nodes')) body = [node];
+      else if (path.includes('/deployments')) body = { items: deployments, total: deployments.length, limit: 200, offset: 0 };
+      else if (path.endsWith('/me')) body = { id: 'u', email: 'a@b.c', displayName: 'A', platformRole, createdAt: '' };
+      else if (path.endsWith('/nodes/node-1/disk'))
+        body = {
+          measuredAt: new Date().toISOString(),
+          deployments: [
+            { deploymentId: 'orphan-1234567', name: null, known: false, volumesBytes: 5 * 1024 ** 3, writableBytes: null, volumes: [] },
+            { deploymentId: 'd1', name: 'my-nginx', known: true, volumesBytes: 2048, writableBytes: 1024, volumes: [] },
+          ],
+        };
+      return Promise.resolve({ ok: true, status: 200, json: async () => body } as Response);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderAt('node-1');
+    return fetchMock;
+  }
+
+  it('lists servers by disk use, and names data no server owns', async () => {
+    stub('admin');
+    expect(await screen.findByText('Disk by server')).toBeInTheDocument();
+    expect(screen.getByText('no server')).toBeInTheDocument();
+    // Data and total are the same for a server with no container layer.
+    expect(screen.getAllByText('5 GB', { selector: 'td' })).toHaveLength(2);
+    expect(screen.getByText('3 KB', { selector: 'td' })).toBeInTheDocument();
+  });
+
+  it('is not asked for by anybody else', async () => {
+    const fetchMock = stub('user');
+    await screen.findByText('Home box');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText('Disk by server')).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith('/disk'))).toBe(false);
+  });
+});

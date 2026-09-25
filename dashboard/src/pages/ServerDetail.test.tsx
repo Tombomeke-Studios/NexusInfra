@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { ServerDetail } from './ServerDetail';
@@ -157,11 +157,35 @@ describe('ServerDetail telemetry when the stream fails', () => {
     expect(screen.getAllByText('—').length).toBeGreaterThan(0);
   });
 
-  it('offers no Disk, Players or TPS tile — nothing can measure them', async () => {
+  it("shows the disk the node measured, with what it is made of (#347)", async () => {
+    renderDetail('owner');
+    const fetchMock = vi.mocked(fetch);
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) =>
+      String(url).endsWith('/deployments/dep-1/disk')
+        ? Promise.resolve({ ok: true, status: 200, json: async () => ({ deploymentId: 'dep-1', measuredAt: new Date().toISOString(), volumesBytes: 3 * 1024 ** 3, writableBytes: 512 * 1024, volumes: [] }) } as Response)
+        : base(url, init)
+    );
+    cleanup();
+    render(
+      <MemoryRouter initialEntries={['/servers/dep-1']}>
+        <ToastProvider>
+          <Routes>
+            <Route path="/servers/:id" element={<ServerDetail />} />
+          </Routes>
+        </ToastProvider>
+      </MemoryRouter>
+    );
+    expect(await screen.findByText('3 GB')).toBeInTheDocument();
+    expect(screen.getByText('data 3 GB · layer 512 KB')).toBeInTheDocument();
+  });
+
+  it('offers no Players or TPS tile — nothing can measure them', async () => {
     renderDetail('owner', { type: 'game' });
     await screen.findByText(/stats unavailable/i);
 
-    expect(screen.queryByText('Disk')).not.toBeInTheDocument();
+    // Disk used to be absent for the same reason; the node measures it now (#347).
+    expect(screen.getByText('Disk')).toBeInTheDocument();
     expect(screen.queryByText(/players/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/TPS/)).not.toBeInTheDocument();
   });
