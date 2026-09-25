@@ -257,6 +257,7 @@ scrolling log lines describing events that never happened.
 - [x] Restoring a backup nested it inside the directory instead of replacing it (#327) 🐛
 - [x] Starting a stopped server could move it to a node without its data (#329) 🐛
 - [x] A server that died on its own was shown as running forever — the agent now watches Docker events (#332) 🐛
+- [x] A missing backup archive answered with the node's host path (`ENOENT …/bk_….tar`) (#339) 🐛
 
 - [x] Delete server button is a no-op — wire `DELETE /deployments/:id` end to end (#156)
 - [x] Node Agent internal API was unauthenticated + host-published — token-guard it (#169)
