@@ -884,7 +884,9 @@ resource factor (derived from its CPU/RAM limits).
 
 ### `GET /billing/:userId/ledger`
 
-The append-only credit ledger (top-ups + charges), newest first.
+The append-only credit ledger (top-ups + charges), newest first. A top-up's `status` is `pending`,
+`confirmed`, `failed`, or `expired` — FinVault did not answer within `TOPUP_TIMEOUT_MS` (#298). `expired`
+is not final: a late `payment.confirmed` still credits it.
 
 ### `GET /billing/:userId/plan`
 

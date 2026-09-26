@@ -101,5 +101,76 @@ describe('billing service', () => {
     it('rejects a non-positive top-up', async () => {
       await expect(svc.requestTopUp('u1', 0)).rejects.toThrow();
     });
+
+    // An at-least-once broker may hand the same confirmation to two deliveries at
+    // once; both used to pass the "still pending?" check before either wrote.
+    it('credits once when the same confirmation arrives twice at the same time (#298)', async () => {
+      const { reference } = await svc.requestTopUp('u1', 20);
+      const results = await Promise.all([svc.handlePaymentConfirmed({ reference, amount: 20 }), svc.handlePaymentConfirmed({ reference, amount: 20 })]);
+      expect(results.filter(Boolean)).toHaveLength(1);
+      expect((await repo.getWallet('u1')).balance).toBe(20);
+    });
+
+    it('credits nothing when FinVault confirms a different amount, and leaves it open', async () => {
+      const logs: string[] = [];
+      svc = createBillingService({ repo, publish: async () => true, now: () => clock, log: (m) => logs.push(m) });
+      const { reference } = await svc.requestTopUp('u1', 20);
+      expect(await svc.handlePaymentConfirmed({ reference, amount: 2 })).toBeNull();
+      expect((await repo.getWallet('u1')).balance).toBe(0);
+      expect((await repo.listLedger('u1'))[0].status).toBe('pending');
+      expect(logs[0]).toMatch(/confirmed for 2 but requested for 20/);
+    });
+
+    it("ignores confirmations of FinVault's own payments, which share the routing key", async () => {
+      expect(await svc.handlePaymentConfirmed({ reference: 'TXN-8F2A1C', amount: 5 })).toBeNull();
+      expect(await svc.handlePaymentFailed({ reference: 'TXN-8F2A1C' })).toBeNull();
+    });
+
+    describe('when FinVault never answers (#298)', () => {
+      let logs: string[];
+      beforeEach(() => {
+        logs = [];
+        svc = createBillingService({ repo, publish: async () => true, now: () => clock, log: (m) => logs.push(m) });
+      });
+      const later = (ms: number) => new Date(Date.now() + ms).toISOString();
+
+      it('shows a top-up as not confirmed once the timeout passes, and says why', async () => {
+        await svc.requestTopUp('u1', 20);
+        clock = later(10 * 60 * 1000);
+        expect(await svc.expireStaleTopUps(30 * 60 * 1000)).toEqual([]);
+
+        clock = later(31 * 60 * 1000);
+        const expired = await svc.expireStaleTopUps(30 * 60 * 1000);
+        expect(expired.map((e) => e.status)).toEqual(['expired']);
+        expect((await repo.listLedger('u1'))[0].status).toBe('expired');
+        expect(logs.join('\n')).toMatch(/FINVAULT_MESSAGE_KEY/);
+        // Sweeping again finds nothing new.
+        expect(await svc.expireStaleTopUps(30 * 60 * 1000)).toEqual([]);
+      });
+
+      it('still credits a confirmation that arrives after the top-up expired — the money moved', async () => {
+        const { reference } = await svc.requestTopUp('u1', 20);
+        clock = later(31 * 60 * 1000);
+        await svc.expireStaleTopUps(30 * 60 * 1000);
+        expect((await svc.handlePaymentConfirmed({ reference, amount: 20 }))?.balance).toBe(20);
+        expect((await repo.listLedger('u1'))[0].status).toBe('confirmed');
+      });
+
+      it('records a late failure as failed', async () => {
+        const { reference } = await svc.requestTopUp('u1', 20);
+        clock = later(31 * 60 * 1000);
+        await svc.expireStaleTopUps(30 * 60 * 1000);
+        await svc.handlePaymentFailed({ reference });
+        expect((await repo.listLedger('u1'))[0].status).toBe('failed');
+      });
+
+      it('never expires a top-up that was already settled', async () => {
+        const { reference } = await svc.requestTopUp('u1', 20);
+        await svc.handlePaymentConfirmed({ reference, amount: 20 });
+        clock = later(31 * 60 * 1000);
+        expect(await svc.expireStaleTopUps(30 * 60 * 1000)).toEqual([]);
+        expect((await repo.listLedger('u1'))[0].status).toBe('confirmed');
+      });
+    });
   });
 });

@@ -496,7 +496,8 @@ export interface LedgerEntry {
   amount: number;
   currency: string;
   reference: string;
-  status: 'pending' | 'confirmed' | 'failed';
+  /** `expired`: FinVault did not confirm it in time (#298) — not final; a late confirmation still credits. */
+  status: 'pending' | 'confirmed' | 'failed' | 'expired';
   description: string;
   createdAt: string;
 }

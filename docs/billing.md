@@ -66,6 +66,14 @@ the panel is **not** the owner of the hardware (a hosting-provider scenario). So
 - **Top-up flow.** A top-up emits `payment.request` to FinVault referencing the **user** (FinVault
   resolves the user's wallet/payment method on its side); on `payment.confirmed` the credit is added, on
   `payment.failed` the top-up is marked failed.
+  - **Once, and for the amount asked.** The status change is a single conditional update, so a
+    confirmation delivered twice credits once (#298 — before, two concurrent deliveries both
+    credited). A confirmation for a different amount than was requested credits nothing and is logged
+    for someone to check by hand.
+  - **Silence ends.** A top-up with no answer after `TOPUP_TIMEOUT_MS` (default 30 min) is shown as
+    **Not confirmed**, with an explanation on the Billing page — a mismatched `FINVAULT_MESSAGE_KEY`
+    used to leave it pending forever. It is not final: a confirmation that arrives later means the
+    money moved, and is still credited.
 - **Monthly cycle + free hours.** Billing runs on a monthly cycle; each plan grants **free hours/month**
   before charging begins.
 - **Suspend on empty balance.** At cycle close (or when the balance can't cover accrued usage), the
@@ -87,13 +95,26 @@ the panel is **not** the owner of the hardware (a hosting-provider scenario). So
 | Event | Direction | Purpose |
 |---|---|---|
 | `payment.request` | NexusInfra → FinVault | Top up the user's credit (charge their FinVault wallet) |
-| `payment.confirmed` | FinVault → NexusInfra | Top-up succeeded → add credit |
+| `payment.confirmed` | FinVault → NexusInfra | Top-up succeeded → add credit (accepted on `bank.payment.confirmed` and on `events.payment.confirmed`, the key FinVault's gateway actually publishes on) |
 | `payment.failed` | FinVault → NexusInfra | Top-up failed → mark failed (suspend if balance can't cover usage) |
 | `billing.server.suspend` | Billing Bridge → Orchestrator | Stop a user's servers when credit is exhausted |
 | `invoice.generate` | NexusInfra → FinVault | Monthly invoice record |
 
 > `billing.server.suspend` and `invoice.generate` are defined in `shared/src/events.ts` (added in #145;
 > NexusInfra-only routing keys, the envelope/encryption contract unchanged).
+
+## What has been verified against FinVault (#298)
+
+Run against a checkout of FinVault's `main` on one RabbitMQ, with the hosted stack from source:
+
+| | |
+|---|---|
+| Payload encryption | ✅ Both directions, with FinVault's own `encryptPayload`/`decryptPayload`; a FinVault-made ciphertext is a test fixture |
+| FinVault → NexusInfra confirmation | ✅ `payment.confirmed` sent through FinVault's `publishEvent` and gateway moved a real balance |
+| Mismatched message key | ✅ Names its cause in the log, dead-letters (the Control Room reports it), and the top-up turns **Not confirmed** |
+| Late confirmation | ✅ Credited after expiry |
+| Monthly cycle | ✅ Charge → short balance → `billing.server.suspend` → the server's container actually stopped |
+| NexusInfra → FinVault request | ❌ **FinVault does not consume it** — a top-up cannot complete yet. See #351: FinVault needs a consumer, and the request needs an identity FinVault can resolve until #17 |
 
 ## How it links to the app (FinVault)
 

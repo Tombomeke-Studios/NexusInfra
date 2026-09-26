@@ -325,7 +325,8 @@ is the migrations directory.
 | `src/types.ts` | Domain records + the `Repository` interface (plans, intervals, wallet, ledger, cycles) |
 | `src/repository.ts` | `InMemoryRepository` — backs unit tests and a DB-less mode |
 | `src/db.ts` | `getPrisma()` + `PrismaRepository` (SQLite) + `ensureDefaultPlan` seed |
-| `src/service.ts` | `createBillingService` — events→intervals, wallet, and the FinVault top-up flow (`payment.request`/confirmed/failed); dependency-injected |
+| `src/service.ts` | `createBillingService` — events→intervals, wallet, and the FinVault top-up flow (`payment.request`/confirmed/failed); dependency-injected. A confirmation credits once (conditional transition) and only for the requested amount; `expireStaleTopUps` turns an unanswered top-up *Not confirmed* after `TOPUP_TIMEOUT_MS` — not final, a late confirmation still credits (#298) |
+| `src/prisma.integration.test.ts` | The billing repository on real SQLite and PostgreSQL: concurrent confirmations credit once (#298) |
 | `src/cycle.ts` | Monthly cycle runner: pure `computeCycleCost`/period helpers + `runBillingCycle` (charge credit → `billing.server.suspend` on short balance → `invoice.generate`) + `startCycleRunner` (hourly poll, idempotent) |
 | `src/api.ts` | `createBillingRouter` — HTTP: wallet/usage/ledger/plan/quota + `POST /topup` |
 | `src/index.ts` | Entry: PrismaRepository + service; consumes deployment/runtime + `bank.payment.*`; HTTP `/health` (+ billing routes when hosted) on `:9300`; inert in community |
@@ -417,6 +418,11 @@ is the migrations directory.
 - `FINVAULT_MESSAGE_KEY` and `RABBITMQ_URL` must match FinVault's values for cross-platform events;
   empty key = plaintext payloads (local dev only).
 - Event payloads may arrive encrypted — always read them via `readPayload()`, never `event.payload` directly.
+- **FinVault's gateway publishes every event as `events.<type>`** (e.g. `events.payment.confirmed`), not on
+  the `bank.payment.*` keys NexusInfra named. Bind both when consuming anything FinVault sends (#298), and
+  match on a reference *you* issued — FinVault's own payments share the key.
+- **A ledger status changes through `transitionLedgerStatus`, never read-then-write.** The broker delivers
+  at least once; two deliveries of one confirmation used to both see "pending" and both credit (#298).
 - Consumers `nack` without requeue on error → message dead-letters to `finvault.events.dlq` (3-retry
   semantics live at the broker level, not in code).
 - **`publishRabbitEvent` returns `false` and drops the event when the broker is unreachable.** For any
