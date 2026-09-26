@@ -189,7 +189,16 @@ export function readPayload(event: NexusInfraEvent): Record<string, unknown> {
     if (!messageKey) {
       throw new Error('Encrypted event payload received but FINVAULT_MESSAGE_KEY is not set');
     }
-    return decryptPayload(payload.data, messageKey);
+    try {
+      return decryptPayload(payload.data, messageKey);
+    } catch {
+      // Node's own message ("Unsupported state or unable to authenticate data")
+      // says nothing about the one cause that matters in practice (#298).
+      throw new Error(
+        'Could not decrypt an event payload: FINVAULT_MESSAGE_KEY differs from the sender\'s, or the payload was altered. ' +
+          'Both platforms must use the same key.'
+      );
+    }
   }
   return payload;
 }
