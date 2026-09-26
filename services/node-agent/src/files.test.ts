@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeContainerPath, parseLsOutput, buildTarball } from './files.js';
+import { normalizeContainerPath, parseLsOutput, buildTarball, extractSingleFile } from './files.js';
 
 describe('normalizeContainerPath', () => {
   it('makes paths absolute and collapses redundant segments', () => {
@@ -71,5 +71,55 @@ describe('buildTarball with binary content', () => {
     // 'é' is two bytes in UTF-8 — the size field must count bytes, not characters.
     const tar = buildTarball('note.txt', 'café');
     expect(parseInt(tar.toString('ascii', 124, 135).replace(/\0/g, '').trim(), 8)).toBe(5);
+  });
+});
+
+// A tar header block as Docker writes one: name, octal size, type flag and a valid
+// checksum. Enough for extractSingleFile, which reads name-independent fields.
+function tarHeader(name: string, size: number, type: string): Buffer {
+  const h = Buffer.alloc(512, 0);
+  h.write(name, 0, 'utf8');
+  h.write('0000644\0', 100, 'ascii');
+  h.write(size.toString(8).padStart(11, '0') + '\0', 124, 'ascii');
+  h.write(type, 156, 'ascii');
+  h.write('ustar\0', 257, 'ascii');
+  return h;
+}
+const pad = (b: Buffer) => Buffer.concat([b, Buffer.alloc((512 - (b.length % 512)) % 512, 0)]);
+
+describe('extractSingleFile', () => {
+  it('returns the bytes of the one file, untouched', () => {
+    const bytes = Buffer.from([0x00, 0xff, 0xc3, 0x28, 0x50, 0x4b]);
+    expect(extractSingleFile(buildTarball('world/level.dat', bytes))).toEqual(bytes);
+  });
+
+  it('skips the PAX header Docker adds before a file with a long name', () => {
+    const pax = Buffer.from('30 path=some/very/long/name.dat\n');
+    const body = Buffer.from('payload');
+    const tar = Buffer.concat([
+      tarHeader('PaxHeaders/name.dat', pax.length, 'x'),
+      pad(pax),
+      tarHeader('name.dat', body.length, '0'),
+      pad(body),
+      Buffer.alloc(1024, 0),
+    ]);
+    expect(extractSingleFile(tar).toString()).toBe('payload');
+  });
+
+  it('refuses a directory rather than returning its first member', () => {
+    const tar = Buffer.concat([tarHeader('world/', 0, '5'), tarHeader('world/a', 1, '0'), pad(Buffer.from('a'))]);
+    expect(() => extractSingleFile(tar)).toThrow(/directory/);
+  });
+
+  it('refuses a link', () => {
+    expect(() => extractSingleFile(tarHeader('latest.log', 0, '2'))).toThrow(/link/);
+  });
+
+  it('refuses an archive with no file in it', () => {
+    expect(() => extractSingleFile(Buffer.alloc(1024, 0))).toThrow(/no file/);
+  });
+
+  it('reads an empty file as empty', () => {
+    expect(extractSingleFile(buildTarball('empty.txt', Buffer.alloc(0))).length).toBe(0);
   });
 });

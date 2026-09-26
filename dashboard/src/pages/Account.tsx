@@ -24,6 +24,7 @@ import { setToken } from '../session';
 import { useToast } from '../components/Toast';
 import { useDialog } from '../components/Dialog';
 import { InfoHint } from '../components/InfoHint';
+import { NotificationsCard } from '../components/NotificationsCard';
 
 // Account (#221) — who you are signed in as, and the one thing you can change
 // about yourself. `GET /me` and `POST /me/password` had existed since accounts
@@ -123,6 +124,8 @@ export function Account() {
       <TwoFactorCard />
 
       <TokensCard />
+
+      <NotificationsCard />
 
       <div className="card" style={{ padding: 24 }}>
         <strong style={{ display: 'block', fontSize: '.95rem', marginBottom: 6 }}>Change password</strong>

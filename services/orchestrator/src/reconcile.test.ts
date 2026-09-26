@@ -178,6 +178,24 @@ describe('createReconcileHandler', () => {
     expect((await repo.getDeployment(id))?.status).toBe('pending');
   });
 
+  it("restarts an imported server with its directory and its volumes (#324)", async () => {
+    // This copy of the start command used to be hand-written, and it left the
+    // imported mount out: the server came back without its world.
+    const { repo, published, handle } = await setup();
+    const config = await repo.createServerConfig({
+      userId: 'u1', name: 'mc', dockerImage: 'itzg/minecraft-server', autoRestart: true,
+      type: 'minecraft-java', dataPath: '/srv/import/world', persistPaths: ['/plugins'],
+    });
+    const deployment = await repo.createDeployment(config.id, 'node-1');
+    await repo.updateDeploymentStatus(deployment.id, { status: 'running', containerId: 'c1' });
+
+    await handle(inventoryEvent('node-1', []));
+
+    const payload = readPayload(published.find((p) => p.key === 'infra.server.start')!.envelope.event) as Record<string, unknown>;
+    expect(payload.dataMount).toEqual({ hostPath: '/srv/import/world', containerPath: '/data' });
+    expect(payload.persistPaths).toEqual(['/plugins']);
+  });
+
   it('adopts a container that is running though the record said stopped', async () => {
     const { repo, handle } = await setup();
     const id = await seedServer(repo);

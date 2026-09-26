@@ -7,10 +7,14 @@ import { lineSplitter } from './logs.js';
 import { parseDockerStats, type ContainerStats } from './stats.js';
 import { resourceLimitsToHostConfig } from './limits.js';
 import { detectCgroupSupport, withCgroupSupport, type CgroupSupport } from './cgroupSupport.js';
-import { buildTarball, normalizeContainerPath, parseLsOutput, type FileEntry } from './files.js';
+import { buildTarball, extractSingleFile, normalizeContainerPath, parseLsOutput, type FileEntry } from './files.js';
+import { restoreTargetFor } from './backups.js';
 import { collectDisk, resolveDiskPath, type DiskPathChoice } from './disk.js';
 import { publishPorts } from './ports.js';
+import { digestOf, type ImageFacts } from './images.js';
+import { DEPLOYMENT_LABEL, pathsToPersist, volumeMounts, volumeNameFor, type VolumeMount } from './volumes.js';
 import type { TerminalSession } from './terminal.js';
+import type { ContainerEvent } from './agent.js';
 
 // NodeResources is the shared event-payload type (shared/src/events.ts) — the
 // host snapshot reported to the Control Room via the node heartbeat.
@@ -18,6 +22,9 @@ export type { NodeResources };
 
 /** Marks a container as one this platform started, so we never touch anyone else's. */
 export const MANAGED_LABEL = 'nexusinfra.managed';
+
+/** Where a volume is mounted in the transfer carrier; export and import agree on it (#234). */
+const VOLUME_TRANSFER_MOUNT = '/nexus-volume';
 
 export interface StartSpec {
   dockerImage: string;
@@ -33,6 +40,10 @@ export interface StartSpec {
    * turns it into a bind.
    */
   dataMount?: { hostPath: string; containerPath: string };
+  /** The server this container belongs to — names and labels its data volumes (#324). */
+  deploymentId?: string;
+  /** Container directories to keep in the server's named volumes across restarts (#324). */
+  persistPaths?: string[];
 }
 
 /**
@@ -48,6 +59,29 @@ export interface ContainerRuntime {
   /** Every container this agent manages, running or not — for reconciliation (#244). */
   listManaged(): Promise<{ containerId: string; running: boolean }[]>;
   restart(containerId: string): Promise<void>;
+  /**
+   * Remove every container and data volume labelled as one server's (#324) — for a
+   * deleted server. Never touches a bind-mounted host directory.
+   */
+  purgeDeployment(deploymentId: string): Promise<{ containers: number; volumes: number }>;
+  // ── Migration (#234) — a server's volumes, moved as tar streams ────────────
+  /** The data volumes this node holds for one server. */
+  listDeploymentVolumes(deploymentId: string): Promise<{ name: string; path: string }[]>;
+  /** One volume's contents as a tar stream (entries under `nexus-volume/`). */
+  exportVolume(deploymentId: string, path: string, image: string): Promise<NodeJS.ReadableStream>;
+  /** Create the volume and fill it from an export. Refuses (code EEXIST) if it already exists. */
+  importVolume(deploymentId: string, path: string, image: string, tar: NodeJS.ReadableStream): Promise<void>;
+  /** Remove one of a server's volumes — only to undo an import. */
+  removeDeploymentVolume(deploymentId: string, path: string): Promise<void>;
+  // ── Watching (#332) — containers that stop or start without being asked ─────
+  /** Follow Docker's die/start events for managed containers. Reconnects on its own; returns an unsubscribe. */
+  watchContainers(onEvent: (event: ContainerEvent) => void): () => void;
+  /** A container's state, or null when it no longer exists. */
+  inspectContainer(containerId: string): Promise<{ running: boolean; exitCode: number; oomKilled: boolean } | null>;
+  /** Pull an image even when a copy exists — how a tag picks up a new version (#239). */
+  pullImage(image: string): Promise<{ imageId: string; digest: string | null }>;
+  /** What the registry, this node and a container each say an image is (#239). */
+  imageFacts(image: string, containerId?: string): Promise<ImageFacts>;
   collectResources(): Promise<NodeResources>;
   /** Follow a container's logs, invoking `onLine` per line. Returns an unsubscribe. */
   logs(containerId: string, onLine: (line: string) => void): () => void;
@@ -63,6 +97,8 @@ export interface ContainerRuntime {
   writeFile(containerId: string, path: string, content: string): Promise<void>;
   /** Create or overwrite a file from raw bytes — the binary-safe upload path (#263). */
   writeFileBytes(containerId: string, path: string, data: Buffer): Promise<void>;
+  /** Read a file's raw bytes (#235) — `readFile` is text, which loses anything that is not UTF-8. */
+  readFileBytes(containerId: string, path: string, maxBytes: number): Promise<Buffer>;
   /** Create a directory (and any missing parents). */
   makeDir(containerId: string, path: string): Promise<void>;
   /** Move/rename a file or directory. */
@@ -140,25 +176,186 @@ export class DockerodeRuntime implements ContainerRuntime {
       await this.support()
     );
 
+    // The server's data outlives this container (#324): every directory it keeps
+    // is a named volume owned by the deployment, which the next container mounts
+    // again. Without this, stop — which removes the container — deleted the data.
+    const mounts = spec.deploymentId ? await this.dataVolumes(spec) : [];
+
     const container = await this.docker.createContainer({
       Image: spec.dockerImage,
       name: spec.containerName,
       Env: env,
       ExposedPorts: exposedPorts,
       // Labelled so a returning agent can tell its own containers from anything
-      // else on the host, rather than guessing from names (#244).
-      Labels: { [MANAGED_LABEL]: 'true' },
+      // else on the host, rather than guessing from names (#244), and so a deleted
+      // server's leftovers can be found by id (#324).
+      Labels: { [MANAGED_LABEL]: 'true', ...(spec.deploymentId ? { [DEPLOYMENT_LABEL]: spec.deploymentId } : {}) },
       HostConfig: {
         PortBindings: portBindings,
         ...limits,
         // Read-write: the point of importing a server directory is that the
         // server keeps using it, world saves and all.
         ...(spec.dataMount ? { Binds: [`${spec.dataMount.hostPath}:${spec.dataMount.containerPath}`] } : {}),
+        ...(mounts.length ? { Mounts: mounts } : {}),
       },
     });
 
     await container.start();
     return container.id;
+  }
+
+  /**
+   * Create (or find) the named volumes for a server's data directories (#324).
+   *
+   * Includes every `VOLUME` the image declares: left alone, Docker gives those an
+   * anonymous volume that the next container does not reuse — the same loss, plus
+   * a leaked volume per restart.
+   */
+  private async dataVolumes(spec: StartSpec): Promise<VolumeMount[]> {
+    const deploymentId = spec.deploymentId!;
+    const info = (await this.docker.getImage(spec.dockerImage).inspect()) as { Config?: { Volumes?: Record<string, unknown> | null } };
+    const paths = pathsToPersist({
+      requested: spec.persistPaths ?? [],
+      imageVolumes: Object.keys(info.Config?.Volumes ?? {}),
+      dataMountPath: spec.dataMount?.containerPath,
+    });
+    for (const path of paths) {
+      // Idempotent: asking for a volume that exists returns it untouched.
+      await this.docker.createVolume({
+        Name: volumeNameFor(deploymentId, path),
+        Labels: { [MANAGED_LABEL]: 'true', [DEPLOYMENT_LABEL]: deploymentId, 'nexusinfra.path': path },
+      });
+    }
+    return volumeMounts(deploymentId, paths);
+  }
+
+  /**
+   * A container that is created and never started, with one of a server's
+   * volumes mounted — so Docker's archive API can read or write the volume with
+   * no helper image to pull (#234). It uses the server's own image, which the
+   * node has or can fetch, and it is not labelled as managed, so reconciliation
+   * never mistakes it for a server.
+   */
+  private async volumeCarrier(volume: string, image: string): Promise<Docker.Container> {
+    await this.ensureImage(image);
+    return this.docker.createContainer({
+      Image: image,
+      Labels: { 'nexusinfra.helper': 'volume-transfer' },
+      HostConfig: { Mounts: [{ Type: 'volume', Source: volume, Target: VOLUME_TRANSFER_MOUNT }] },
+    });
+  }
+
+  watchContainers(onEvent: (event: ContainerEvent) => void): () => void {
+    let stopped = false;
+    let stream: NodeJS.ReadableStream | null = null;
+    const reconnect = () => {
+      if (!stopped) setTimeout(() => void connect(), 2000).unref?.();
+    };
+    const connect = async () => {
+      try {
+        stream = (await this.docker.getEvents({
+          filters: { type: ['container'], event: ['die', 'start'], label: [`${MANAGED_LABEL}=true`] },
+        })) as NodeJS.ReadableStream;
+      } catch {
+        return reconnect();
+      }
+      let buffered = '';
+      stream.on('data', (chunk: Buffer) => {
+        buffered += chunk.toString();
+        const lines = buffered.split('\n');
+        buffered = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const e = JSON.parse(line) as { Action?: string; status?: string; id?: string; Actor?: { ID?: string; Attributes?: Record<string, string> } };
+            const action = e.Action ?? e.status;
+            const containerId = e.Actor?.ID ?? e.id;
+            if ((action !== 'die' && action !== 'start') || !containerId) continue;
+            const attrs = e.Actor?.Attributes ?? {};
+            onEvent({
+              action,
+              containerId,
+              deploymentId: attrs[DEPLOYMENT_LABEL] ?? null,
+              ...(attrs.exitCode !== undefined ? { exitCode: Number(attrs.exitCode) } : {}),
+            });
+          } catch {
+            // A line that is not an event is not one to act on.
+          }
+        }
+      });
+      // Docker restarting ends the stream; a watcher that stopped then would be
+      // the silence this exists to end.
+      stream.on('end', reconnect);
+      stream.on('error', reconnect);
+    };
+    void connect();
+    return () => {
+      stopped = true;
+      (stream as unknown as { destroy?: () => void } | null)?.destroy?.();
+    };
+  }
+
+  async inspectContainer(containerId: string): Promise<{ running: boolean; exitCode: number; oomKilled: boolean } | null> {
+    try {
+      const info = await this.docker.getContainer(containerId).inspect();
+      return { running: Boolean(info.State.Running || info.State.Restarting), exitCode: info.State.ExitCode, oomKilled: Boolean(info.State.OOMKilled) };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Docker's disk accounting (#347) — walks every volume, so callers cache it. */
+  async systemDf(): Promise<import('./diskUsage.js').DockerDf> {
+    return (await this.docker.df()) as import('./diskUsage.js').DockerDf;
+  }
+
+  async listDeploymentVolumes(deploymentId: string): Promise<{ name: string; path: string }[]> {
+    const { Volumes } = await this.docker.listVolumes({ filters: { label: [`${DEPLOYMENT_LABEL}=${deploymentId}`] } });
+    return (Volumes ?? []).map((v) => ({ name: v.Name, path: v.Labels?.['nexusinfra.path'] ?? '' })).filter((v) => v.path);
+  }
+
+  async exportVolume(deploymentId: string, path: string, image: string): Promise<NodeJS.ReadableStream> {
+    const carrier = await this.volumeCarrier(volumeNameFor(deploymentId, path), image);
+    const tar = await carrier.getArchive({ path: VOLUME_TRANSFER_MOUNT });
+    const cleanup = () => void carrier.remove({ force: true }).catch(() => undefined);
+    tar.on('end', cleanup);
+    tar.on('error', cleanup);
+    tar.on('close', cleanup);
+    return tar;
+  }
+
+  async importVolume(deploymentId: string, path: string, image: string, tar: NodeJS.ReadableStream): Promise<void> {
+    const name = volumeNameFor(deploymentId, path);
+    // Never over an existing volume: two agents on one daemon share volumes, and
+    // an import "into" the source followed by the source's clean-up would delete
+    // the only copy.
+    const existing = await this.docker.getVolume(name).inspect().catch(() => null);
+    if (existing) throw Object.assign(new Error(`this node already holds ${name}`), { code: 'EEXIST' });
+
+    await this.docker.createVolume({ Name: name, Labels: { [MANAGED_LABEL]: 'true', [DEPLOYMENT_LABEL]: deploymentId, 'nexusinfra.path': path } });
+    const carrier = await this.volumeCarrier(name, image);
+    try {
+      // The export's entries are `nexus-volume/…`, so extracting at the root lands
+      // them in the mounted volume.
+      await carrier.putArchive(tar, { path: '/' });
+    } finally {
+      await carrier.remove({ force: true }).catch(() => undefined);
+    }
+  }
+
+  async removeDeploymentVolume(deploymentId: string, path: string): Promise<void> {
+    await this.docker.getVolume(volumeNameFor(deploymentId, path)).remove();
+  }
+
+  async purgeDeployment(deploymentId: string): Promise<{ containers: number; volumes: number }> {
+    const filter = `${DEPLOYMENT_LABEL}=${deploymentId}`;
+    // Containers first: a volume that is still mounted cannot be removed.
+    const containers = await this.docker.listContainers({ all: true, filters: { label: [filter] } });
+    for (const c of containers) await this.docker.getContainer(c.Id).remove({ force: true });
+
+    const { Volumes } = await this.docker.listVolumes({ filters: { label: [filter] } });
+    for (const v of Volumes ?? []) await this.docker.getVolume(v.Name).remove();
+    return { containers: containers.length, volumes: (Volumes ?? []).length };
   }
 
   async listManaged(): Promise<{ containerId: string; running: boolean }[]> {
@@ -260,6 +457,28 @@ export class DockerodeRuntime implements ContainerRuntime {
     return parseLsOutput(stdout);
   }
 
+  async readFileBytes(containerId: string, path: string, maxBytes: number): Promise<Buffer> {
+    const file = normalizeContainerPath(path);
+    const stream = await this.docker.getContainer(containerId).getArchive({ path: file });
+    const chunks: Buffer[] = [];
+    let total = 0;
+    await new Promise<void>((resolve, reject) => {
+      stream.on('data', (c: Buffer) => {
+        total += c.length;
+        // The whole file is held in memory, so it is capped like an upload is.
+        if (total > maxBytes + 64 * 1024) {
+          (stream as unknown as { destroy(): void }).destroy();
+          reject(new Error(`${file} is larger than the ${Math.round(maxBytes / 1024 / 1024)} MB a single transfer may be`));
+          return;
+        }
+        chunks.push(Buffer.from(c));
+      });
+      stream.on('end', () => resolve());
+      stream.on('error', reject);
+    });
+    return extractSingleFile(Buffer.concat(chunks));
+  }
+
   async readFile(containerId: string, path: string): Promise<string> {
     const file = normalizeContainerPath(path);
     const { stdout, stderr, exitCode } = await this.exec(containerId, ['cat', file]);
@@ -316,7 +535,9 @@ export class DockerodeRuntime implements ContainerRuntime {
   }
 
   async restoreArchive(containerId: string, path: string, tar: Buffer): Promise<void> {
-    await this.docker.getContainer(containerId).putArchive(tar, { path: normalizeContainerPath(path) });
+    // The archive names the directory itself, so it is extracted into the
+    // parent (#327) — into `path`, it nested rather than replaced.
+    await this.docker.getContainer(containerId).putArchive(tar, { path: restoreTargetFor(normalizeContainerPath(path)) });
   }
 
   // Run a command in the container, collecting demuxed stdout/stderr and the exit
@@ -450,6 +671,48 @@ export class DockerodeRuntime implements ContainerRuntime {
 
   // Pull the image if it isn't present locally, so start() doesn't fail on a
   // fresh host. No-op when the image already exists.
+  async pullImage(image: string): Promise<{ imageId: string; digest: string | null }> {
+    await new Promise<void>((resolve, reject) => {
+      this.docker.pull(image, (err: unknown, stream: NodeJS.ReadableStream) => {
+        if (err) return reject(err as Error);
+        this.docker.modem.followProgress(stream, (doneErr: unknown) => (doneErr ? reject(doneErr as Error) : resolve()));
+      });
+    });
+    const info = await this.docker.getImage(image).inspect();
+    return { imageId: info.Id, digest: (info.RepoDigests ?? []).map(digestOf).find(Boolean) ?? null };
+  }
+
+  async imageFacts(image: string, containerId?: string): Promise<ImageFacts> {
+    let localImageId: string | null = null;
+    let localRepoDigests: string[] = [];
+    try {
+      const info = await this.docker.getImage(image).inspect();
+      localImageId = info.Id;
+      localRepoDigests = info.RepoDigests ?? [];
+    } catch {
+      // Never pulled on this node.
+    }
+
+    let remoteDigest: string | null = null;
+    try {
+      const dist = (await this.docker.getImage(image).distribution()) as { Descriptor?: { digest?: string } };
+      remoteDigest = dist.Descriptor?.digest ?? null;
+    } catch {
+      // Registry unreachable, rate limited, or a private image without credentials:
+      // reported as unknown rather than guessed.
+    }
+
+    let containerImageId: string | null = null;
+    if (containerId) {
+      try {
+        containerImageId = (await this.docker.getContainer(containerId).inspect()).Image;
+      } catch {
+        // The container is gone; judge by the local image alone.
+      }
+    }
+    return { image, remoteDigest, localRepoDigests, localImageId, containerImageId };
+  }
+
   private async ensureImage(image: string): Promise<void> {
     const images = await this.docker.listImages({ filters: { reference: [image] } });
     if (images.length > 0) return;

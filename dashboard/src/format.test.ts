@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatLimits, isGameServer } from './format';
+import { formatBytes, formatLimits, isGameServer, parsePathList } from './format';
 
 describe('formatLimits (#318)', () => {
   it('renders the percentages a server was given', () => {
@@ -37,5 +37,27 @@ describe('isGameServer (#318)', () => {
     expect(isGameServer({ type: 'app', dockerImage: 'nginx' })).toBe(false);
     expect(isGameServer({ type: 'generic', dockerImage: 'nginx' })).toBe(false);
     expect(isGameServer({ type: '', dockerImage: 'nginx' })).toBe(false);
+  });
+});
+
+describe('parsePathList (#324)', () => {
+  it('splits on commas and new lines and drops blanks', () => {
+    expect(parsePathList(' /data , /srv\n\n/etc ,')).toEqual(['/data', '/srv', '/etc']);
+    expect(parsePathList('')).toEqual([]);
+  });
+});
+
+describe('formatBytes (#347)', () => {
+  it('reads the way people read sizes', () => {
+    expect(formatBytes(512)).toBe('512 B');
+    expect(formatBytes(1405)).toBe('1.4 KB');
+    expect(formatBytes(26347095)).toBe('25.1 MB');
+    expect(formatBytes(3 * 1024 ** 3)).toBe('3 GB');
+    expect(formatBytes(150 * 1024 ** 2)).toBe('150 MB');
+  });
+  it('keeps an unmeasured size unknown', () => {
+    expect(formatBytes(null)).toBe('—');
+    expect(formatBytes(undefined)).toBe('—');
+    expect(formatBytes(-1)).toBe('—');
   });
 });

@@ -10,9 +10,13 @@ interface EditionState {
   edition: Edition;
   isHosted: boolean;
   loaded: boolean;
+  /** Whether "Forgot your password?" can send a link here (#344). */
+  passwordResetByEmail: boolean;
+  /** The SFTP port (#235), or null when this installation does not offer SFTP. */
+  sftpPort: number | null;
 }
 
-const DEFAULT_STATE: EditionState = { edition: 'community', isHosted: false, loaded: false };
+const DEFAULT_STATE: EditionState = { edition: 'community', isHosted: false, loaded: false, passwordResetByEmail: false, sftpPort: null };
 
 const EditionContext = createContext<EditionState>(DEFAULT_STATE);
 
@@ -27,7 +31,14 @@ export function EditionProvider({ children }: { children: ReactNode }) {
     let active = true;
     getConfig()
       .then((cfg) => {
-        if (active) setState({ edition: cfg.edition, isHosted: cfg.edition === 'hosted', loaded: true });
+        if (active)
+          setState({
+            edition: cfg.edition,
+            isHosted: cfg.edition === 'hosted',
+            loaded: true,
+            passwordResetByEmail: cfg.passwordResetByEmail === true,
+            sftpPort: typeof cfg.sftpPort === 'number' ? cfg.sftpPort : null,
+          });
       })
       .catch(() => {
         // Unreachable/erroring config → stay on the community default, but mark
