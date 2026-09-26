@@ -2,7 +2,7 @@ import os from 'os';
 import { createServer } from 'http';
 import express from 'express';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, isDefaultInternalToken, publishRabbitEvent, PublishOutbox, startNodeHeartbeat, startOutboxFlusher } from 'shared';
+import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, isDefaultInternalToken, publishRabbitEvent, PublishOutbox, startNodeHeartbeat, startOutboxFlusher, MetricsRegistry, registerBuildInfo, httpMetrics, metricsHandler } from 'shared';
 import { requireInternalToken, upgradeAuthorized } from './internalAuth.js';
 import { DockerodeRuntime } from './runtime.js';
 import { createAgent } from './agent.js';
@@ -11,6 +11,10 @@ import { createDatabaseRouter } from './dbRoutes.js';
 import { createBackupRouter } from './bkRoutes.js';
 import { createExecRouter } from './execRoutes.js';
 import { createImportRouter, importRoot } from './imports.js';
+import { createDataRouter } from './volumes.js';
+import { createDiskUsageCache, createDiskUsageRouter } from './diskUsage.js';
+import { createImageRouter } from './images.js';
+import { createMigrationRouter } from './migrateRoutes.js';
 import { attachTerminal, type TerminalSocket } from './terminal.js';
 
 // ── Node Agent ────────────────────────────────────────────────────────────────
@@ -55,8 +59,35 @@ const agent = createAgent({ nodeId: NODE_ID, runtime, publish: (key, envelope) =
 // the outbox, so a broker that has not come up yet does not lose it.
 void agent.reportInventory();
 
+
 // ── HTTP: health probe ────────────────────────────────────────────────────────
 const app = express();
+
+// Prometheus metrics (#246) — open like /health (the agent's port is not meant
+// to be published at all), or behind METRICS_TOKEN when set.
+const metrics = new MetricsRegistry();
+registerBuildInfo(metrics, 'node-agent', buildInfo());
+app.use(httpMetrics(metrics, 'node-agent'));
+const commandsHandled = metrics.counter('nexusinfra_agent_commands_total', 'Server commands this node received, by type.');
+const containerEvents = metrics.counter('nexusinfra_agent_container_events_total', 'Containers that stopped or came back without being asked (#332), by action.');
+metrics.gauge('nexusinfra_agent_containers', 'Containers this agent manages, by state.', ['state'], async () => {
+  const managed = await runtime.listManaged();
+  const running = managed.filter((c) => c.running).length;
+  return [
+    { labels: { state: 'running' }, value: running },
+    { labels: { state: 'stopped' }, value: managed.length - running },
+  ];
+});
+metrics.gauge('nexusinfra_outbox_pending', 'Lifecycle reports held while the broker is unreachable (#167).', [], () => reportOutbox.pending);
+metrics.gauge('nexusinfra_outbox_dropped', 'Lifecycle reports lost because the outbox was full, since start.', [], () => reportOutbox.droppedCount);
+app.get('/metrics', metricsHandler(metrics));
+
+// Containers that die or come back without being asked (#332). Without this a
+// crashed server stayed "running" in the panel until the agent itself restarted.
+runtime.watchContainers((event) => {
+  containerEvents.inc({ action: event.action });
+  void agent.handleContainerEvent(event).catch((err) => console.error(`[Node Agent ${NODE_ID}] could not report a container event:`, err));
+});
 app.use(express.json({ limit: '4mb' })); // file writes carry content in the body
 app.get('/health', (_req, res) => {
   res.json({
@@ -128,6 +159,17 @@ app.use(createExecRouter(runtime));
 // can see this filesystem.
 app.use(createImportRouter({ root: importRoot(), realpath: async (p) => (await import('fs/promises')).realpath(p) }));
 
+// ── HTTP: a deleted server's leftovers (#324) — its containers and data volumes ──
+app.use(createDataRouter(runtime));
+// Disk used by each server here (#347): measured, cached for a minute.
+app.use(createDiskUsageRouter(createDiskUsageCache(() => runtime.systemDf())));
+
+// ── HTTP: is there a newer image for a server's tag (#239) ────────────────────
+app.use(createImageRouter(runtime));
+
+// ── HTTP: moving a server between nodes (#234) — its volumes and backups ─────
+app.use(createMigrationRouter(runtime));
+
 // ── WebSocket: interactive terminal (#71) ─────────────────────────────────────
 // Internal WS endpoint (reached only via the Orchestrator's WS proxy) that opens
 // a TTY shell in the container and bridges it to the socket. Path:
@@ -175,8 +217,11 @@ async function start() {
   try {
     await consumeRabbitQueue(
       `nexusinfra.node-agent.${NODE_ID}`,
-      ['infra.server.start', 'infra.server.stop', 'infra.server.kill', 'infra.server.restart'],
-      (envelope) => agent.handleCommand(envelope)
+      ['infra.server.start', 'infra.server.stop', 'infra.server.kill', 'infra.server.restart', 'infra.server.update'],
+      (envelope) => {
+        commandsHandled.inc({ type: envelope.event.type });
+        return agent.handleCommand(envelope);
+      }
     );
     console.log(`[Node Agent ${NODE_ID}] Listening for server commands`);
 

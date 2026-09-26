@@ -1,8 +1,8 @@
 import express from 'express';
 import cors from 'cors';
-import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, getEdition, isHosted, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
+import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, getEdition, isHosted, readPayload, startHeartbeat, type EventEnvelope, MetricsRegistry, registerBuildInfo, httpMetrics, metricsHandler } from 'shared';
 import { PrismaRepository } from './db.js';
-import { createBillingService } from './service.js';
+import { createBillingService, DEFAULT_TOPUP_TIMEOUT_MS } from './service.js';
 import { createBillingRouter } from './api.js';
 import { startCycleRunner } from './cycle.js';
 
@@ -29,8 +29,13 @@ const repo = new PrismaRepository();
 const service = createBillingService({ repo });
 
 const app = express();
+// Prometheus metrics (#246).
+const metrics = new MetricsRegistry();
+registerBuildInfo(metrics, 'billing-bridge', buildInfo());
+app.use(httpMetrics(metrics, 'billing-bridge'));
 app.use(cors());
 app.use(express.json());
+app.get('/metrics', metricsHandler(metrics));
 app.get('/health', (_req, res) => {
   res.json({ service: 'billing-bridge', status: 'healthy', ...buildInfo(), uptimeSec: Math.round(process.uptime()) });
 });
@@ -50,7 +55,18 @@ async function start() {
     await repo.ensureDefaultPlan();
     await consumeRabbitQueue(
       'nexusinfra.billing-bridge',
-      ['infra.deployment.created', 'infra.server.started', 'infra.server.stopped', 'infra.server.crashed', 'bank.payment.confirmed', 'bank.payment.failed'],
+      [
+        'infra.deployment.created',
+        'infra.server.started',
+        'infra.server.stopped',
+        'infra.server.crashed',
+        'bank.payment.confirmed',
+        'bank.payment.failed',
+        // What FinVault actually publishes on (#298): its gateway routes every event
+        // as `events.<type>`. Bound as well, not instead, so either side can move.
+        'events.payment.confirmed',
+        'events.payment.failed',
+      ],
       async (envelope: EventEnvelope) => {
         const { type } = envelope.event;
         const payload = readPayload(envelope.event);
@@ -82,6 +98,11 @@ async function start() {
     // balance, emit invoices. Idempotent, so hourly polling is safe.
     startCycleRunner({ repo });
     console.log('[BillingBridge] Cycle runner started (hourly poll)');
+
+    // A top-up FinVault never answers is shown as unconfirmed after a while
+    // instead of pending forever (#298).
+    const topUpTimeoutMs = Number(process.env.TOPUP_TIMEOUT_MS) || DEFAULT_TOPUP_TIMEOUT_MS;
+    setInterval(() => void service.expireStaleTopUps(topUpTimeoutMs).catch((err) => console.error('[BillingBridge] top-up expiry failed:', err)), 60_000).unref();
 
     startHeartbeat('billing-bridge', 1000);
     console.log('[BillingBridge] Publishing heartbeat on monitoring.heartbeat.service.billing-bridge');

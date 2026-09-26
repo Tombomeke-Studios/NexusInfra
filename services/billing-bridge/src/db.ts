@@ -1,5 +1,7 @@
 import { randomUUID } from 'crypto';
 import { PrismaClient } from '../generated/prisma/index.js';
+import { createRequire } from 'module';
+import { isPostgresUrl } from 'shared';
 import { DEFAULT_PLAN, type BillingPlan } from './pricing.js';
 import type {
   BillingCycleRecord,
@@ -21,8 +23,19 @@ import type { ResourceLimits } from 'shared';
 
 let prisma: PrismaClient | null = null;
 
+/**
+ * The client for the database DATABASE_URL names (#241). Prisma fixes the
+ * provider when a client is generated, so both are generated and one is picked
+ * here. The models are the same (the PostgreSQL schema is derived from the
+ * SQLite one and checked in CI), so either satisfies the same type.
+ */
 export function getPrisma(): PrismaClient {
-  if (!prisma) prisma = new PrismaClient();
+  if (!prisma) {
+    const Client = isPostgresUrl(process.env.DATABASE_URL)
+      ? (createRequire(import.meta.url)('../generated/postgres/index.js') as { PrismaClient: new () => unknown }).PrismaClient
+      : PrismaClient;
+    prisma = new Client() as PrismaClient;
+  }
   return prisma;
 }
 
@@ -49,6 +62,8 @@ function toPlan(p: PrismaPlan): BillingPlan {
     freeHoursPerMonth: p.freeHoursPerMonth,
     maxServers: p.maxServers,
     maxDatabases: p.maxDatabases,
+    maxRamMb: p.maxRamMb ?? null,
+    maxBackupsPerServer: p.maxBackupsPerServer ?? null,
   };
 }
 
@@ -173,6 +188,20 @@ export class PrismaRepository implements Repository {
     if (!exists) return null;
     const row = await this.client.creditLedger.update({ where: { id }, data: { status } });
     return toLedger(row);
+  }
+
+  async transitionLedgerStatus(id: string, from: LedgerStatus[], to: LedgerStatus): Promise<boolean> {
+    // One conditional UPDATE: of two concurrent callers, exactly one sees a row change.
+    const { count } = await this.client.creditLedger.updateMany({ where: { id, status: { in: from } }, data: { status: to } });
+    return count === 1;
+  }
+
+  async listPendingTopUps(createdBefore: string): Promise<CreditLedgerEntry[]> {
+    const rows = await this.client.creditLedger.findMany({
+      where: { type: 'topup', status: 'pending', createdAt: { lt: new Date(createdBefore) } },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map(toLedger);
   }
 
   async listLedger(userId: string): Promise<CreditLedgerEntry[]> {

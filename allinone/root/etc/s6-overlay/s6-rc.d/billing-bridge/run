@@ -12,5 +12,5 @@ if [ ! -d /app/services/billing-bridge/dist ]; then
   echo "[billing-bridge] not part of this edition; nothing to run"
   exec sleep infinity
 fi
-cd /app/services/billing-bridge && npx prisma migrate deploy >/dev/null 2>&1 || true
+cd /app/services/billing-bridge && npm run db:deploy >/dev/null 2>&1 || true
 exec node dist/index.js

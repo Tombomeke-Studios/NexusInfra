@@ -93,3 +93,26 @@ export function buildTarball(fileName: string, content: string | Buffer): Buffer
   data.copy(body);
   return Buffer.concat([header, body, Buffer.alloc(1024, 0)]);
 }
+
+/**
+ * The bytes of the one file in a Docker archive (#235) — what `getArchive` of a
+ * single path returns. Skips the extended headers Docker adds for long names
+ * and attributes (`x`, `g`, `L`, `K`); refuses a directory rather than handing
+ * back its first member as if it were the file.
+ */
+export function extractSingleFile(tar: Buffer): Buffer {
+  let offset = 0;
+  while (offset + 512 <= tar.length) {
+    const header = tar.subarray(offset, offset + 512);
+    if (header.every((b) => b === 0)) break;
+    const size = parseInt(header.subarray(124, 136).toString('ascii').replace(/\0.*$/, '').trim() || '0', 8);
+    const type = String.fromCharCode(header[156] || 48); // NUL means a regular file
+    const dataStart = offset + 512;
+    if (type === '0' || type === '7') return Buffer.from(tar.subarray(dataStart, dataStart + size));
+    if (type === '5') throw new Error('that path is a directory');
+    if (type === '2' || type === '1') throw new Error('that path is a link, not a file');
+    // Extended/long-name headers: skip their payload and read on.
+    offset = dataStart + Math.ceil(size / 512) * 512;
+  }
+  throw new Error('the archive holds no file');
+}

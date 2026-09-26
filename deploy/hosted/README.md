@@ -25,6 +25,17 @@ Same images, same code — one runtime flag. What the flag turns on:
 
 Everything else — nodes, deployments, sharing, teams — behaves identically.
 
+**SFTP** to each server's files listens on port `2022` (set `SFTP_PUBLIC_PORT` to publish it elsewhere).
+The Files tab shows each customer the user name to use; the password is their account password or an
+API token.
+
+## Database
+
+SQLite by default (one file per service, in its volume). For PostgreSQL, set `POSTGRES_PASSWORD`,
+`ORCHESTRATOR_DATABASE_URL` and `BILLING_DATABASE_URL` (the same database, `?schema=billing`) in `.env`
+and start with `docker compose --profile postgres up -d`. Moving existing data:
+[PostgreSQL in the deployment docs](https://github.com/Tombomeke-Studios/NexusInfra/blob/main/docs/deployment.md#postgresql).
+
 ## Sharing a broker with FinVault
 
 The integration is event-driven and optional, but it only works if both platforms are on the same

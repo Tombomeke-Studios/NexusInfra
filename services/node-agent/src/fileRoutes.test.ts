@@ -30,6 +30,13 @@ class FakeRuntime implements Partial<ContainerRuntime> {
     this.calls.push(`writeBytes:${id}:${path}:${data.length}`);
     this.written = data;
   }
+  bytes: Buffer = Buffer.from([0x00, 0xff, 0xc3, 0x28]);
+  readError: (Error & { statusCode?: number }) | null = null;
+  async readFileBytes(id: string, path: string, maxBytes: number): Promise<Buffer> {
+    this.calls.push(`readBytes:${id}:${path}:${maxBytes > 0}`);
+    if (this.readError) throw this.readError;
+    return this.bytes;
+  }
   async makeDir(id: string, path: string): Promise<void> {
     this.calls.push(`mkdir:${id}:${path}`);
   }
@@ -113,5 +120,32 @@ describe('file router', () => {
     const res = await request(app).get('/files/c1').query({ path: '/nope' });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('No such file or directory');
+  });
+
+  // SFTP downloads through this route (#235): bytes must come back as they are.
+  it('returns a file\'s raw bytes on the binary read route', async () => {
+    const res = await request(app)
+      .get('/files/c1/binary')
+      .query({ path: '/data/world.dat' })
+      .buffer(true)
+      .parse((r, cb) => {
+        const chunks: Buffer[] = [];
+        r.on('data', (c: Buffer) => chunks.push(c));
+        r.on('end', () => cb(null, Buffer.concat(chunks)));
+      });
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toBe('application/octet-stream');
+    expect(Buffer.compare(res.body as Buffer, runtime.bytes)).toBe(0);
+    expect(runtime.calls).toEqual(['readBytes:c1:/data/world.dat:true']);
+  });
+
+  it('answers 404 when Docker has nothing at the path, 400 for other failures', async () => {
+    runtime.readError = Object.assign(new Error('not found'), { statusCode: 404 });
+    expect((await request(app).get('/files/c1/binary').query({ path: '/nope' })).status).toBe(404);
+    runtime.readError = new Error('that path is a directory');
+    const res = await request(app).get('/files/c1/binary').query({ path: '/data' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('that path is a directory');
+    expect((await request(app).get('/files/c1/binary')).status).toBe(400);
   });
 });

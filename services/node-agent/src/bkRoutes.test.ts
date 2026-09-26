@@ -6,6 +6,7 @@ import express from 'express';
 import request from 'supertest';
 import { createBackupRouter } from './bkRoutes.js';
 import type { ContainerRuntime } from './runtime.js';
+import type { S3Target } from './s3.js';
 
 // A fake runtime that snapshots a fixed payload and records restore calls, so the
 // router's file handling is tested against a real temp directory but no Docker.
@@ -30,7 +31,7 @@ describe('backup router', () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), 'nexusinfra-bk-test-'));
     app = express();
     app.use(express.json());
-    app.use(createBackupRouter(runtime as unknown as ContainerRuntime, { dir }));
+    app.use(createBackupRouter(runtime as unknown as ContainerRuntime, { dir, offsite: null }));
   });
   afterEach(async () => {
     await fs.rm(dir, { recursive: true, force: true });
@@ -61,5 +62,118 @@ describe('backup router', () => {
     expect((await request(app).post('/backups/restore').send({ containerId: 'c1' })).status).toBe(400);
     // A traversal ref never resolves to a real file → 400 on restore.
     expect((await request(app).post('/backups/restore').send({ containerId: 'c1', ref: '../evil' })).status).toBe(400);
+  });
+
+  // Docker says "no such container" about a path the container lacks (#342).
+  it('says a missing directory is missing, without the container id', async () => {
+    runtime.snapshotPath = async () => {
+      throw Object.assign(new Error('(HTTP code 404) no such container - Could not find the file /data in container 666ac5068a1b'), { statusCode: 404 });
+    };
+    const res = await request(app).post('/backups').send({ containerId: '666ac5068a1b', path: '/data' });
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'nothing at /data in this server — name a directory to back up', path: '/data' });
+  });
+
+  it('downloads a backup as a tar (#232)', async () => {
+    const make = await request(app).post('/backups').send({ containerId: 'c1', path: '/data' });
+    const res = await request(app).get(`/backups/${make.body.ref}/download`).buffer(true).parse((r, cb) => {
+      const chunks: Buffer[] = [];
+      r.on('data', (c: Buffer) => chunks.push(c));
+      r.on('end', () => cb(null, Buffer.concat(chunks)));
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toBe('application/x-tar');
+    expect((res.body as Buffer).equals(runtime.payload)).toBe(true);
+    expect((await request(app).get('/backups/bk_missing/download')).status).toBe(404);
+    expect((await request(app).get('/backups/..%2Fevil/download')).status).toBe(400);
+  });
+
+  // The filesystem's error names the node's backup directory; it used to reach
+  // the browser verbatim (#339).
+  it('says a missing archive is missing, without naming where it was', async () => {
+    const make = await request(app).post('/backups').send({ containerId: 'c1', path: '/data' });
+    await fs.rm(path.join(dir, `${make.body.ref}.tar`));
+
+    const download = await request(app).get(`/backups/${make.body.ref}/download`);
+    expect(download.status).toBe(404);
+    expect(download.body.error).toMatch(/no longer has the backup's archive/);
+    expect(download.body.error).not.toContain(dir);
+    expect(download.body.error).not.toContain('ENOENT');
+
+    const restore = await request(app).post('/backups/restore').send({ containerId: 'c1', ref: make.body.ref, path: '/data' });
+    expect(restore.status).toBe(404);
+    expect(restore.body.error).not.toContain(dir);
+  });
+
+  describe('off-site copies (#232)', () => {
+    class FakeBucket {
+      objects = new Map<string, Buffer>();
+      failPut = false;
+      async put(ref: string, tar: Buffer) {
+        if (this.failPut) throw new Error('off-site upload failed (403 AccessDenied)');
+        this.objects.set(ref, tar);
+      }
+      async get(ref: string) {
+        return this.objects.get(ref) ?? null;
+      }
+      async delete(ref: string) {
+        this.objects.delete(ref);
+      }
+    }
+    let bucket: FakeBucket;
+    let offApp: express.Express;
+
+    beforeEach(() => {
+      bucket = new FakeBucket();
+      offApp = express();
+      offApp.use(express.json());
+      offApp.use(createBackupRouter(runtime as unknown as ContainerRuntime, { dir, offsite: bucket as unknown as S3Target }));
+    });
+
+    it('copies each backup off the node and says so', async () => {
+      const make = await request(offApp).post('/backups').send({ containerId: 'c1', path: '/data' });
+      expect(make.body.offsite).toBe('stored');
+      expect(bucket.objects.get(make.body.ref)?.equals(runtime.payload)).toBe(true);
+    });
+
+    it('keeps the backup when the upload fails, and records that it is only on the node', async () => {
+      bucket.failPut = true;
+      const make = await request(offApp).post('/backups').send({ containerId: 'c1', path: '/data' });
+      expect(make.status).toBe(201);
+      expect(make.body).toMatchObject({ offsite: 'failed', offsiteError: expect.stringContaining('AccessDenied') });
+      await expect(fs.access(path.join(dir, `${make.body.ref}.tar`))).resolves.toBeUndefined();
+    });
+
+    it('restores from off-site when the node lost its copy — the reason off-site exists', async () => {
+      const make = await request(offApp).post('/backups').send({ containerId: 'c1', path: '/data' });
+      await fs.rm(path.join(dir, `${make.body.ref}.tar`));
+
+      const rest = await request(offApp).post('/backups/restore').send({ containerId: 'c1', ref: make.body.ref, path: '/data' });
+      expect(rest.status).toBe(200);
+      expect(runtime.restored).toEqual([{ id: 'c1', path: '/data', size: runtime.payload.length }]);
+    });
+
+    it('keeps the off-site copy when only the node copy is removed, as after a migration (#234)', async () => {
+      const make = await request(offApp).post('/backups').send({ containerId: 'c1', path: '/data' });
+      await request(offApp).delete(`/backups/${make.body.ref}?localOnly=true`).expect(204);
+      expect(bucket.objects.has(make.body.ref)).toBe(true);
+    });
+
+    it('says so when the archive is gone from both places (#339)', async () => {
+      const make = await request(offApp).post('/backups').send({ containerId: 'c1', path: '/data' });
+      await fs.rm(path.join(dir, `${make.body.ref}.tar`));
+      bucket.objects.clear();
+
+      const res = await request(offApp).get(`/backups/${make.body.ref}/download`);
+      expect(res.status).toBe(404);
+      expect(res.body.error).toMatch(/neither this node nor the off-site store/);
+      expect(res.body.error).not.toContain(dir);
+    });
+
+    it('deletes the off-site copy with the backup', async () => {
+      const make = await request(offApp).post('/backups').send({ containerId: 'c1', path: '/data' });
+      await request(offApp).delete(`/backups/${make.body.ref}`).expect(204);
+      expect(bucket.objects.has(make.body.ref)).toBe(false);
+    });
   });
 });

@@ -12,6 +12,9 @@ docker compose up -d
 
 Open **http://localhost:8095** and sign in as `ADMIN_EMAIL` with the password you set.
 
+**SFTP** to each server's files listens on port `2022` (set `SFTP_PUBLIC_PORT` to publish it elsewhere).
+The Files tab shows the user name to use; the password is your account password or an API token.
+
 Everything runs from published images — you do not need a checkout of the source to use this.
 
 ## What you get
@@ -31,6 +34,13 @@ A node is just a Node Agent process pointed at this broker. To add a second mach
 `nexusinfra/node-agent` image there with a distinct `NODE_ID`, the same `INTERNAL_API_TOKEN`, and
 `RABBITMQ_URL` pointing at this host's broker — over an authenticated, TLS-protected connection, not
 the defaults in `.env.example`. It registers itself, and the scheduler starts placing servers on it.
+
+## Database
+
+SQLite by default — a file in the `orchestrator_data` volume, nothing else to run. For PostgreSQL, set
+`POSTGRES_PASSWORD` and `ORCHESTRATOR_DATABASE_URL` in `.env` and start with
+`docker compose --profile postgres up -d`; to move an existing installation's data across, see
+[PostgreSQL in the deployment docs](https://github.com/Tombomeke-Studios/NexusInfra/blob/main/docs/deployment.md#postgresql).
 
 ## Upgrading
 

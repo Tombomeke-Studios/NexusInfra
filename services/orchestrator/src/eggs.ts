@@ -181,8 +181,12 @@ const MINECRAFT: Egg = {
 const VALHEIM: Egg = {
   id: 'valheim',
   name: 'Valheim',
-  description: 'A dedicated Valheim server (lloesche/valheim-server).',
-  dockerImage: 'lloesche/valheim-server',
+  description: 'A dedicated Valheim server (community-valheim-tools/valheim-server).',
+  // Where the project publishes now (#317): lloesche/valheim-server-docker moved
+  // to community-valheim-tools, and the Docker Hub name stopped being updated.
+  // Same image, same variables. Servers created before keep the name they were
+  // created with — the recipe decides a *new* server's image.
+  dockerImage: 'ghcr.io/community-valheim-tools/valheim-server',
   // UDP: 2456 carries the game, 2457 the Steam query that puts the server in the
   // browser. Valheim needs no TCP at all for play.
   ports: { '2456': '2456/udp', '2457': '2457/udp' },

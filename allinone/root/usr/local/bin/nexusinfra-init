@@ -89,5 +89,11 @@ fi
   echo "ORCHESTRATOR_URL=http://127.0.0.1:9200"
   echo "FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:-}"
   echo "DATABASE_PUBLIC_HOST=${DATABASE_PUBLIC_HOST:-localhost}"
+  # SFTP to a server's files (#235); SFTP_PORT=off turns it off.
+  if [ "${SFTP_PORT:-2022}" != "off" ]; then
+    echo "SFTP_PORT=${SFTP_PORT:-2022}"
+    echo "SFTP_PUBLIC_PORT=${SFTP_PUBLIC_PORT:-${SFTP_PORT:-2022}}"
+    echo "SFTP_HOST_KEY_PATH=$DATA_DIR/sftp_host_ed25519_key"
+  fi
 } > /run/nexusinfra.env
 chmod 600 /run/nexusinfra.env
