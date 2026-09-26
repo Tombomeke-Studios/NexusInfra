@@ -6,7 +6,12 @@ import type { BillingPlan } from './pricing.js';
 // against an in-memory store in tests and SQLite in production.
 
 export type LedgerType = 'topup' | 'charge';
-export type LedgerStatus = 'pending' | 'confirmed' | 'failed';
+/**
+ * `expired` is a top-up FinVault has not confirmed in time (#298) — shown as
+ * unconfirmed rather than pending forever. It is not final: a confirmation that
+ * arrives later means the money did move, so it is still credited.
+ */
+export type LedgerStatus = 'pending' | 'confirmed' | 'failed' | 'expired';
 export type CycleStatus = 'open' | 'paid' | 'overdue';
 
 /** One runtime interval for a deployment (server_billing): open until stopped. */
@@ -98,6 +103,14 @@ export interface Repository {
   createLedgerEntry(input: CreateLedgerInput): Promise<CreditLedgerEntry>;
   getLedgerByReference(reference: string): Promise<CreditLedgerEntry | null>;
   updateLedgerStatus(id: string, status: LedgerStatus): Promise<CreditLedgerEntry | null>;
+  /**
+   * Move an entry to `to` only if it is currently in one of `from` — true when
+   * this call made the change. The guard against crediting one top-up twice when
+   * its confirmation is delivered twice at once (#298).
+   */
+  transitionLedgerStatus(id: string, from: LedgerStatus[], to: LedgerStatus): Promise<boolean>;
+  /** Top-ups still pending that were requested before `createdBefore`. */
+  listPendingTopUps(createdBefore: string): Promise<CreditLedgerEntry[]>;
   listLedger(userId: string): Promise<CreditLedgerEntry[]>;
 
   // Cycles

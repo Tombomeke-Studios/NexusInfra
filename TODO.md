@@ -74,8 +74,11 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > look, and **revoking access took effect on the next request**. Self-registration was refused in
 > community, and the served dashboard bundle contained **no billing code**.
 >
->  **⚠️ Still not verified live:** the terminal's PTY/WebSocket path, the gateway proxy, and the
-> hosted edition (needs FinVault on a shared broker).
+>  **Hosted, verified against FinVault's own code (#298):** payload encryption both ways, a confirmation
+> sent through FinVault's gateway crediting a real balance, a wrong key failing visibly, and the monthly
+> cycle suspending a real server. **Not yet possible:** a complete top-up — FinVault does not consume
+> NexusInfra's `payment.request` (#351). The terminal's PTY/WebSocket path and the gateway proxy have
+> since been run end to end (#69, #20).
 >
 > **Phase 6 is complete (#173–#179) — the panel is multi-user and both editions are shippable.**
 > Real accounts replace the single hardcoded login, and **every** server route is now authorized:
@@ -152,9 +155,9 @@ gateway work" above.)_
 
 ### Phase 3+ — remaining console / gateway work
 
-- [~] WebSocket transport for a persistent exec/terminal session (JWT) (#69 — **console/terminal over WS done**; logs/stats still SSE)
+- [x] WebSocket transport for a persistent exec/terminal session (JWT) (#69) — the terminal is a WebSocket end to end, through the gateway too; logs/stats stay server-sent events, which the gateway now streams instead of buffering (a second transport for a one-way stream would be two things to keep working)
 - [x] Dashboard: full interactive terminal (xterm.js, persistent PTY) for a server (#71)
-- [~] API Gateway: JWT validation, routing, WebSocket proxy (#20) — **HTTP core done** (CORS, rate limit, JWT, reverse proxy, `:9400`); WS proxy pending with the terminal
+- [x] API Gateway: JWT validation, routing, WebSocket proxy (#20) — CORS, rate limit, JWT, streaming reverse proxy, WebSocket upgrades, API tokens passed through; verified live (terminal, SSE logs/stats, `nexusctl`)
 - [ ] Replace stub login with real FinVault JWT via the Gateway (#17, #20)
 
 ### Phase 6 — Multi-user sharing + two shippable editions
@@ -225,6 +228,7 @@ scrolling log lines describing events that never happened.
 
 - [x] Login is not rate limited on the orchestrator — nginx proxies past the gateway (#225) 🐛
 - [x] Password reset flow — admin-driven; the email variant waits on the notification service (#226)
+- [x] Self-service password reset by email — single-use 30-minute links built from `PANEL_URL`, same answer for every address, sessions ended (#344)
 - [x] Sessions cannot be revoked — a deleted user's token stays valid (#227)
 - [x] API tokens for scripted/CI access, scoped and revocable (#228)
 - [x] Two-factor authentication (TOTP) + recovery codes (#229)
@@ -236,22 +240,32 @@ scrolling log lines describing events that never happened.
 - [x] Minecraft egg: NeoForge + pick the game version from a list instead of typing it (#311)
 - [x] Every published port was mapped as TCP, so the UDP game servers were unreachable (#313) 🐛
 - [x] Add Minecraft Bedrock and Palworld eggs (#315)
+- [x] The Valheim egg pointed at an image the project no longer publishes from (#317)
 - [x] Import an existing server directory into the panel (#268)
-- [ ] Backup retention, download, and off-site (S3) targets (#232)
-- [ ] Port allocation management per node — pool, conflicts, primary port (#233)
-- [ ] Migrate a server to another node (#234)
-- [ ] Real SFTP access per server, honouring the file permissions (#235)
-- [ ] Notification service — mail/webhook on crash, suspend, node offline (#236)
+- [x] Backup retention, download, and off-site (S3) targets (#232)
+- [x] Port allocation management per node — pool, conflicts, primary port (#233)
+- [x] Migrate a server to another node (#234)
+- [x] Real SFTP access per server, honouring the file permissions (#235)
+- [x] Show how much disk each server uses — data volumes + container layer, per server and per node (with data no server owns) (#347)
+- [ ] Enforce a per-server disk quota where the filesystem supports it (#278) — needs XFS project quotas on the volume directories, not `StorageOpt` (which caps only the writable layer since data moved to volumes, #324); see the issue
+- [x] Notification service — mail/webhook on crash, suspend, node offline (#236)
 - [x] Search, filter and pagination on the Servers list (#237)
-- [ ] Bulk actions on multiple servers (#238)
-- [ ] Update a deployment's container image (pull + recreate) (#239)
-- [ ] `nexusctl` — a CLI client for the panel (#240)
+- [x] Bulk actions on multiple servers (#238)
+- [x] Update a deployment's container image (pull + recreate) (#239)
+- [x] `nexusctl` — a CLI client for the panel (#240)
 
 ### 🐛 Bugs / fixes (open)
 
 - [x] The Java heap and the RAM limit are two settings for the same memory (#308)
 - [x] The New Deployment form guesses the placement node itself, and can guess wrong (#309) 🐛
 - [x] Servers list shows invented limits and labels every egg server as an app (#318) 🐛
+- [x] A stopped server keeps the id of a container that no longer exists (#321) 🐛
+- [x] Stopping a server deleted its data — it now lives in named volumes owned by the server (#324) 🐛
+- [x] Restoring a backup nested it inside the directory instead of replacing it (#327) 🐛
+- [x] Starting a stopped server could move it to a node without its data (#329) 🐛
+- [x] A server that died on its own was shown as running forever — the agent now watches Docker events (#332) 🐛
+- [x] A missing backup archive answered with the node's host path (`ENOENT …/bk_….tar`) (#339) 🐛
+- [x] Backing up a server with no data directory failed with Docker's "no such container" (#342) 🐛
 
 - [x] Delete server button is a no-op — wire `DELETE /deployments/:id` end to end (#156)
 - [x] Node Agent internal API was unauthenticated + host-published — token-guard it (#169)
@@ -273,9 +287,10 @@ Found while running the hosted release bundle live for the first time (2026-08-2
 far better shape than hosted; these are the gaps between "the code exists" and "a customer could use
 it". Every item carries the `edition:hosted` label on GitHub.
 
-- [ ] The credit balance never refreshes on its own — a stale balance is a wrong answer stated with confidence (#296)
-- [ ] Creating a server is never charged and the form shows no plan entitlements (RAM ceiling, storage, backups, databases) (#297)
-- [ ] The FinVault integration has never been exercised end to end — written, not verified; a mismatched message key fails *silently* (#298)
+- [x] The credit balance never refreshes on its own — a stale balance is a wrong answer stated with confidence (#296)
+- [x] Creating a server is never charged and the form shows no plan entitlements (RAM ceiling, storage, backups, databases) (#297) — memory ceiling across an account's servers + backups-per-server ceiling, shown in the form with a one-click fit, enforced against the owner's plan; the charging model stated in the form and on the Billing page. Storage deliberately not modelled: it cannot be enforced (#278)
+- [x] The FinVault integration has never been exercised end to end — written, not verified; a mismatched message key fails *silently* (#298) — run against FinVault's own code: encryption, confirmations and the cycle-to-suspend path work; a double-delivered confirmation credited twice (fixed); a wrong key now shows as *Not confirmed*
+- [ ] FinVault never acts on NexusInfra's `payment.request`, so a top-up cannot complete — needs a FinVault consumer and an identity it can resolve (#351) 🐛
 - [x] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)
 - [x] `docs/billing.md` is missing from the documentation ownership table (#248)
 
@@ -290,18 +305,18 @@ it". Every item carries the `edition:hosted` label on GitHub.
 
 ### Phase 5 — Production hardening (`feature/production`)
 
-- [~] Multi-node: agent calls now route to the deployment's owning node (#171 — **done**); still to do: run several agents and verify placement across them live (#21)
+- [x] Multi-node: agent calls route to the owning node (#171); **verified live** with two agents on two separate Docker daemons — exec, files, backups and restore reach the right node, and a server moved between them (#234) (#21)
 - [~] Node Agent: offline event queue / replay on reconnect (#167 — **done**, in-memory outbox for lifecycle reports) + auto-restart on crash (still to do)
-- [~] Control Room: uptime % / history (#165 — **done**, in-memory) + alerting via the Notification/Mail service + DLQ monitoring (still to do)
+- [x] Control Room: uptime % / history (#165), DLQ monitoring (#243), and alerting — node offline/recovered and crashes are notified by webhook or email (#236)
 - [ ] Metrics: InfluxDB + Grafana dashboards
-- [ ] Prometheus `/metrics` on every service — the cheap half of the above (#246)
+- [x] Prometheus `/metrics` on every service — the cheap half of the above (#246)
 - [~] Security: service-to-service auth (#169 — **done**, token-guarded agent API) + rate limiting (done in the gateway, #20); secrets-at-rest, token rotation, mTLS/HTTPS still to do
-- [ ] Production docker-compose + deployment docs; migrate SQLite → PostgreSQL via Prisma (#241)
-- [ ] Integration tests: RabbitMQ / DB-backed end to end (Docker Compose test target) (#242)
+- [x] Production docker-compose + deployment docs; migrate SQLite → PostgreSQL via Prisma (#241) — PostgreSQL supported beside SQLite (the default): both clients generated, chosen by `DATABASE_URL`; a `postgres` profile in every compose file; `sqlite-to-postgres.mjs` moves an installation; CI runs the database suite on both and replays the PostgreSQL migrations
+- [x] Integration tests: RabbitMQ / DB-backed end to end — a CI job with a broker service container (#242)
 - [x] Nothing watches the dead-letter queue — surfaces DLQ depth in the panel (#243)
 - [x] Node Agent does not reconcile containers after its own crash (#244)
 - [x] Document TLS termination / reverse proxy — the installer ships plain HTTP (#245)
-- [ ] Accessibility + small-screen audit of the panel (keyboard, focus, reduced motion) (#247)
+- [x] Accessibility + small-screen audit of the panel (keyboard, focus, reduced motion) (#247) — axe clean (WCAG 2 A/AA) on every page and server tab in both themes, and inside open dialogs; no sideways scroll at 375px; focus trapped in and restored from modals; reduced motion stops every animation
 
 ### Small cleanups / follow-ups (open)
 

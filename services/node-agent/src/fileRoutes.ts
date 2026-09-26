@@ -12,6 +12,9 @@ import type { ContainerRuntime } from './runtime.js';
  */
 const MAX_UPLOAD_BYTES = process.env.MAX_UPLOAD_BYTES || '64mb';
 
+/** Largest file one raw read may return (#235); it is held in memory whole. */
+const MAX_DOWNLOAD_BYTES = Number(process.env.MAX_DOWNLOAD_BYTES) || 256 * 1024 * 1024;
+
 const fail = (res: Response, err: unknown) =>
   res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
 
@@ -68,6 +71,24 @@ export function createFileRouter(runtime: ContainerRuntime): Router {
       }
     }
   );
+
+  // A file's raw bytes — what SFTP downloads (#235). The text read above turns
+  // anything that is not UTF-8 into replacement characters.
+  router.get('/files/:containerId/binary', async (req: Request, res: Response) => {
+    const path = String(req.query.path ?? '');
+    if (!path) return res.status(400).json({ error: 'path is required' });
+    try {
+      const data = await runtime.readFileBytes(req.params.containerId, path, MAX_DOWNLOAD_BYTES);
+      res.setHeader('content-type', 'application/octet-stream');
+      res.setHeader('content-length', String(data.length));
+      res.end(data);
+    } catch (err) {
+      // Docker answers 404 for a path that is not there — say so, as the SFTP
+      // side needs to tell "no such file" from "something broke".
+      if ((err as { statusCode?: number }).statusCode === 404) return res.status(404).json({ error: `no such file: ${path}` });
+      fail(res, err);
+    }
+  });
 
   // Make a directory.
   router.post('/files/:containerId/dir', async (req: Request, res: Response) => {

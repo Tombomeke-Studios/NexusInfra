@@ -57,11 +57,13 @@ services:
     image: ghcr.io/tombomeke-studios/nexusinfra/orchestrator:${NEXUSINFRA_VERSION:-community}
     container_name: nexusinfra-orchestrator
     restart: unless-stopped
-    ports: ['9200:9200']
+    # 2022 is SFTP to a server's files (#235); remove it and SFTP_PORT to turn SFTP off.
+    ports: ['9200:9200', '${SFTP_PUBLIC_PORT:-2022}:2022']
     environment:
       - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:-}
-      - DATABASE_URL=file:/data/orchestrator.db
+      # SQLite unless ORCHESTRATOR_DATABASE_URL names PostgreSQL (#241).
+      - DATABASE_URL=${ORCHESTRATOR_DATABASE_URL:-file:/data/orchestrator.db}
       - JWT_SECRET=${JWT_SECRET:?set a strong random value in .env}
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?set a strong random value in .env}
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@local}
@@ -69,6 +71,9 @@ services:
       - NODE_AGENT_URL=http://node-agent:9100
       - CONTROL_ROOM_URL=http://control-room:9000
       - DATABASE_PUBLIC_HOST=${DATABASE_PUBLIC_HOST:-localhost}
+      - SFTP_PORT=2022
+      - SFTP_PUBLIC_PORT=${SFTP_PUBLIC_PORT:-2022}
+      - SFTP_HOST_KEY_PATH=/data/sftp_host_ed25519_key
     volumes:
       - orchestrator_data:/data
     depends_on: [rabbitmq]
@@ -94,7 +99,32 @@ services:
     ports: ['${DASHBOARD_PORT:-8095}:80']
     depends_on: [orchestrator]
 
+  # PostgreSQL (#241) — optional. SQLite (a file in the service's volume) is the
+  # default and needs nothing running. To use this instead:
+  #   1. set POSTGRES_PASSWORD and ORCHESTRATOR_DATABASE_URL in .env
+  #   2. docker compose --profile postgres up -d
+  # Moving an existing installation's data: docs/deployment.md#postgresql.
+  postgres:
+    image: postgres:16-alpine
+    container_name: nexusinfra-postgres
+    restart: unless-stopped
+    profiles: [postgres]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nexusinfra}
+      # Unset, the image refuses to start — which is the point.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_DB: nexusinfra
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER:-nexusinfra}']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # Not published: only the services on this network use it.
+
 volumes:
   rabbitmq_data:
   orchestrator_data:
   agent_backups:
+  postgres_data:

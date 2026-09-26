@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { billableHours, computeCharge, DEFAULT_PLAN, resourceFactor, roundCurrency, type BillingPlan } from './pricing.js';
+import { billableHours, computeCharge, DEFAULT_PLAN, resourceFactor, roundCurrency, type BillingPlan, chargingModel } from './pricing.js';
 
 const plan: BillingPlan = { ...DEFAULT_PLAN, pricePerHour: 0.1, freeHoursPerMonth: 10 };
 
@@ -46,5 +46,22 @@ describe('computeCharge', () => {
   it('rounds to cents', () => {
     expect(roundCurrency(2.005)).toBe(2.01);
     expect(computeCharge({ totalHours: 11, plan, limits: { cpuPercent: 33, ramPercent: 33 } })).toBe(roundCurrency(1 * 0.1 * resourceFactor({ cpuPercent: 33, ramPercent: 33 })));
+  });
+});
+
+// What the panel tells a customer must be what the charge does (#297).
+describe('chargingModel', () => {
+  it('describes the factor resourceFactor actually applies', () => {
+    const { sizeFactor } = chargingModel(DEFAULT_PLAN);
+    expect(resourceFactor({ cpuPercent: sizeFactor.standardCpuPercent, ramPercent: sizeFactor.standardRamPercent })).toBe(1);
+    expect(resourceFactor({ cpuPercent: 1, ramPercent: 1 })).toBe(sizeFactor.minimum);
+  });
+
+  it('carries the plan rate and free hours', () => {
+    expect(chargingModel({ ...DEFAULT_PLAN, pricePerHour: 0.05, freeHoursPerMonth: 20 })).toMatchObject({
+      basis: 'runtime-hours',
+      pricePerHour: 0.05,
+      freeHoursPerMonth: 20,
+    });
   });
 });

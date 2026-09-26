@@ -18,7 +18,7 @@ inside a single container.
 docker run -d \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v nexusinfra:/data \
-  -p 8095:80 \
+  -p 8095:80 -p 2022:2022 \
   ghcr.io/tombomeke-studios/nexusinfra-community
 ```
 
@@ -33,7 +33,7 @@ Replace `community` with `hosted` for the multi-tenant edition; that one also ex
 |---|---|
 | Image | `ghcr.io/tombomeke-studios/nexusinfra-community` · `nexusinfra-hosted` |
 | Volume | `/data` — databases, backups, broker state and the generated secrets |
-| Port | 80 |
+| Ports | 80 (the panel) · 2022 (SFTP to server files, #235 — `SFTP_PORT=off` turns it off; set `SFTP_PUBLIC_PORT` when you publish it on another port) |
 | Needs | the Docker socket |
 
 **Using a broker you already run:** set `RABBITMQ_URL` and the built-in one is not started. The
@@ -67,7 +67,7 @@ as the edition it was not built for exits rather than starting in a half-configu
 
 | Image | Runs | Port | Purpose |
 |---|---|---|---|
-| `nexusinfra/orchestrator` | once | 9200 | Accounts, authorization, deployments, teams, schedules. Owns the database. |
+| `nexusinfra/orchestrator` | once | 9200 · 2022 (SFTP) | Accounts, authorization, deployments, teams, schedules, SFTP. Owns the database. |
 | `nexusinfra/node-agent` | **once per Docker host** | 9100 | Container lifecycle, logs, stats, files, exec, terminal, databases, backups. |
 | `nexusinfra/control-room` | once | 9000 | Heartbeat monitoring, health status, uptime. |
 | `nexusinfra/gateway` | once | 9400 | External entry point: CORS, rate limiting, JWT validation, reverse proxy. |
@@ -97,12 +97,25 @@ it. Nothing else changes.
 | `FINVAULT_MESSAGE_KEY` | hosted | Derives the AES-256-GCM key for event payloads. **Must be identical to FinVault's**, or neither platform can read the other's events. Optional in community. |
 | `PORT` | no | Overrides the default in the table above. |
 | `NEXUS_EDITION` | no | Ignored in a released image; the image's own edition wins. Only meaningful when running from source. |
+| `METRICS_TOKEN` | no | Protects `GET /metrics` (#246) with `Authorization: Bearer <token>`. Open when unset — the numbers are aggregates with no names or ids — but **set it on the orchestrator and gateway**, whose ports are public (the dashboard's `/api` proxy reaches the orchestrator's `/metrics` too). |
+
+Every service serves **Prometheus metrics** at `GET /metrics` (text format 0.0.4): request counts
+and durations by route pattern, `nexusinfra_build_info`, process memory and uptime, plus what is
+particular to it — see [architecture.md](architecture.md#metrics-246). A scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: nexusinfra
+    authorization: { credentials: <METRICS_TOKEN> }
+    static_configs:
+      - targets: ['orchestrator:9200', 'control-room:9000', 'gateway:9400', 'node-agent:9100', 'billing-bridge:9300']
+```
 
 ### `orchestrator`
 
 | Variable | Required | Notes |
 |---|---|---|
-| `DATABASE_URL` | yes | `file:/data/orchestrator.db`. Mount a volume at `/data`; migrations run automatically at start. |
+| `DATABASE_URL` | yes | `file:/data/orchestrator.db` (SQLite — mount a volume at `/data`), or `postgresql://user:pass@host:5432/db` (#241). The matching migrations run automatically at start. See [deployment.md](deployment.md#postgresql). |
 | `JWT_SECRET` | yes | Signs login tokens. Anyone holding it can mint a token for any account — use 32 random bytes. |
 | `INTERNAL_API_TOKEN` | yes | Shared secret for reaching the node agent. Must match the agents'. |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | yes | The administrator seeded on first start. A warning is logged on every start while the default password is in place. |
@@ -112,8 +125,14 @@ it. Nothing else changes.
 | `TRUST_PROXY` | no | Number of reverse proxies in front (1 for the setup in [deployment.md](deployment.md#putting-it-behind-tls-245)). Makes per-IP rate limiting measure the caller rather than the proxy. Leave unset unless only the proxy can reach this process — `X-Forwarded-For` is caller-supplied. |
 | `BILLING_BRIDGE_URL` | hosted | Where plan-quota checks go. |
 | `DATABASE_PUBLIC_HOST` | no | Hostname given to users connecting to a provisioned database. Defaults to `localhost`. |
+| `SMTP_URL` | no | Turns on **email notifications** (#236), e.g. `smtps://user:pass@smtp.example.com:465` or `smtp://user:pass@mail.local:587` (STARTTLS when offered). Unset means webhooks only, and the panel says so. |
+| `SMTP_FROM` | no | The sender, e.g. `NexusInfra <panel@example.com>`. |
+| `PANEL_URL` | no | The panel's public address, e.g. `https://panel.example.com`. With `SMTP_URL`, turns on **password reset by email** (#344); the mailed link is built from this, never from the request. |
+| `SFTP_PORT` | no | Turns on **SFTP to server files** (#235) on this port inside the container — the bundles use `2022`. Unset means off. It is raw TCP: publish the port directly, not through the dashboard's nginx or the gateway. |
+| `SFTP_PUBLIC_PORT` | no | The port people connect to, shown on the Files tab, when you publish SFTP on a different one. Defaults to `SFTP_PORT`. |
+| `SFTP_HOST_KEY_PATH` | with SFTP | Where the SFTP host key lives; generated on first start. Put it on the `/data` volume (`/data/sftp_host_ed25519_key`) — a key that changes on every upgrade makes every client warn about an attack. |
 
-Volume: `/data` — the database. Back this up.
+Volume: `/data` — the database, which also holds notifications waiting to be retried, and the SFTP host key. Back this up.
 
 ### `node-agent`
 
@@ -123,7 +142,14 @@ Volume: `/data` — the database. Back this up.
 | `INTERNAL_API_TOKEN` | yes | Must match the orchestrator's. |
 | `AGENT_URL` | no | How the orchestrator reaches this agent, advertised on its heartbeat. Defaults to `http://<hostname>:<PORT>`, which works on a Compose network; set it explicitly for anything else. |
 | `BACKUP_DIR` | no | Where backup tarballs live. Point at a volume so they survive restarts. |
+| `BACKUP_S3_BUCKET` | no | Turns on **off-site backups** (#232): every backup is also copied to this S3-compatible bucket (AWS, Backblaze B2, Wasabi, Cloudflare R2, a self-hosted store). Off unless the bucket and both keys are set. Restore and download fall back to it when the node's own copy is gone. |
+| `BACKUP_S3_ACCESS_KEY_ID` / `BACKUP_S3_SECRET_ACCESS_KEY` | with a bucket | Credentials for the bucket. Give them access to that bucket (and prefix) only. |
+| `BACKUP_S3_ENDPOINT` | no | Defaults to AWS for `BACKUP_S3_REGION`. Set it for anything else, e.g. `https://s3.eu-central-003.backblazeb2.com`. |
+| `BACKUP_S3_REGION` | no | Default `us-east-1`. R2 wants `auto`. |
+| `BACKUP_S3_PREFIX` | no | Key prefix inside the bucket, default `nexusinfra-backups/`, so one bucket can serve several installations. |
+| `BACKUP_S3_PATH_STYLE` | no | `false` for virtual-hosted addressing (`bucket.endpoint`). Default is path-style, which self-hosted stores expect. |
 | `DISK_PATH` | no | **Rarely needed.** Which filesystem to report disk usage for (#276). The agent works this out by itself: it asks Docker for its data root and measures that when it is readable, and otherwise measures its own root — which under overlay2 already reports the filesystem the Docker data sits on, because that is where the container's writable layer lives. Set this only when the disk you care about is somewhere else, e.g. volumes on a second drive mounted into the agent. A node that cannot measure at all reports nothing rather than zero. |
+| `MAX_DOWNLOAD_BYTES` | no | Largest file one SFTP download may read, in bytes (#235); default 256 MB. The file is held in memory while it is sent. |
 | `IMPORT_ROOT` | no | Enables importing existing server directories (#268). A path a person may point a new server at, so it runs against files already on this host. **Unset means the feature is off, which is the default.** Only a platform administrator may use it, and the agent refuses anything that does not resolve inside this root. Mount the same path into the agent container so it can see it. |
 
 Requires the Docker socket: `-v /var/run/docker.sock:/var/run/docker.sock`.
@@ -144,8 +170,10 @@ Requires the Docker socket: `-v /var/run/docker.sock:/var/run/docker.sock`.
 
 | Variable | Required | Notes |
 |---|---|---|
-| `DATABASE_URL` | yes | `file:/data/billing.db`; mount a volume at `/data`. |
+| `DATABASE_URL` | yes | `file:/data/billing.db` (mount a volume at `/data`), or PostgreSQL — its own schema if it shares the orchestrator's database, e.g. `postgresql://…/nexusinfra?schema=billing`. |
 | `BILLING_WALLET_ID` | no | NexusInfra's receiver wallet id on top-up requests to FinVault. |
+| `FINVAULT_MESSAGE_KEY` | yes | Must be FinVault's value exactly. A different key cannot decrypt anything: the log says so, the event is dead-lettered, and top-ups turn *Not confirmed* (#298). |
+| `TOPUP_TIMEOUT_MS` | no | How long a top-up waits for FinVault before the panel shows it as not confirmed (default `1800000`, 30 min). A late confirmation is still credited. |
 
 ### `dashboard`
 
