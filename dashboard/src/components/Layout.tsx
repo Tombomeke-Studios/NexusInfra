@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { getCurrentUser, logoutSession, type CurrentUser } from '../api';
 import { logout } from '../session';
@@ -8,6 +8,7 @@ import { hasSeenIntro, markIntroSeen } from '../prefs';
 import { ThemeToggle } from './ThemeToggle';
 import { IntroTour } from './IntroTour';
 import { IconHexagon, IconLogout } from './Icons';
+import { nextNavFit, type NavFitState } from '../navFit';
 
 // App shell: sticky top bar with brand, primary nav, theme toggle, a help entry
 // point, and a sign-out action kept separate from navigation. The routed page
@@ -18,10 +19,14 @@ export function Layout() {
   const { isHosted } = useEdition();
   const [introOpen, setIntroOpen] = useState(() => !hasSeenIntro());
   const [user, setUser] = useState<CurrentUser | null>(null);
-  // Below 900px the nav and the bar's actions fold behind a Menu button (#247) —
-  // a single row of eight links does not fit a phone, and the whole page used
-  // to scroll sideways because of it. Closed again by navigating or Escape.
+  // When the bar does not fit, the nav and its actions fold behind a Menu button
+  // (#247) — a row of eight links does not fit a phone, and the whole page used
+  // to scroll sideways because of it. *When* is measured, not a fixed width
+  // (#352): how much the bar holds depends on the edition and the role. Closed
+  // again by navigating or Escape.
   const [menuOpen, setMenuOpen] = useState(false);
+  const headerRef = useRef<HTMLElement>(null);
+  const [fit, setFit] = useState<NavFitState>({ compact: false, neededWidth: null });
   useEffect(() => setMenuOpen(false), [location.pathname]);
   useEffect(() => {
     if (!menuOpen) return;
@@ -30,6 +35,27 @@ export function Layout() {
     return () => window.removeEventListener('keydown', onKey);
   }, [menuOpen]);
   const isPlatformAdmin = user?.platformRole === 'admin' || user?.platformRole === 'owner';
+
+  // Measured before paint, so the bar never shows overflowing for a frame.
+  const measureBar = () => {
+    const el = headerRef.current;
+    if (el) setFit((s) => nextNavFit(s, { clientWidth: el.clientWidth, scrollWidth: el.scrollWidth }));
+  };
+  // A different set of links (the account loaded, the edition resolved) needs a
+  // fresh measurement of the full bar.
+  const barContent = `${isPlatformAdmin}|${isHosted}|${user?.displayName ?? ''}`;
+  useLayoutEffect(() => setFit({ compact: false, neededWidth: null }), [barContent]);
+  useLayoutEffect(measureBar, [fit, barContent]);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => measureBar());
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    if (!fit.compact) setMenuOpen(false);
+  }, [fit.compact]);
 
   // Who am I? Shown in the bar so it's never ambiguous which account is acting —
   // that matters once servers are shared between people (#174).
@@ -60,7 +86,7 @@ export function Layout() {
 
   return (
     <div>
-      <header className="appbar">
+      <header ref={headerRef} className={`appbar${fit.compact ? ' appbar--compact' : ''}`}>
         <span className="appbar__brand">
           <IconHexagon size={20} />
           NexusInfra
