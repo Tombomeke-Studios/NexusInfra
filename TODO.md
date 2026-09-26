@@ -242,7 +242,7 @@ scrolling log lines describing events that never happened.
 - [x] Backup retention, download, and off-site (S3) targets (#232)
 - [x] Port allocation management per node — pool, conflicts, primary port (#233)
 - [x] Migrate a server to another node (#234)
-- [ ] Real SFTP access per server, honouring the file permissions (#235)
+- [x] Real SFTP access per server, honouring the file permissions (#235)
 - [x] Show how much disk each server uses — data volumes + container layer, per server and per node (with data no server owns) (#347)
 - [ ] Enforce a per-server disk quota where the filesystem supports it (#278) — needs XFS project quotas on the volume directories, not `StorageOpt` (which caps only the writable layer since data moved to volumes, #324); see the issue
 - [x] Notification service — mail/webhook on crash, suspend, node offline (#236)

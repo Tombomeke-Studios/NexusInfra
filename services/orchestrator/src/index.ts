@@ -13,6 +13,9 @@ import { pipeSockets, toWsUrl, type DuplexSocket } from './wsProxy.js';
 import { createBillingProxyRouter } from './billingProxy.js';
 import { createMonitoringRouter } from './monitoring.js';
 import { createConfigRouter } from './config.js';
+import { createSftpServer, parseSftpPort } from './sftp.js';
+import { createAgentSftpFiles, createSftpAuthenticator, loadOrCreateHostKey } from './sftpBackend.js';
+import { createLoginLimiter } from './loginLimiter.js';
 import { createPasswordResetRouter, parsePanelUrl, resetAvailable } from './passwordReset.js';
 import { createAccountRouter, createAuthRouter, createRequireAuth, createUserAdminRouter, requireTokenScope, requireTotpEnrolment } from './auth.js';
 import { createUserService, isTotpRequired } from './users.js';
@@ -195,11 +198,18 @@ const panelUrl = parsePanelUrl(process.env.PANEL_URL);
 if (process.env.PANEL_URL && !panelUrl) console.warn('[Orchestrator] PANEL_URL is not an http(s) address; password reset by email is off');
 const passwordReset = { repo, users, panelUrl, sendMail: process.env.SMTP_URL ? transports.mail : null };
 // Public runtime config (edition flag) — read by the dashboard before login.
-app.use(catchAsync(createConfigRouter(undefined, { passwordResetByEmail: resetAvailable(passwordReset) })));
+// SFTP (#235) is off unless SFTP_PORT is set. SFTP_PUBLIC_PORT is what the panel
+// tells people to connect to, when a port mapping makes it differ.
+const sftpPort = parseSftpPort(process.env.SFTP_PORT);
+const sftpPublicPort = parseSftpPort(process.env.SFTP_PUBLIC_PORT) ?? sftpPort;
+app.use(catchAsync(createConfigRouter(undefined, { passwordResetByEmail: resetAvailable(passwordReset), sftpPort: sftpPublicPort })));
 // Public, like login: somebody who forgot their password has no token.
 app.use(catchAsync(createPasswordResetRouter(passwordReset)));
 // Public login/registration, then everything below requires a valid Bearer token.
-app.use(catchAsync(createAuthRouter({ users, repo })));
+// One login budget for the panel and SFTP: two doors to the same passwords must
+// not give a guesser two budgets (#225, #235).
+const loginLimiter = createLoginLimiter();
+app.use(catchAsync(createAuthRouter({ users, repo, loginLimiter })));
 // Session-aware (#227): a valid signature is not enough, the session it names
 // must still exist — which is what makes signing out actually sign you out.
 app.use(createRequireAuth({ repo }));
@@ -300,6 +310,19 @@ server.on('upgrade', async (req, socket, head) => {
 });
 
 server.listen(PORT, () => console.log(`[Orchestrator] HTTP + WS listening on http://localhost:${PORT}`));
+
+// ── SFTP (#235) ───────────────────────────────────────────────────────────────
+if (sftpPort) {
+  const sftp = createSftpServer({
+    hostKey: loadOrCreateHostKey(process.env.SFTP_HOST_KEY_PATH || './data/sftp_host_ed25519_key'),
+    authenticate: createSftpAuthenticator({ repo, users, limiter: loginLimiter, totpRequired: isTotpRequired }),
+    filesFor: (identity) => createAgentSftpFiles({ repo, agentUrlFor, agentFetch }, identity),
+    onLogin: (identity, ip) => {
+      void repo.appendDeploymentEvent(identity.deploymentId, 'sftp-login', `SFTP session opened by ${identity.email} from ${ip}`).catch(() => undefined);
+    },
+  });
+  sftp.listen(sftpPort, '0.0.0.0', () => console.log(`[Orchestrator] SFTP listening on port ${sftpPort}`));
+}
 
 // ── First-run bootstrap ───────────────────────────────────────────────────────
 // Make sure there is always exactly one way in on a fresh install, and repair the

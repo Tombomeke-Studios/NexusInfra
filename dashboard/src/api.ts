@@ -397,6 +397,8 @@ export interface AppConfig {
   edition: Edition;
   /** Whether a forgotten password can be reset by email here (#344). */
   passwordResetByEmail?: boolean;
+  /** The port SFTP listens on (#235), or null when it is off. */
+  sftpPort?: number | null;
 }
 
 /** One server's disk use (#347); a null is something the node could not measure. */

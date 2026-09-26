@@ -327,6 +327,34 @@ plaintext on the private network. mTLS and rotation belong with the production h
   which gates them on a running deployment. User-facing authorisation rides on the same JWT as the rest
   of the API; per-server subuser scoping is a later slice (#112).
 
+### SFTP (#235)
+
+SFTP is a second way in to the same files, so it is held to the same rules rather than given its own:
+
+- **The same credentials.** An account password, or an API token. A password is one factor, so an
+  account with two-factor sign-in — or any account while `REQUIRE_TOTP` is on — is refused a password
+  here and uses a token, which it could only have minted from a session that passed the second
+  factor. A token must belong to the account the user name names.
+- **The same permissions.** Logging in needs `file.read` on the server; every change needs `file.write`
+  *and* a credential allowed to write (a password, or a token with the `write` scope). Both are checked
+  on every operation, not once at login: revoking a share ends an open session's access on its next
+  request.
+- **The same budget.** Failed logins count against the panel's per-address and per-account limiter
+  (#225). Two doors to one password with two budgets would double what a guesser gets.
+- **The same answer for every refusal** — wrong password, unknown server, no access — so the prompt does
+  not confirm which guess was right.
+- **A file door, nothing else.** No shell, no exec, no forwarding. Paths go to the agent's file API,
+  which normalises and contains them exactly as it does for the panel. `REMOVE` refuses a directory and
+  `RMDIR` a non-empty one, because the agent's delete is recursive and SFTP clients rely on neither
+  being.
+- **A stable host key.** Generated on first start (ed25519), written `0600` to `SFTP_HOST_KEY_PATH` on
+  the data volume. A key that changes on every upgrade trains people to accept the warning that would
+  one day be real.
+- **Bounded memory.** An upload is held until the handle closes (64 MB at most, the HTTP upload's cap)
+  and a download is read whole (the agent's `MAX_DOWNLOAD_BYTES`, 256 MB). A write that fails part way
+  leaves the old file as it was: the close that follows reports the failure instead of uploading the
+  fragment that did arrive.
+
 ## Managed databases (#109)
 
 - A database is provisioned as its **own engine container** with credentials the Orchestrator

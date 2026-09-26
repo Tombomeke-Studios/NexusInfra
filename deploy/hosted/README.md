@@ -25,6 +25,10 @@ Same images, same code — one runtime flag. What the flag turns on:
 
 Everything else — nodes, deployments, sharing, teams — behaves identically.
 
+**SFTP** to each server's files listens on port `2022` (set `SFTP_PUBLIC_PORT` to publish it elsewhere).
+The Files tab shows each customer the user name to use; the password is their account password or an
+API token.
+
 ## Database
 
 SQLite by default (one file per service, in its volume). For PostgreSQL, set `POSTGRES_PASSWORD`,

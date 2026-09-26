@@ -77,7 +77,7 @@ Most people want the first one.
 ### In short
 
 - Deploy any Docker image, or a game preset, from a browser — with CPU, memory and restart policy
-- Live console, interactive terminal, file browser, managed databases, backups and cron schedules
+- Live console, interactive terminal, file browser and SFTP, managed databases, backups and cron schedules
 - Share servers by email or by team, with roles from read-only to full control
 - Automatic placement across several machines, with live health and uptime per host
 - Self-hosted and self-contained; an optional hosted edition adds usage billing
@@ -189,7 +189,7 @@ real container:
 |---|---|
 | **Console** | Live container logs, streamed, plus one-shot commands |
 | **Terminal** | A full interactive shell, over a WebSocket |
-| **Files** | Browse, read, edit, upload, rename and delete inside the container |
+| **Files** | Browse, read, edit, upload, rename and delete inside the container — in the panel or over SFTP with any desktop client, holding the same permissions |
 | **Databases** | Provision a real MySQL, MariaDB or PostgreSQL container with generated credentials |
 | **Backups** | Take and restore tar snapshots of the server's data |
 | **Schedules** | Cron-driven restarts and backups |

@@ -57,7 +57,8 @@ services:
     image: ghcr.io/tombomeke-studios/nexusinfra/orchestrator:${NEXUSINFRA_VERSION:-community}
     container_name: nexusinfra-orchestrator
     restart: unless-stopped
-    ports: ['9200:9200']
+    # 2022 is SFTP to a server's files (#235); remove it and SFTP_PORT to turn SFTP off.
+    ports: ['9200:9200', '${SFTP_PUBLIC_PORT:-2022}:2022']
     environment:
       - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:-}
@@ -70,6 +71,9 @@ services:
       - NODE_AGENT_URL=http://node-agent:9100
       - CONTROL_ROOM_URL=http://control-room:9000
       - DATABASE_PUBLIC_HOST=${DATABASE_PUBLIC_HOST:-localhost}
+      - SFTP_PORT=2022
+      - SFTP_PUBLIC_PORT=${SFTP_PUBLIC_PORT:-2022}
+      - SFTP_HOST_KEY_PATH=/data/sftp_host_ed25519_key
     volumes:
       - orchestrator_data:/data
     depends_on: [rabbitmq]
