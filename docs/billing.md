@@ -77,6 +77,13 @@ the panel is **not** the owner of the hardware (a hosting-provider scenario). So
   that user; FinVault resolves the wallet. Until the gateway lands, the stub login stands in.
 - **Money never touches NexusInfra directly.** NexusInfra only holds a **credit balance**; the actual
   charge happens in FinVault (card/wallet), decoupled over RabbitMQ with AES-GCM-encrypted payloads.
+- **The panel keeps the balance current (#296).** A balance changes with nothing happening on the
+  Billing page — an hourly charge, a cycle run, a top-up FinVault confirms asynchronously — so the page
+  re-reads wallet, usage and ledger every 15 s, every 3 s while a top-up is pending, and at once when
+  the tab is shown again. It says when the figures were read, announces a confirmed top-up, and a
+  failed refresh keeps the last figures on screen **marked as out of date** rather than presenting
+  them as current. Polling rather than a push: cheap, and the confirmation it waits on is seconds
+  away, not milliseconds.
 - **Both run standalone.** The integration is optional and event-driven; NexusInfra (either edition) works
   without FinVault, FinVault works without NexusInfra.
 
