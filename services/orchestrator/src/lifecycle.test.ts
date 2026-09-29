@@ -43,6 +43,27 @@ describe('createLifecycle', () => {
     expect(detail?.stoppedAt).not.toBeNull();
   });
 
+  it('forgets the container on server.stopped — the agent removed it (#321)', async () => {
+    const d = await seedDeployment(repo);
+    await repo.updateDeploymentStatus(d.id, { status: 'running', containerId: 'abc123' });
+    await lifecycle.handleReport(report({ type: 'server.stopped', payload: { deploymentId: d.id, containerId: 'abc123' } }));
+
+    expect((await repo.getDeployment(d.id))?.containerId).toBeNull();
+  });
+
+  it('ignores a late stop report for a container the server has since replaced (#321)', async () => {
+    // Stop c1, start again as c2, and only then does c1's report arrive — an
+    // outbox replay (#167) does exactly this. It must not stop c2 on paper.
+    const d = await seedDeployment(repo);
+    await repo.updateDeploymentStatus(d.id, { status: 'running', containerId: 'c2' });
+    await lifecycle.handleReport(report({ type: 'server.stopped', payload: { deploymentId: d.id, containerId: 'c1' } }));
+
+    const detail = await repo.getDeployment(d.id);
+    expect(detail?.status).toBe('running');
+    expect(detail?.containerId).toBe('c2');
+    expect(detail?.events.some((e) => e.event === 'stopped')).toBe(false);
+  });
+
   it('marks a deployment crashed on server.crashed and records the reason', async () => {
     const d = await seedDeployment(repo);
     await lifecycle.handleReport(

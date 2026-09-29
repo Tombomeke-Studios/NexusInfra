@@ -1863,3 +1863,25 @@ describe('bulk actions (#238)', () => {
     expect(published.find((p) => p.key === 'infra.server.kill')).toBeDefined();
   });
 });
+
+describe('a stopped server has no container to act on (#321)', () => {
+  it('refuses stop, kill and restart for a row still carrying a pre-fix stale id', async () => {
+    const repo = new InMemoryRepository();
+    const published: Array<{ key: string; envelope: EventEnvelope }> = [];
+    const app = buildApp(repo, published);
+    await seedUser(repo);
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'old', dockerImage: 'nginx' });
+    // What lifecycle.ts used to leave behind: stopped, but still naming the container.
+    await repo.updateDeploymentStatus(created.body.id, { status: 'stopped', containerId: 'gone', nodeId: 'node-local' });
+    published.length = 0;
+
+    for (const action of ['stop', 'kill', 'restart']) {
+      const res = await request(app).post(`/deployments/${created.body.id}/${action}`);
+      expect(res.status).toBe(409);
+    }
+    const bulk = await request(app).post('/deployments/bulk').send({ action: 'stop', ids: [created.body.id] });
+    expect(bulk.body).toMatchObject({ succeeded: 0, failed: 1 });
+    expect(published).toHaveLength(0);
+  });
+});

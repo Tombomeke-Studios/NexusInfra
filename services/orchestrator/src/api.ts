@@ -49,6 +49,16 @@ export function agentFetch(url: string, init: RequestInit = {}): Promise<globalT
 // Where the Billing Bridge's internal HTTP lives (hosted edition only).
 const BILLING_BRIDGE_URL = process.env.BILLING_BRIDGE_URL || 'http://billing-bridge:9300';
 
+/**
+ * Whether a server has a live container to act on (#321).
+ *
+ * Status as well as the id: rows stopped before #321 still carry the id of a
+ * container the agent removed, and a stop sent to it was answered "stopping".
+ */
+function isRunning(detail: DeploymentDetail): detail is DeploymentDetail & { containerId: string; nodeId: string } {
+  return detail.status === 'running' && Boolean(detail.containerId) && Boolean(detail.nodeId);
+}
+
 /** Decide whether a deployment's container can be streamed from, and which one. */
 export function resolveContainerTarget(detail: DeploymentDetail | null): { status: number; error?: string; containerId?: string } {
   if (!detail) return { status: 404, error: 'deployment not found' };
@@ -588,7 +598,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     // Request a running deployment be stopped: command the agent, which reports
     // server.stopped back (lifecycle.ts flips the status).
     stop: async (detail) => {
-      if (!detail.containerId || !detail.nodeId) return { status: 409, body: { error: 'deployment is not running' } };
+      if (!isRunning(detail)) return { status: 409, body: { error: 'deployment is not running' } };
       await repo.appendDeploymentEvent(detail.id, 'stop-requested', 'stop requested by user');
       await emit(KEY_STOP, {
         type: 'server.stop',
@@ -601,7 +611,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     // permission as stop — it is the same intent, applied harder — but its own
     // command and its own audit entry, so the trail can say which one happened.
     kill: async (detail) => {
-      if (!detail.containerId || !detail.nodeId) return { status: 409, body: { error: 'deployment is not running' } };
+      if (!isRunning(detail)) return { status: 409, body: { error: 'deployment is not running' } };
       await repo.appendDeploymentEvent(detail.id, 'kill-requested', 'force kill requested by user');
       await emit(KEY_KILL, {
         type: 'server.kill',
@@ -649,7 +659,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     // Request a running deployment be restarted — the agent restarts the container
     // and reports server.started back.
     restart: async (detail) => {
-      if (!detail.containerId || !detail.nodeId) return { status: 409, body: { error: 'deployment is not running' } };
+      if (!isRunning(detail)) return { status: 409, body: { error: 'deployment is not running' } };
       await repo.appendDeploymentEvent(detail.id, 'restart-requested', 'restart requested by user');
       await emit(KEY_RESTART, {
         type: 'server.restart',
