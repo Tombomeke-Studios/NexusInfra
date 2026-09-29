@@ -344,6 +344,23 @@ the risk is yours to take; across any network you do not, an observer has the se
 which ports to publish and which never to, and the `TRUST_PROXY` setting that keeps per-IP rate
 limiting meaningful once every request arrives from the proxy's address.
 
+## Notifications (#236)
+
+- **Webhooks cannot reach the private network** unless a platform administrator made them. A webhook
+  is the orchestrator making a request on someone's behalf; without this, any account could aim it
+  at the node agents, a database, or the cloud metadata endpoint (`169.254.169.254`). Loopback,
+  RFC 1918, link-local, CGNAT, multicast and IPv6 ULA/link-local are refused, including IPv4-mapped
+  IPv6. The check runs at creation (for a clear error) **and at connect time**, as the HTTP client's
+  DNS lookup — so a name that resolves publicly when saved and privately when used (DNS rebinding)
+  is still refused.
+- **Every webhook body is signed**: `X-NexusInfra-Signature: sha256=<HMAC-SHA256(secret, body)>`,
+  with a per-channel secret shown once at creation. The secret is stored in plain form, because
+  signing needs it; it grants nothing but the ability to forge notifications to that one receiver.
+  `X-NexusInfra-Delivery` stays the same across retries, so a receiver can drop duplicates.
+- **Email goes only to the account's own address.** A panel that mailed any address on request would
+  be a spam relay behind a login page.
+- Channels live under `/me` and are the caller's own; another account's channel answers 404.
+
 ## Known gaps (foundation phase)
 
 - No auth on Control Room HTTP endpoints yet (localhost/dev only) — gated by the gateway later.

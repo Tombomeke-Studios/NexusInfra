@@ -112,8 +112,10 @@ it. Nothing else changes.
 | `TRUST_PROXY` | no | Number of reverse proxies in front (1 for the setup in [deployment.md](deployment.md#putting-it-behind-tls-245)). Makes per-IP rate limiting measure the caller rather than the proxy. Leave unset unless only the proxy can reach this process — `X-Forwarded-For` is caller-supplied. |
 | `BILLING_BRIDGE_URL` | hosted | Where plan-quota checks go. |
 | `DATABASE_PUBLIC_HOST` | no | Hostname given to users connecting to a provisioned database. Defaults to `localhost`. |
+| `SMTP_URL` | no | Turns on **email notifications** (#236), e.g. `smtps://user:pass@smtp.example.com:465` or `smtp://user:pass@mail.local:587` (STARTTLS when offered). Unset means webhooks only, and the panel says so. |
+| `SMTP_FROM` | no | The sender, e.g. `NexusInfra <panel@example.com>`. |
 
-Volume: `/data` — the database. Back this up.
+Volume: `/data` — the database, which also holds notifications waiting to be retried. Back this up.
 
 ### `node-agent`
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { PortConflictError } from './portPool.js';
-import type { PortAllocationRecord,
+import type { NotificationChannelRecord, NotificationDeliveryRecord, PortAllocationRecord,
   CreateServerBackupInput,
   CreateServerConfigInput,
   CreateServerDatabaseInput,
@@ -47,6 +47,8 @@ export class InMemoryRepository implements Repository {
   private teamMembers = new Map<string, TeamMemberRecord>();
   private nodes = new Map<string, NodeRecord>();
   private portAllocations = new Map<string, PortAllocationRecord>();
+  private channels = new Map<string, NotificationChannelRecord>();
+  private deliveries = new Map<string, NotificationDeliveryRecord>();
   private configs = new Map<string, ServerConfigRecord>();
   private deployments = new Map<string, DeploymentRecord>();
   private events: DeploymentEventRecord[] = [];
@@ -524,6 +526,75 @@ export class InMemoryRepository implements Repository {
 
   async deleteDatabase(id: string): Promise<void> {
     this.databases.delete(id);
+  }
+
+  async createNotificationChannel(input: Omit<NotificationChannelRecord, 'id' | 'lastDeliveryAt' | 'lastError' | 'createdAt'>): Promise<NotificationChannelRecord> {
+    const c: NotificationChannelRecord = { ...input, id: randomUUID(), lastDeliveryAt: null, lastError: null, createdAt: new Date().toISOString() };
+    this.channels.set(c.id, c);
+    return c;
+  }
+
+  async listNotificationChannels(userIds: string[]): Promise<NotificationChannelRecord[]> {
+    return [...this.channels.values()].filter((c) => userIds.includes(c.userId));
+  }
+
+  async getNotificationChannel(id: string): Promise<NotificationChannelRecord | null> {
+    return this.channels.get(id) ?? null;
+  }
+
+  async updateNotificationChannel(
+    id: string,
+    patch: Partial<Pick<NotificationChannelRecord, 'events' | 'enabled' | 'lastDeliveryAt' | 'lastError'>>,
+  ): Promise<NotificationChannelRecord | null> {
+    const c = this.channels.get(id);
+    if (!c) return null;
+    const next = { ...c, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) };
+    this.channels.set(id, next);
+    return next;
+  }
+
+  async deleteNotificationChannel(id: string): Promise<void> {
+    this.channels.delete(id);
+    for (const [key, d] of this.deliveries) if (d.channelId === id) this.deliveries.delete(key);
+  }
+
+  async enqueueDeliveries(rows: Array<{ channelId: string; event: string; payload: string }>): Promise<NotificationDeliveryRecord[]> {
+    const now = new Date().toISOString();
+    return rows.map((r) => {
+      const d: NotificationDeliveryRecord = { ...r, id: randomUUID(), status: 'pending', attempts: 0, nextAttemptAt: now, lastError: null, createdAt: now, sentAt: null };
+      this.deliveries.set(d.id, d);
+      return d;
+    });
+  }
+
+  async listDueDeliveries(now: string, limit: number): Promise<NotificationDeliveryRecord[]> {
+    return [...this.deliveries.values()]
+      .filter((d) => d.status === 'pending' && d.nextAttemptAt <= now)
+      .sort((a, b) => a.nextAttemptAt.localeCompare(b.nextAttemptAt))
+      .slice(0, limit);
+  }
+
+  async claimDelivery(id: string, attempts: number): Promise<boolean> {
+    const d = this.deliveries.get(id);
+    if (!d || d.status !== 'pending' || d.attempts !== attempts) return false;
+    // In memory the claim is the attempt counter moving; sending follows at once.
+    this.deliveries.set(id, { ...d, attempts: attempts + 1 });
+    return true;
+  }
+
+  async updateDelivery(id: string, patch: Partial<Pick<NotificationDeliveryRecord, 'status' | 'attempts' | 'nextAttemptAt' | 'lastError' | 'sentAt'>>): Promise<void> {
+    const d = this.deliveries.get(id);
+    if (d) this.deliveries.set(id, { ...d, ...patch });
+  }
+
+  async listDeliveries(channelId: string, limit: number): Promise<NotificationDeliveryRecord[]> {
+    // Reversed first so the stable sort keeps the newer of two rows written in
+    // the same millisecond ahead of the older one.
+    return [...this.deliveries.values()]
+      .reverse()
+      .filter((d) => d.channelId === channelId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, limit);
   }
 
   async listPortAllocations(filter: { nodeId?: string; deploymentId?: string }): Promise<PortAllocationRecord[]> {

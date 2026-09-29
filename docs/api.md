@@ -470,6 +470,36 @@ with no node yet (or whose node was deregistered) is placed on the least-loaded 
 while starting, `404` if unknown, `409` if it is already running/pending or its node is unavailable,
 `503` if no healthy node is available.
 
+### Notifications (#236)
+
+Where the signed-in account hears about events. Always the caller's own; another account's channel
+answers `404`.
+
+| Method + path | Purpose |
+|---|---|
+| `GET /me/notifications` | `{ channels, capabilities: { email, events } }` — `events` lists what this account may subscribe to |
+| `POST /me/notifications` | `{ kind: "webhook", target, format?, events }` or `{ kind: "email", events }` → `201`. A webhook's `secret` is in this response **only** |
+| `PATCH /me/notifications/:id` | `{ enabled?, events? }` |
+| `DELETE /me/notifications/:id` | Remove it and anything still queued for it → `204` |
+| `POST /me/notifications/:id/test` | Send a test now → `{ ok: true }`, or `502 { ok: false, error }` with what the receiver said |
+| `GET /me/notifications/:id/deliveries` | The last 20 deliveries: `status` (`pending`/`sent`/`failed`), `attempts`, `lastError`, `summary` |
+
+Events: `server.crashed` and `server.suspended` go to everyone with access to the server who
+subscribed (owner, shares, team); `node.offline` and `node.recovered` are for platform
+administrators. `format` is `json` (the whole notification, below), `discord` (`{ content }`) or
+`slack` (`{ text }`). Email needs `SMTP_URL` on the orchestrator and always goes to the account's
+own address.
+
+```json
+{ "event": "server.crashed", "occurredAt": "2026-09-25T03:00:00.000Z",
+  "summary": "survival crashed: exited with code 137 — killed by the OOM killer: it ran out of memory for its limit",
+  "server": { "id": "…", "name": "survival" }, "details": { "reason": "…" } }
+```
+
+Deliveries are rows, retried with backoff (30 s, 2 min, 10 min, 30 min, 2 h, 12 h) and then given
+up; a `4xx` other than `408`/`429` is not retried. Headers: `X-NexusInfra-Event`,
+`X-NexusInfra-Delivery` (stable across retries), `X-NexusInfra-Signature` — see security.md.
+
 ### Host ports (#233)
 
 Two servers on one node can never hold the same host port. Every server's host ports are recorded

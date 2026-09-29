@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import { parseRetention, type BackupRetention } from './retention.js';
 import { PortConflictError } from './portPool.js';
-import type { PortAllocationRecord,
+import type { NotificationChannelRecord, NotificationDeliveryRecord, PortAllocationRecord,
   CreateServerConfigInput,
   DeploymentDetail,
   DeploymentRecord,
@@ -180,6 +180,31 @@ function parseRetentionColumn(raw: string | null | undefined): BackupRetention {
   } catch {
     return {};
   }
+}
+
+function toChannelRecord(c: {
+  id: string; userId: string; kind: string; target: string; format: string; events: string; secret: string | null;
+  allowPrivate: boolean; enabled: boolean; lastDeliveryAt: Date | null; lastError: string | null; createdAt: Date;
+}): NotificationChannelRecord {
+  return {
+    ...c,
+    events: parseStringList(c.events),
+    lastDeliveryAt: c.lastDeliveryAt?.toISOString() ?? null,
+    createdAt: c.createdAt.toISOString(),
+  };
+}
+
+function toDeliveryRecord(d: {
+  id: string; channelId: string; event: string; payload: string; status: string; attempts: number;
+  nextAttemptAt: Date; lastError: string | null; createdAt: Date; sentAt: Date | null;
+}): NotificationDeliveryRecord {
+  return {
+    ...d,
+    status: d.status as NotificationDeliveryRecord['status'],
+    nextAttemptAt: d.nextAttemptAt.toISOString(),
+    createdAt: d.createdAt.toISOString(),
+    sentAt: d.sentAt?.toISOString() ?? null,
+  };
 }
 
 function toConfigRecord(c: PrismaConfig): ServerConfigRecord {
@@ -743,6 +768,85 @@ export class PrismaRepository implements Repository {
 
   async deleteDatabase(id: string): Promise<void> {
     await this.client.serverDatabase.delete({ where: { id } });
+  }
+
+  async createNotificationChannel(input: Omit<NotificationChannelRecord, 'id' | 'lastDeliveryAt' | 'lastError' | 'createdAt'>): Promise<NotificationChannelRecord> {
+    const row = await this.client.notificationChannel.create({ data: { ...input, id: randomUUID(), events: JSON.stringify(input.events) } });
+    return toChannelRecord(row);
+  }
+
+  async listNotificationChannels(userIds: string[]): Promise<NotificationChannelRecord[]> {
+    const rows = await this.client.notificationChannel.findMany({ where: { userId: { in: userIds } }, orderBy: { createdAt: 'asc' } });
+    return rows.map(toChannelRecord);
+  }
+
+  async getNotificationChannel(id: string): Promise<NotificationChannelRecord | null> {
+    const row = await this.client.notificationChannel.findUnique({ where: { id } });
+    return row ? toChannelRecord(row) : null;
+  }
+
+  async updateNotificationChannel(
+    id: string,
+    patch: Partial<Pick<NotificationChannelRecord, 'events' | 'enabled' | 'lastDeliveryAt' | 'lastError'>>,
+  ): Promise<NotificationChannelRecord | null> {
+    const existing = await this.client.notificationChannel.findUnique({ where: { id } });
+    if (!existing) return null;
+    const row = await this.client.notificationChannel.update({
+      where: { id },
+      data: {
+        ...(patch.events !== undefined ? { events: JSON.stringify(patch.events) } : {}),
+        ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+        ...(patch.lastDeliveryAt !== undefined ? { lastDeliveryAt: patch.lastDeliveryAt ? new Date(patch.lastDeliveryAt) : null } : {}),
+        ...(patch.lastError !== undefined ? { lastError: patch.lastError } : {}),
+      },
+    });
+    return toChannelRecord(row);
+  }
+
+  async deleteNotificationChannel(id: string): Promise<void> {
+    await this.client.$transaction([
+      this.client.notificationDelivery.deleteMany({ where: { channelId: id } }),
+      this.client.notificationChannel.deleteMany({ where: { id } }),
+    ]);
+  }
+
+  async enqueueDeliveries(rows: Array<{ channelId: string; event: string; payload: string }>): Promise<NotificationDeliveryRecord[]> {
+    const created = await this.client.$transaction(rows.map((r) => this.client.notificationDelivery.create({ data: { ...r, id: randomUUID() } })));
+    return created.map(toDeliveryRecord);
+  }
+
+  async listDueDeliveries(now: string, limit: number): Promise<NotificationDeliveryRecord[]> {
+    const rows = await this.client.notificationDelivery.findMany({
+      where: { status: 'pending', nextAttemptAt: { lte: new Date(now) } },
+      orderBy: { nextAttemptAt: 'asc' },
+      take: limit,
+    });
+    return rows.map(toDeliveryRecord);
+  }
+
+  async claimDelivery(id: string, attempts: number): Promise<boolean> {
+    // A conditional update is atomic in the database: of two drains that read the
+    // same row, exactly one changes it.
+    const { count } = await this.client.notificationDelivery.updateMany({ where: { id, status: 'pending', attempts }, data: { attempts: attempts + 1 } });
+    return count === 1;
+  }
+
+  async updateDelivery(id: string, patch: Partial<Pick<NotificationDeliveryRecord, 'status' | 'attempts' | 'nextAttemptAt' | 'lastError' | 'sentAt'>>): Promise<void> {
+    await this.client.notificationDelivery.updateMany({
+      where: { id },
+      data: {
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.attempts !== undefined ? { attempts: patch.attempts } : {}),
+        ...(patch.nextAttemptAt !== undefined ? { nextAttemptAt: new Date(patch.nextAttemptAt) } : {}),
+        ...(patch.lastError !== undefined ? { lastError: patch.lastError } : {}),
+        ...(patch.sentAt !== undefined ? { sentAt: patch.sentAt ? new Date(patch.sentAt) : null } : {}),
+      },
+    });
+  }
+
+  async listDeliveries(channelId: string, limit: number): Promise<NotificationDeliveryRecord[]> {
+    const rows = await this.client.notificationDelivery.findMany({ where: { channelId }, orderBy: { createdAt: 'desc' }, take: limit });
+    return rows.map(toDeliveryRecord);
   }
 
   async listPortAllocations(filter: { nodeId?: string; deploymentId?: string }): Promise<PortAllocationRecord[]> {

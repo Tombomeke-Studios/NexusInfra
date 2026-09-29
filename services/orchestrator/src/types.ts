@@ -70,6 +70,36 @@ export interface PortAllocationRecord {
   createdAt: string;
 }
 
+/** Where an account hears about events (#236). */
+export interface NotificationChannelRecord {
+  id: string;
+  userId: string;
+  kind: string;
+  target: string;
+  format: string;
+  events: string[];
+  /** HMAC key for webhook signatures; never returned after creation. */
+  secret: string | null;
+  allowPrivate: boolean;
+  enabled: boolean;
+  lastDeliveryAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+}
+
+export interface NotificationDeliveryRecord {
+  id: string;
+  channelId: string;
+  event: string;
+  payload: string;
+  status: 'pending' | 'sent' | 'failed';
+  attempts: number;
+  nextAttemptAt: string;
+  lastError: string | null;
+  createdAt: string;
+  sentAt: string | null;
+}
+
 export interface ServerConfigRecord {
   id: string;
   userId: string;
@@ -499,6 +529,27 @@ export interface Repository {
   replacePortAllocations(deploymentId: string, nodeId: string | null, ports: number[]): Promise<PortAllocationRecord[]>;
   /** Mark one of a server's ports as its primary. False when it holds no such port. */
   setPrimaryPort(deploymentId: string, port: number): Promise<boolean>;
+
+  // Notifications (#236).
+  createNotificationChannel(input: Omit<NotificationChannelRecord, 'id' | 'lastDeliveryAt' | 'lastError' | 'createdAt'>): Promise<NotificationChannelRecord>;
+  listNotificationChannels(userIds: string[]): Promise<NotificationChannelRecord[]>;
+  getNotificationChannel(id: string): Promise<NotificationChannelRecord | null>;
+  updateNotificationChannel(
+    id: string,
+    patch: Partial<Pick<NotificationChannelRecord, 'events' | 'enabled' | 'lastDeliveryAt' | 'lastError'>>,
+  ): Promise<NotificationChannelRecord | null>;
+  /** Removes the channel and anything still queued for it. */
+  deleteNotificationChannel(id: string): Promise<void>;
+  enqueueDeliveries(rows: Array<{ channelId: string; event: string; payload: string }>): Promise<NotificationDeliveryRecord[]>;
+  listDueDeliveries(now: string, limit: number): Promise<NotificationDeliveryRecord[]>;
+  /**
+   * Take a pending delivery for sending, if nobody else has. Conditional on the
+   * attempt count read with it, so two drains that read the same row cannot
+   * both win; the winner's next update moves the count on.
+   */
+  claimDelivery(id: string, attempts: number): Promise<boolean>;
+  updateDelivery(id: string, patch: Partial<Pick<NotificationDeliveryRecord, 'status' | 'attempts' | 'nextAttemptAt' | 'lastError' | 'sentAt'>>): Promise<void>;
+  listDeliveries(channelId: string, limit: number): Promise<NotificationDeliveryRecord[]>;
 
   // Managed databases (#109).
   createDatabase(input: CreateServerDatabaseInput): Promise<ServerDatabaseRecord>;
