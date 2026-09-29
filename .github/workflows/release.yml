@@ -162,7 +162,8 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           STAGE="nexusinfra-$VERSION"
           mkdir -p "$STAGE"
-          cp -r deploy/community deploy/hosted "$STAGE/"
+          # monitoring/ sits beside both bundles: their `monitoring` profile mounts ../monitoring (#355).
+          cp -r deploy/community deploy/hosted deploy/monitoring "$STAGE/"
           cp deploy/install.sh deploy/install.ps1 deploy/README.md "$STAGE/"
           chmod +x "$STAGE/install.sh"
           # Pin both bundles to this exact release, so an archive keeps
