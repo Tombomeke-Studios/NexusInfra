@@ -1,5 +1,5 @@
 import { buildEnvelope, readPayload, type EventEnvelope, type NexusInfraEvent } from 'shared';
-import { containerNameFor } from './containerName.js';
+import { startCommandFor } from './startCommand.js';
 import type { DeploymentView, Repository } from './types.js';
 
 // Reconciling what a node actually runs with what we think it runs (#244).
@@ -141,15 +141,9 @@ export function createReconcileHandler(deps: ReconcileDeps) {
           await repo.appendDeploymentEvent(action.deploymentId, 'reconciled-restart', action.reason);
           await emit(KEY_START, {
             type: 'server.start',
-            payload: {
-              deploymentId: action.deploymentId,
-              nodeId: inventory.nodeId,
-              dockerImage: config.dockerImage,
-              containerName: containerNameFor(config.name, action.deploymentId),
-              env: config.env,
-              ports: config.ports,
-              resourceLimits: config.resourceLimits,
-            },
+            // The shared builder (#324): this used to be a hand-written copy that
+            // left out an imported server's mount.
+            payload: startCommandFor(config, action.deploymentId, inventory.nodeId),
           });
           break;
         }

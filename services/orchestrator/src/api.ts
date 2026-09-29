@@ -13,7 +13,7 @@ import { createServerTeamRouter } from './teams.js';
 import { EGGS, getEgg, buildEggDeployment, EggValidationError, type Egg } from './eggs.js';
 import { containerMemoryMb, derivedHeapMb, formatHeapMb, heapBudgetProblem, parseMemoryMb } from './memory.js';
 import { nodeCapacity, availableRamMb, availableCpuCores, isOverCommitted } from './capacity.js';
-import { containerNameFor } from './containerName.js';
+import { parsePersistPaths, startCommandFor } from './startCommand.js';
 import { planTransfer } from './transfer.js';
 import { pageOf, parseFilter, parsePage } from './deploymentQuery.js';
 import { getMinecraftVersions } from './minecraftVersions.js';
@@ -127,6 +127,13 @@ export type SnapshotBackupFn = (req: { agentUrl: string; containerId: string; pa
 export type RestoreBackupFn = (req: { agentUrl: string; containerId: string; ref: string; path: string }) => Promise<void>;
 export type RemoveBackupFn = (agentUrl: string, ref: string) => Promise<void>;
 
+/**
+ * Remove everything a deleted server left on its node — containers and the named
+ * volumes holding its data (#324). Never an imported host directory: those are
+ * the operator's, and the agent only removes volumes labelled as this server's.
+ */
+export type PurgeDeploymentDataFn = (agentUrl: string, deploymentId: string) => Promise<void>;
+
 /** Plan-quota check against the Billing Bridge (hosted). Fails open so billing outages never block infra. */
 export type QuotaResource = 'servers' | 'databases';
 export type CheckQuotaFn = (userId: string, resource: QuotaResource, current: number) => Promise<{ allowed: boolean; limit: number }>;
@@ -148,6 +155,7 @@ export interface ApiDeps {
    */
   minecraftVersions?: () => Promise<string[]>;
   checkQuota?: CheckQuotaFn;
+  purgeDeploymentData?: PurgeDeploymentDataFn;
 }
 
 // Default quota check: in the community edition everything is allowed (no
@@ -181,6 +189,11 @@ const defaultDeprovisionDatabase: DeprovisionDatabaseFn = async (agentUrl, conta
   await agentFetch(`${agentUrl}/databases/${containerId}`, { method: 'DELETE' });
 };
 
+const defaultPurgeDeploymentData: PurgeDeploymentDataFn = async (agentUrl, deploymentId) => {
+  const r = await agentFetch(`${agentUrl}/deployments/${encodeURIComponent(deploymentId)}/data`, { method: 'DELETE' });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `the node refused (${r.status})`);
+};
+
 const DB_PUBLIC_HOST = process.env.DATABASE_PUBLIC_HOST || 'localhost';
 
 const defaultSnapshotBackup: SnapshotBackupFn = async ({ agentUrl, ...spec }) => {
@@ -198,12 +211,6 @@ const defaultRemoveBackup: RemoveBackupFn = async (agentUrl, ref) => {
   await agentFetch(`${agentUrl}/backups/${ref}`, { method: 'DELETE' });
 };
 
-/**
- * The bind mount a server needs at start, if it imported a directory (#268).
- *
- * Where it mounts comes from the egg rather than a stored copy, so a server always
- * follows the catalogue rather than a value frozen when it was created.
- */
 /**
  * Why this server's heap will not fit its memory cap, or null when it does (#271).
  *
@@ -228,13 +235,6 @@ function heapProblemFor(
   return heapBudgetProblem({ heapMb, capMb });
 }
 
-function dataMountFor(config: ServerConfigRecord): { dataMount?: { hostPath: string; containerPath: string } } {
-  if (!config.dataPath) return {};
-  const containerPath = getEgg(config.type)?.dataPath;
-  if (!containerPath) return {};
-  return { dataMount: { hostPath: config.dataPath, containerPath } };
-}
-
 function userIdOf(req: Request): string {
   return principalOf(req).id;
 }
@@ -251,6 +251,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   const removeBackup = deps.removeBackup ?? defaultRemoveBackup;
   const scheduleActions = deps.scheduleActions ?? noopScheduleActions;
   const checkQuota = deps.checkQuota ?? defaultCheckQuota;
+  const purgeDeploymentData = deps.purgeDeploymentData ?? defaultPurgeDeploymentData;
   const router = Router();
   // Routes under `/deployments/<word>` that are not a server id must be matched
   // before the per-server guard (#238); mounting this first guarantees it.
@@ -271,7 +272,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   // Create a deployment: persist config, place it on the least-loaded node, and
   // command the agent to start it.
   router.post('/deployments', async (req: Request, res: Response) => {
-    const { name, dockerImage, ports, env, resourceLimits, autoRestart, type, nodeId, eggId, eggValues, dataPath } = req.body ?? {};
+    const { name, dockerImage, ports, env, resourceLimits, autoRestart, type, nodeId, eggId, eggValues, dataPath, persistPaths } = req.body ?? {};
     if (typeof name !== 'string' || !name) {
       return res.status(400).json({ error: 'name is required' });
     }
@@ -306,6 +307,14 @@ export function createApiRouter(deps: ApiDeps): Router {
         env: env ?? {},
         type: typeof type === 'string' ? type : 'generic',
       };
+    }
+
+    // Directories to keep across restarts beyond the egg's own (#324).
+    let extraPersist: string[] = [];
+    if (persistPaths !== undefined) {
+      const parsed = parsePersistPaths(persistPaths);
+      if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+      extraPersist = parsed.paths;
     }
 
     // Enforce the plan's server quota (hosted edition; no-op in community).
@@ -390,6 +399,7 @@ export function createApiRouter(deps: ApiDeps): Router {
       userId,
       name,
       dataPath: importedPath,
+      persistPaths: extraPersist,
       dockerImage: spec.dockerImage,
       ports: spec.ports,
       env: spec.env,
@@ -401,19 +411,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     await repo.appendDeploymentEvent(deployment.id, 'created', `placed on node ${node.id}`);
 
     await emit('infra.deployment.created', { type: 'deployment.created', payload: { deploymentId: deployment.id, userId: config.userId, resourceLimits: config.resourceLimits } });
-    await emit(KEY_START, {
-      type: 'server.start',
-      payload: {
-        deploymentId: deployment.id,
-        nodeId: node.id,
-        dockerImage: config.dockerImage,
-        containerName: containerNameFor(config.name, deployment.id),
-        env: config.env,
-        ports: config.ports,
-        resourceLimits: config.resourceLimits,
-        ...dataMountFor(config),
-      },
-    });
+    await emit(KEY_START, { type: 'server.start', payload: startCommandFor(config, deployment.id, node.id) });
 
     const detail = await repo.getDeployment(deployment.id);
     return res.status(201).json(detail);
@@ -486,7 +484,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   // silently restarted someone's server would be a worse surprise than one that
   // waits; the panel says the change lands on the next start.
   router.patch('/deployments/:id', requirePermission('server.edit'), async (req: Request, res: Response) => {
-    const { name, dockerImage, ports, env, resourceLimits, autoRestart, eggValues } = req.body ?? {};
+    const { name, dockerImage, ports, env, resourceLimits, autoRestart, eggValues, persistPaths } = req.body ?? {};
     const patch: UpdateServerConfigInput = {};
 
     const existing = await repo.getDeploymentConfig(req.params.id);
@@ -532,6 +530,11 @@ export function createApiRouter(deps: ApiDeps): Router {
       patch.resourceLimits = resourceLimits as ServerConfigRecord['resourceLimits'];
     }
     if (autoRestart !== undefined) patch.autoRestart = Boolean(autoRestart);
+    if (persistPaths !== undefined) {
+      const parsed = parsePersistPaths(persistPaths);
+      if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+      patch.persistPaths = parsed.paths;
+    }
 
     // The heap has to keep fitting the cap after an edit, not only at creation
     // (#271) — raising the heap is exactly how someone would break it later.
@@ -640,19 +643,7 @@ export function createApiRouter(deps: ApiDeps): Router {
         stoppedAt: null,
       });
       await repo.appendDeploymentEvent(detail.id, 'start-requested', `re-placed on node ${node.id}`);
-      await emit(KEY_START, {
-        type: 'server.start',
-        payload: {
-          deploymentId: detail.id,
-          nodeId: node.id,
-          dockerImage: config.dockerImage,
-          containerName: containerNameFor(config.name, detail.id),
-          env: config.env,
-          ports: config.ports,
-          resourceLimits: config.resourceLimits,
-          ...dataMountFor(config),
-        },
-      });
+      await emit(KEY_START, { type: 'server.start', payload: startCommandFor(config, detail.id, node.id) });
       return { status: 202, body: { status: 'starting', deploymentId: detail.id } };
     },
 
@@ -751,6 +742,18 @@ export function createApiRouter(deps: ApiDeps): Router {
         } catch {
           // Best-effort: still remove the record so nothing is orphaned in the UI.
         }
+      }
+    }
+    // The server's data lives in volumes on its node now (#324), and the delete
+    // dialog promises its files go with it. Best-effort like the databases above:
+    // a node that is gone cannot be asked, and that must not strand the record.
+    // The agent force-removes the container itself, so this does not wait on the
+    // stop command above to land first.
+    if (detail.nodeId) {
+      try {
+        await purgeDeploymentData(ownerAgentUrl, detail.id);
+      } catch (err) {
+        console.warn(`[orchestrator] could not remove the data of deleted server ${detail.id}: ${err instanceof Error ? err.message : err}`);
       }
     }
     await repo.deleteDeployment(detail.id);

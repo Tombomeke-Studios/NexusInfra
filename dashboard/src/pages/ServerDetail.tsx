@@ -61,7 +61,7 @@ import { InfoHint } from '../components/InfoHint';
 import { VersionSelect } from '../components/VersionSelect';
 import { permissionsFor, ROLE_LABELS, type ServerPermission, type ServerRole } from '../permissions';
 import { Terminal } from '../components/Terminal';
-import { isGameServer } from '../format';
+import { isGameServer, parsePathList } from '../format';
 
 // Server detail — ported from the redesign, and now backed end to end: header
 // actions, live stats, logs, terminal, files, databases, backups, schedules,
@@ -1243,6 +1243,7 @@ function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; o
   const [ports, setPorts] = useState(() => JSON.stringify(deployment.ports ?? {}, null, 2));
   const [env, setEnv] = useState(() => JSON.stringify(deployment.env ?? {}, null, 2));
   const [autoRestart, setAutoRestart] = useState(Boolean(deployment.autoRestart));
+  const [persist, setPersist] = useState(() => (deployment.persistPaths ?? []).join(', '));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -1303,6 +1304,7 @@ function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; o
         // losing it takes the server out of the browser (#313).
         ports: egg && hostPort.trim() && containerPort ? { ...otherPorts, [hostPort.trim()]: containerPort } : parsedPorts,
         autoRestart,
+        persistPaths: parsePathList(persist),
       });
       toast('Configuration saved — it applies the next time this server starts', 'success', 'Settings');
       await onSaved();
@@ -1381,6 +1383,16 @@ function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; o
           </div>
         </>
       )}
+      <div className="field">
+        <label className="field__label" htmlFor="cfg-persist">
+          Persistent directories
+          <InfoHint
+            text={`Kept when the server stops, restarts or is updated; everything else is reset on each start.${egg ? ` ${egg.dataPath} is kept already, because the ${egg.name} recipe stores its data there.` : ''} Directories the image declares as volumes are kept automatically.`}
+            label="Persistent directories help"
+          />
+        </label>
+        <input id="cfg-persist" className="input mono" value={persist} onChange={(e) => setPersist(e.target.value)} placeholder="/data, /var/lib/app" />
+      </div>
       <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, fontSize: '.86rem' }}>
         <input type="checkbox" checked={autoRestart} onChange={(e) => setAutoRestart(e.target.checked)} />
         Restart automatically if it stops unexpectedly

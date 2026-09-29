@@ -53,10 +53,16 @@ function buildApp(
         published.push({ key, envelope });
         return true;
       },
+      purgeDeploymentData: async (agentUrl, deploymentId) => {
+        purged.push({ agentUrl, deploymentId });
+      },
     })
   );
   return app;
 }
+
+/** What delete asked the agent to remove (#324); reset per test by whoever reads it. */
+const purged: Array<{ agentUrl: string; deploymentId: string }> = [];
 
 async function seedHealthyNode(repo: InMemoryRepository, id = 'node-local') {
   await repo.upsertNode({ id, name: id, lastHeartbeat: new Date().toISOString(), cpuPercent: 10, ramUsedMb: 1000, ramTotalMb: 8000 });
@@ -1883,5 +1889,85 @@ describe('a stopped server has no container to act on (#321)', () => {
     const bulk = await request(app).post('/deployments/bulk').send({ action: 'stop', ids: [created.body.id] });
     expect(bulk.body).toMatchObject({ succeeded: 0, failed: 1 });
     expect(published).toHaveLength(0);
+  });
+});
+
+describe('a server keeps its data across restarts (#324)', () => {
+  let repo: InMemoryRepository;
+  let published: Array<{ key: string; envelope: EventEnvelope }>;
+  let app: express.Express;
+
+  const startPayloads = () =>
+    published.filter((p) => p.key === 'infra.server.start').map((p) => readPayload(p.envelope.event) as Record<string, unknown>);
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    published = [];
+    purged.length = 0;
+    app = buildApp(repo, published);
+    await seedUser(repo);
+    await seedHealthyNode(repo);
+  });
+
+  it("tells the agent to persist an egg server's data directory", async () => {
+    const res = await request(app).post('/deployments').send({ name: 'mc', eggId: 'minecraft-java', eggValues: { EULA: 'TRUE' } });
+    expect(res.status).toBe(201);
+    expect(startPayloads()[0].persistPaths).toEqual(['/data']);
+  });
+
+  it('persists the directories a plain application names, and says so on the detail', async () => {
+    const res = await request(app).post('/deployments').send({ name: 'web', dockerImage: 'nginx', persistPaths: ['/usr/share/nginx/html/'] });
+    expect(res.status).toBe(201);
+    expect(res.body.persistPaths).toEqual(['/usr/share/nginx/html']);
+    expect(startPayloads()[0].persistPaths).toEqual(['/usr/share/nginx/html']);
+  });
+
+  it('refuses a directory that is not one', async () => {
+    const res = await request(app).post('/deployments').send({ name: 'web', dockerImage: 'nginx', persistPaths: ['/'] });
+    expect(res.status).toBe(400);
+    expect(startPayloads()).toHaveLength(0);
+  });
+
+  it('sends the same persistence again on every start, so the next container gets the same volumes', async () => {
+    const created = await request(app).post('/deployments').send({ name: 'web', dockerImage: 'nginx', persistPaths: ['/srv'] });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'stopped', containerId: null });
+
+    await request(app).post(`/deployments/${created.body.id}/start`).expect(202);
+    const [first, second] = startPayloads();
+    expect(second.persistPaths).toEqual(first.persistPaths);
+    expect(second.deploymentId).toBe(first.deploymentId);
+  });
+
+  it('can change what is persisted after creation', async () => {
+    const created = await request(app).post('/deployments').send({ name: 'web', dockerImage: 'nginx' });
+    const res = await request(app).patch(`/deployments/${created.body.id}`).send({ persistPaths: ['/var/lib/app'] });
+    expect(res.status).toBe(200);
+    expect(res.body.persistPaths).toEqual(['/var/lib/app']);
+    await request(app).patch(`/deployments/${created.body.id}`).send({ persistPaths: ['relative'] }).expect(400);
+  });
+
+  it("removes a deleted server's data from its node", async () => {
+    const created = await request(app).post('/deployments').send({ name: 'web', dockerImage: 'nginx' });
+    await request(app).delete(`/deployments/${created.body.id}`).expect(204);
+    expect(purged).toEqual([{ agentUrl: expect.any(String), deploymentId: created.body.id }]);
+  });
+
+  it('still deletes the record when the node cannot be reached', async () => {
+    const failing = express();
+    failing.use(express.json());
+    failing.use(asPrincipal());
+    failing.use(
+      createApiRouter({
+        repo,
+        checkQuota: allowQuota,
+        publish: async () => true,
+        purgeDeploymentData: async () => {
+          throw new Error('node agent unreachable');
+        },
+      })
+    );
+    const created = await request(failing).post('/deployments').send({ name: 'web', dockerImage: 'nginx' });
+    await request(failing).delete(`/deployments/${created.body.id}`).expect(204);
+    expect(await repo.getDeployment(created.body.id)).toBeNull();
   });
 });

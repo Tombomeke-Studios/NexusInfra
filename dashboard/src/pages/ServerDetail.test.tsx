@@ -248,6 +248,22 @@ describe('ServerDetail Settings tab', () => {
     expect(JSON.parse(patch![1].body as string)).toMatchObject({ name: 'new-name', env: { A: '1' } });
   });
 
+  it('saves which directories survive a restart (#324)', async () => {
+    renderDetail('owner', { name: 'web', env: {}, persistPaths: ['/srv'] });
+    await userEvent.click(await screen.findByRole('button', { name: 'settings' }));
+
+    const field = await screen.findByPlaceholderText('/data, /var/lib/app');
+    expect(field).toHaveValue('/srv');
+    await userEvent.clear(field);
+    await userEvent.type(field, '/srv, /var/lib/app');
+    await userEvent.click(screen.getByRole('button', { name: /save configuration/i }));
+
+    const patch = (globalThis.fetch as unknown as { mock: { calls: [string, { method?: string; body?: string }][] } }).mock.calls.find(
+      ([u, o]) => String(u).includes('/deployments/dep-1') && o?.method === 'PATCH'
+    );
+    expect(JSON.parse(patch![1].body as string).persistPaths).toEqual(['/srv', '/var/lib/app']);
+  });
+
   // An egg server was created with a proper form and then edited as raw JSON, with
   // no labels, no validation and nothing stopping you deleting EULA (#272).
   describe('an egg server', () => {

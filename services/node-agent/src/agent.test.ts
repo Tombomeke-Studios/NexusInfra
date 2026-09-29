@@ -31,6 +31,9 @@ class FakeRuntime implements ContainerRuntime {
     this.calls.push(`kill:${containerId}`);
     if (this.failOn === 'kill') throw new Error('no such container');
   }
+  async purgeDeployment(): Promise<{ containers: number; volumes: number }> {
+    return { containers: 0, volumes: 0 };
+  }
   async restart(containerId: string): Promise<void> {
     this.calls.push(`restart:${containerId}`);
     if (this.failOn === 'restart') throw new Error('restart failed');
@@ -106,6 +109,21 @@ describe('Node Agent command handling', () => {
     expect(published[0].envelope.event.type).toBe('server.started');
     expect((published[0].envelope.event.payload as any).containerId).toBe('container-xyz');
     expect((published[0].envelope.event.payload as any).nodeId).toBe(NODE_ID);
+  });
+
+  it('names the server and its persistent directories on the start spec (#324)', async () => {
+    const { runtime, agent } = makeAgent();
+    await agent.handleCommand(
+      cmd({ type: 'server.start', payload: { deploymentId: 'd-1', nodeId: NODE_ID, dockerImage: 'nginx', persistPaths: ['/data'] } })
+    );
+    expect(runtime.lastStartSpec?.deploymentId).toBe('d-1');
+    expect(runtime.lastStartSpec?.persistPaths).toEqual(['/data']);
+  });
+
+  it('starts with no extra directories when an older orchestrator sends none', async () => {
+    const { runtime, agent } = makeAgent();
+    await agent.handleCommand(cmd({ type: 'server.start', payload: { deploymentId: 'd-1', nodeId: NODE_ID, dockerImage: 'nginx' } }));
+    expect(runtime.lastStartSpec?.persistPaths).toEqual([]);
   });
 
   it('forwards the resource limits from the command to the runtime start spec (#107)', async () => {
