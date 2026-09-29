@@ -7,7 +7,7 @@ import { lineSplitter } from './logs.js';
 import { parseDockerStats, type ContainerStats } from './stats.js';
 import { resourceLimitsToHostConfig } from './limits.js';
 import { detectCgroupSupport, withCgroupSupport, type CgroupSupport } from './cgroupSupport.js';
-import { buildTarball, normalizeContainerPath, parseLsOutput, type FileEntry } from './files.js';
+import { buildTarball, extractSingleFile, normalizeContainerPath, parseLsOutput, type FileEntry } from './files.js';
 import { restoreTargetFor } from './backups.js';
 import { collectDisk, resolveDiskPath, type DiskPathChoice } from './disk.js';
 import { publishPorts } from './ports.js';
@@ -97,6 +97,8 @@ export interface ContainerRuntime {
   writeFile(containerId: string, path: string, content: string): Promise<void>;
   /** Create or overwrite a file from raw bytes — the binary-safe upload path (#263). */
   writeFileBytes(containerId: string, path: string, data: Buffer): Promise<void>;
+  /** Read a file's raw bytes (#235) — `readFile` is text, which loses anything that is not UTF-8. */
+  readFileBytes(containerId: string, path: string, maxBytes: number): Promise<Buffer>;
   /** Create a directory (and any missing parents). */
   makeDir(containerId: string, path: string): Promise<void>;
   /** Move/rename a file or directory. */
@@ -453,6 +455,28 @@ export class DockerodeRuntime implements ContainerRuntime {
     const { stdout, stderr, exitCode } = await this.exec(containerId, ['ls', '-lAp', dir]);
     if (exitCode !== 0) throw new Error(stderr.trim() || `cannot list ${dir}`);
     return parseLsOutput(stdout);
+  }
+
+  async readFileBytes(containerId: string, path: string, maxBytes: number): Promise<Buffer> {
+    const file = normalizeContainerPath(path);
+    const stream = await this.docker.getContainer(containerId).getArchive({ path: file });
+    const chunks: Buffer[] = [];
+    let total = 0;
+    await new Promise<void>((resolve, reject) => {
+      stream.on('data', (c: Buffer) => {
+        total += c.length;
+        // The whole file is held in memory, so it is capped like an upload is.
+        if (total > maxBytes + 64 * 1024) {
+          (stream as unknown as { destroy(): void }).destroy();
+          reject(new Error(`${file} is larger than the ${Math.round(maxBytes / 1024 / 1024)} MB a single transfer may be`));
+          return;
+        }
+        chunks.push(Buffer.from(c));
+      });
+      stream.on('end', () => resolve());
+      stream.on('error', reject);
+    });
+    return extractSingleFile(Buffer.concat(chunks));
   }
 
   async readFile(containerId: string, path: string): Promise<string> {

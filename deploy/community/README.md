@@ -12,6 +12,9 @@ docker compose up -d
 
 Open **http://localhost:8095** and sign in as `ADMIN_EMAIL` with the password you set.
 
+**SFTP** to each server's files listens on port `2022` (set `SFTP_PUBLIC_PORT` to publish it elsewhere).
+The Files tab shows the user name to use; the password is your account password or an API token.
+
 Everything runs from published images — you do not need a checkout of the source to use this.
 
 ## What you get

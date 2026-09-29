@@ -84,6 +84,7 @@ publish nothing else.
 |---|---|
 | dashboard `8095` | Yes — behind the proxy, as the only public entry point |
 | orchestrator `9200` | No. The dashboard's nginx reaches it on the internal network |
+| orchestrator `2022` (SFTP, #235) | Yes, if you want SFTP — **directly**, not through the HTTP proxy: it is SSH, which carries its own encryption. Remove it and `SFTP_PORT` to turn SFTP off |
 | gateway `9400` | Only if you use it as the entry point instead of the dashboard |
 | node-agent `9100` | **Never.** It starts containers and opens shells; see [images.md](images.md) |
 | control-room `9000`, billing-bridge `9300` | No |

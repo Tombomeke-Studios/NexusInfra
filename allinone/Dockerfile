@@ -105,5 +105,6 @@ VOLUME /data
 ENV DATA_DIR=/data
 ENV NODE_ID=node-local
 
-EXPOSE 80
+# 80 is the panel; 2022 is SFTP to a server's files (#235).
+EXPOSE 80 2022
 ENTRYPOINT ["/init"]

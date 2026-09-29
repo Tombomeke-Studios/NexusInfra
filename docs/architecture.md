@@ -14,7 +14,7 @@ event contracts, or infra topology.
 | `shared` (library) | ✅ Built | Event contract + RabbitMQ helpers, wire-compatible with FinVault |
 | `services/control-room` | ✅ Built | Heartbeat monitoring, status thresholds, uptime % + status transitions, HTTP status/uptime API |
 | `services/node-agent` | ✅ Built | Docker container lifecycle (with resource-limit/restart enforcement) + node heartbeat/resource reporting |
-| `services/orchestrator` | ✅ Built | Node registry, deployment API + least-loaded node selection, lifecycle events |
+| `services/orchestrator` | ✅ Built | Node registry, deployment API + least-loaded node selection, lifecycle events; an SFTP server over the agents' file API when `SFTP_PORT` is set (#235) |
 | `dashboard` | ✅ Built (MVP) | React/Vite panel: login, overview, deployment form, live server list + stop |
 | `services/billing-bridge` | ✅ Built (hosted) | Runtime tracking, credit wallet + ledger, FinVault top-up flow, plan quotas — inert in community edition (#146) |
 | `services/gateway` | ✅ Built | Single entry point: CORS, per-client rate limiting, token validation (JWT verified, API tokens passed to the orchestrator), streaming reverse proxy to the orchestrator (#20), and a WebSocket upgrade proxy for the terminal (#69) |

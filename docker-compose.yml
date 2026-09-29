@@ -64,6 +64,8 @@ services:
     container_name: nexusinfra-orchestrator
     ports:
       - "9200:9200"
+      # SFTP to a server's files (#235). Remove SFTP_PORT below to turn it off.
+      - "${SFTP_PUBLIC_PORT:-2022}:2022"
     environment:
       - PORT=9200
       # Must match every other service's edition — the Orchestrator serves
@@ -83,6 +85,11 @@ services:
       - BILLING_BRIDGE_URL=http://billing-bridge:9300
       # Must match the Node Agent's value (#169).
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-dev-internal-token}
+      - SFTP_PORT=2022
+      # The port people connect to, shown on the Files tab.
+      - SFTP_PUBLIC_PORT=${SFTP_PUBLIC_PORT:-2022}
+      # Kept on the volume: a host key that changes on upgrade looks like an attack.
+      - SFTP_HOST_KEY_PATH=/data/sftp_host_ed25519_key
     volumes:
       - orchestrator_data:/data
     depends_on:

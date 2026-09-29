@@ -18,7 +18,7 @@ inside a single container.
 docker run -d \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v nexusinfra:/data \
-  -p 8095:80 \
+  -p 8095:80 -p 2022:2022 \
   ghcr.io/tombomeke-studios/nexusinfra-community
 ```
 
@@ -33,7 +33,7 @@ Replace `community` with `hosted` for the multi-tenant edition; that one also ex
 |---|---|
 | Image | `ghcr.io/tombomeke-studios/nexusinfra-community` · `nexusinfra-hosted` |
 | Volume | `/data` — databases, backups, broker state and the generated secrets |
-| Port | 80 |
+| Ports | 80 (the panel) · 2022 (SFTP to server files, #235 — `SFTP_PORT=off` turns it off; set `SFTP_PUBLIC_PORT` when you publish it on another port) |
 | Needs | the Docker socket |
 
 **Using a broker you already run:** set `RABBITMQ_URL` and the built-in one is not started. The
@@ -67,7 +67,7 @@ as the edition it was not built for exits rather than starting in a half-configu
 
 | Image | Runs | Port | Purpose |
 |---|---|---|---|
-| `nexusinfra/orchestrator` | once | 9200 | Accounts, authorization, deployments, teams, schedules. Owns the database. |
+| `nexusinfra/orchestrator` | once | 9200 · 2022 (SFTP) | Accounts, authorization, deployments, teams, schedules, SFTP. Owns the database. |
 | `nexusinfra/node-agent` | **once per Docker host** | 9100 | Container lifecycle, logs, stats, files, exec, terminal, databases, backups. |
 | `nexusinfra/control-room` | once | 9000 | Heartbeat monitoring, health status, uptime. |
 | `nexusinfra/gateway` | once | 9400 | External entry point: CORS, rate limiting, JWT validation, reverse proxy. |
@@ -128,8 +128,11 @@ scrape_configs:
 | `SMTP_URL` | no | Turns on **email notifications** (#236), e.g. `smtps://user:pass@smtp.example.com:465` or `smtp://user:pass@mail.local:587` (STARTTLS when offered). Unset means webhooks only, and the panel says so. |
 | `SMTP_FROM` | no | The sender, e.g. `NexusInfra <panel@example.com>`. |
 | `PANEL_URL` | no | The panel's public address, e.g. `https://panel.example.com`. With `SMTP_URL`, turns on **password reset by email** (#344); the mailed link is built from this, never from the request. |
+| `SFTP_PORT` | no | Turns on **SFTP to server files** (#235) on this port inside the container — the bundles use `2022`. Unset means off. It is raw TCP: publish the port directly, not through the dashboard's nginx or the gateway. |
+| `SFTP_PUBLIC_PORT` | no | The port people connect to, shown on the Files tab, when you publish SFTP on a different one. Defaults to `SFTP_PORT`. |
+| `SFTP_HOST_KEY_PATH` | with SFTP | Where the SFTP host key lives; generated on first start. Put it on the `/data` volume (`/data/sftp_host_ed25519_key`) — a key that changes on every upgrade makes every client warn about an attack. |
 
-Volume: `/data` — the database, which also holds notifications waiting to be retried. Back this up.
+Volume: `/data` — the database, which also holds notifications waiting to be retried, and the SFTP host key. Back this up.
 
 ### `node-agent`
 
@@ -146,6 +149,7 @@ Volume: `/data` — the database, which also holds notifications waiting to be r
 | `BACKUP_S3_PREFIX` | no | Key prefix inside the bucket, default `nexusinfra-backups/`, so one bucket can serve several installations. |
 | `BACKUP_S3_PATH_STYLE` | no | `false` for virtual-hosted addressing (`bucket.endpoint`). Default is path-style, which self-hosted stores expect. |
 | `DISK_PATH` | no | **Rarely needed.** Which filesystem to report disk usage for (#276). The agent works this out by itself: it asks Docker for its data root and measures that when it is readable, and otherwise measures its own root — which under overlay2 already reports the filesystem the Docker data sits on, because that is where the container's writable layer lives. Set this only when the disk you care about is somewhere else, e.g. volumes on a second drive mounted into the agent. A node that cannot measure at all reports nothing rather than zero. |
+| `MAX_DOWNLOAD_BYTES` | no | Largest file one SFTP download may read, in bytes (#235); default 256 MB. The file is held in memory while it is sent. |
 | `IMPORT_ROOT` | no | Enables importing existing server directories (#268). A path a person may point a new server at, so it runs against files already on this host. **Unset means the feature is off, which is the default.** Only a platform administrator may use it, and the agent refuses anything that does not resolve inside this root. Mount the same path into the agent container so it can see it. |
 
 Requires the Docker socket: `-v /var/run/docker.sock:/var/run/docker.sock`.

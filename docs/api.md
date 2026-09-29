@@ -92,12 +92,14 @@ Runtime config the dashboard reads before login to decide whether billing UI ren
 Contains no sensitive data.
 
 ```json
-{ "edition": "community", "passwordResetByEmail": false }
+{ "edition": "community", "passwordResetByEmail": false, "sftpPort": 2022 }
 ```
 
 `edition` ∈ `community | hosted`, resolved from the service's `NEXUS_EDITION` (default `community`).
 `passwordResetByEmail` says whether "Forgot your password?" can send a link (#344) — true only with
 `SMTP_URL` *and* `PANEL_URL` set; a yes/no, never the mail setup behind it.
+`sftpPort` is the port to connect to for SFTP (#235) — `SFTP_PUBLIC_PORT`, else `SFTP_PORT` — or `null`
+when SFTP is off.
 
 ### `POST /auth/password-reset`  *(public)*
 
@@ -591,6 +593,25 @@ form on the agent, and file operations run as argv arrays (no shell) so a path c
 | `POST /deployments/:id/files/dir` | Make a directory — body `{ path }` → `201` |
 | `POST /deployments/:id/files/rename` | Move/rename — body `{ from, to }` |
 | `DELETE /deployments/:id/files?path=/f` | Delete a file or directory (recursive) → `204` |
+
+### SFTP (#235)
+
+The same files over SFTP, served by the Orchestrator on `SFTP_PORT` (off when unset; the bundles use
+`2022`). It is a second door to the operations above, not a second set of rules:
+
+| | |
+|---|---|
+| User name | `<account email>.<server id>` — the full id, or its first eight characters (shown on the Files tab) |
+| Password | the account password, **or** an `nxi_` API token. An account with two-factor sign-in (or any account under `REQUIRE_TOTP`) must use a token |
+| Logs in | holders of `file.read` on that server (operator and up) |
+| Changes files | holders of `file.write` (admin and up), with a password or a token that has the `write` scope |
+| Operations | list, stat, download, upload (whole file, up to 64 MB), append, mkdir, rename, remove, rmdir (empty directories only). Setting times or modes is acknowledged and ignored; links are refused |
+
+Access and the running container are resolved again on every operation, so a revoked share, a lowered
+role or a stopped server takes effect inside an open session. Every login is recorded in the server's
+activity (`sftp-login`). Password and shell sessions are the only kinds offered: no shell, no exec, no
+port forwarding. Failed logins count against the same per-address and per-account budget as the
+panel's login.
 
 ### `POST /deployments/:id/exec`  *(running deployment)*
 

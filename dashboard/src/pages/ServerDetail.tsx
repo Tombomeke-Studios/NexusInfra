@@ -76,6 +76,7 @@ import { InfoHint } from '../components/InfoHint';
 import { VersionSelect } from '../components/VersionSelect';
 import { permissionsFor, ROLE_LABELS, type ServerPermission, type ServerRole } from '../permissions';
 import { Terminal } from '../components/Terminal';
+import { SftpDetails } from '../components/SftpDetails';
 import { formatBytes, formatRelative, isGameServer, parsePathList } from '../format';
 
 // Server detail — ported from the redesign, and now backed end to end: header
@@ -242,7 +243,12 @@ export function ServerDetail() {
       {/* Tab content */}
       {activeTab === 'console' && <ConsoleTab id={d.id} running={running} containerId={d.containerId} />}
       {activeTab === 'terminal' && <TerminalTab id={d.id} running={running} />}
-      {activeTab === 'files' && <FilesTab id={d.id} running={running} />}
+      {activeTab === 'files' && (
+        <>
+          <SftpDetails deploymentId={d.id} canWrite={allows('file.write')} />
+          <FilesTab id={d.id} running={running} />
+        </>
+      )}
       {activeTab === 'databases' && <DatabasesTab id={d.id} running={running} />}
       {activeTab === 'backups' && <BackupsTab id={d.id} running={running} retention={d.backupRetention ?? {}} onRetentionSaved={load} />}
       {activeTab === 'network' && (
