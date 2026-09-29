@@ -1,0 +1,29 @@
+# Prometheus for NexusInfra (#355) — scrapes every service's /metrics (#246).
+# Started by the `monitoring` compose profile; Grafana is the way in.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# The billing bridge exists only in the hosted edition, so its job lives in a
+# file of its own that only hosted stacks mount here. A community stack would
+# otherwise show a target that is always down.
+scrape_config_files:
+  - /etc/prometheus/scrape.d/*.yml
+
+scrape_configs:
+  # The token comes from METRICS_TOKEN, written to this file at start by the
+  # compose entrypoint — never into this file. Services without METRICS_TOKEN
+  # ignore it.
+  - job_name: orchestrator
+    authorization: { credentials_file: /tmp/metrics_token }
+    static_configs: [{ targets: ['orchestrator:9200'] }]
+  - job_name: node-agent
+    authorization: { credentials_file: /tmp/metrics_token }
+    static_configs: [{ targets: ['node-agent:9100'] }]
+  - job_name: control-room
+    authorization: { credentials_file: /tmp/metrics_token }
+    static_configs: [{ targets: ['control-room:9000'] }]
+  - job_name: gateway
+    authorization: { credentials_file: /tmp/metrics_token }
+    static_configs: [{ targets: ['gateway:9400'] }]

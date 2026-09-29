@@ -26,6 +26,7 @@ services:
       - PORT=9000
       - NEXUS_EDITION=${NEXUS_EDITION:-community}
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - METRICS_TOKEN=${METRICS_TOKEN:-}
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
     depends_on:
       - rabbitmq
@@ -45,6 +46,7 @@ services:
       - NEXUS_EDITION=${NEXUS_EDITION:-community}
       - NODE_ID=node-local
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - METRICS_TOKEN=${METRICS_TOKEN:-}
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
       # Must match the Orchestrator's value (#169).
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-dev-internal-token}
@@ -72,6 +74,7 @@ services:
       # GET /config to the dashboard and gates plan-quota checks on it (#173).
       - NEXUS_EDITION=${NEXUS_EDITION:-community}
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - METRICS_TOKEN=${METRICS_TOKEN:-}
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
       # SQLite unless ORCHESTRATOR_DATABASE_URL names PostgreSQL (#241).
       - DATABASE_URL=${ORCHESTRATOR_DATABASE_URL:-file:/data/orchestrator.db}
@@ -109,6 +112,7 @@ services:
       - PORT=9300
       - NEXUS_EDITION=${NEXUS_EDITION:-community}
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - METRICS_TOKEN=${METRICS_TOKEN:-}
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
       # SQLite unless BILLING_DATABASE_URL names PostgreSQL — its own schema in
       # the same database, e.g. …/nexusinfra?schema=billing (#241).
@@ -136,6 +140,7 @@ services:
       - ORCHESTRATOR_URL=http://orchestrator:9200
       - JWT_SECRET=${JWT_SECRET:-dev-secret}
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - METRICS_TOKEN=${METRICS_TOKEN:-}
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
     depends_on:
       - orchestrator
@@ -176,8 +181,55 @@ services:
       retries: 20
     # Not published: only the services on this network use it.
 
+  # Monitoring (#355) — Prometheus scraping every service's /metrics (#246) and
+  # Grafana with the NexusInfra dashboard provisioned. Off unless asked for:
+  #   docker compose --profile monitoring up -d   → http://localhost:${GRAFANA_PORT:-3000}
+  # Set METRICS_TOKEN in .env to put /metrics behind a token; Prometheus sends it.
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: nexusinfra-prometheus
+    profiles: [monitoring]
+    restart: unless-stopped
+    environment:
+      - METRICS_TOKEN=${METRICS_TOKEN:-}
+    # The token is written to a file at start, so it is never in a config file.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - printf '%s' "$$METRICS_TOKEN" > /tmp/metrics_token && exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus --storage.tsdb.retention.time=15d
+    volumes:
+      - ./deploy/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/monitoring/prometheus/billing-bridge.yml:/etc/prometheus/scrape.d/billing-bridge.yml:ro
+      - prometheus_data:/prometheus
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: nexusinfra-grafana
+    profiles: [monitoring]
+    restart: unless-stopped
+    ports: ['${GRAFANA_PORT:-3000}:3000']
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/dashboards/nexusinfra.json
+    # Grafana's default login is admin/admin; refuse to start without a real one.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - '[ -n "$$GF_SECURITY_ADMIN_PASSWORD" ] || { echo "Set GRAFANA_ADMIN_PASSWORD in .env to start Grafana." >&2; exit 1; }; exec /run.sh'
+    volumes:
+      - ./deploy/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on: [prometheus]
+
 volumes:
   rabbitmq_data:
   orchestrator_data:
   billing_data:
   postgres_data:
+  prometheus_data:
+  grafana_data:

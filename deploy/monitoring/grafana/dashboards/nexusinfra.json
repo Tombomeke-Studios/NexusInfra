@@ -1,0 +1,945 @@
+{
+  "uid": "nexusinfra-overview",
+  "title": "NexusInfra",
+  "description": "The panel's own health: services, servers, nodes, traffic, events and delivery (#355).",
+  "tags": [
+    "nexusinfra"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Is everything up",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Services",
+      "description": "Whether Prometheus could scrape each service just now. DOWN means the process is gone or unreachable \u2014 the panel's own heartbeat view is the Control Room.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 12,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "up",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "UP",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Servers running",
+      "description": "Servers the orchestrator believes are running.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 4,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "sum(nexusinfra_deployments{status=\"running\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Nodes healthy",
+      "description": "Nodes whose heartbeat is current (degraded after 3 s, offline after 10 s).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 4,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "sum(nexusinfra_nodes{health=\"healthy\"}) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Dead letters",
+      "description": "Events a consumer rejected (#243). Anything here is an event that did nothing \u2014 a wrong FINVAULT_MESSAGE_KEY shows up here first. No value means the Control Room could not ask the broker.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 1,
+        "w": 4,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "max(nexusinfra_dead_letters)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "Servers and nodes",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Servers by status",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 7,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "nexusinfra_deployments",
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Nodes by health",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 7,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "nexusinfra_nodes",
+          "legendFormat": "{{health}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Containers on each node",
+      "description": "What each node agent sees in Docker, by container state.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 7,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "nexusinfra_agent_containers",
+          "legendFormat": "{{instance}} {{state}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Traffic",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Requests per second",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "sum by (service) (rate(nexusinfra_http_requests_total[5m]))",
+          "legendFormat": "{{service}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Server errors (5xx) per second",
+      "description": "By route pattern \u2014 never a raw path, so an id cannot become a series.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 16,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "sum by (service, route) (rate(nexusinfra_http_requests_total{status=\"5xx\"}[5m])) or vector(0)",
+          "legendFormat": "{{service}} {{route}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Slowest routes (p95)",
+      "description": "The five slowest route patterns by 95th percentile over five minutes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 16,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "topk(5, histogram_quantile(0.95, sum by (le, service, route) (rate(nexusinfra_http_request_duration_seconds_bucket[5m]))))",
+          "legendFormat": "{{service}} {{route}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Gateway outcomes per second",
+      "description": "proxied and upgraded are traffic; rate_limited, unauthorized, no_route and upstream_error are refusals.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "sum by (outcome) (rate(nexusinfra_gateway_requests_total[5m]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 15,
+      "type": "bargauge",
+      "title": "Gateway refusals by route (last hour)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "sum by (route, outcome) (increase(nexusinfra_gateway_requests_total{outcome!~\"proxied|upgraded\"}[1h]))",
+          "legendFormat": "{{route}} \u00b7 {{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "basic",
+        "orientation": "horizontal"
+      }
+    },
+    {
+      "id": 16,
+      "type": "row",
+      "title": "Events and delivery",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Events the broker never took (last hour)",
+      "description": "A publish that failed is an event that never happened. Lifecycle reports are held in the agent's outbox and replayed; anything else is lost.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 33,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "sum by (routing_key) (increase(nexusinfra_events_published_total{outcome!=\"ok\"}[1h])) or vector(0)",
+          "legendFormat": "{{routing_key}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Agent outbox",
+      "description": "Lifecycle reports held while the broker was unreachable (#167). Dropped means the bound was hit and the oldest were discarded.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 33,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "sum(nexusinfra_outbox_pending)",
+          "legendFormat": "waiting to be replayed"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "sum(nexusinfra_outbox_dropped)",
+          "legendFormat": "dropped (outbox full)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Lifecycle reports per minute",
+      "description": "started / stopped / crashed as the orchestrator received them.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 33,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "sum by (type) (rate(nexusinfra_lifecycle_reports_total[5m])) * 60",
+          "legendFormat": "{{type}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Containers that stopped or came back on their own (last hour)",
+      "description": "Docker events nobody asked for (#332) \u2014 a game server that dies every few minutes shows here before anyone reports it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 41,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "sum by (action) (increase(nexusinfra_agent_container_events_total[1h]))",
+          "legendFormat": "{{action}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Commands the agents ran per minute",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 41,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "sum by (type) (rate(nexusinfra_agent_commands_total[5m])) * 60",
+          "legendFormat": "{{type}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Notifications (last hour)",
+      "description": "Delivery attempts by outcome and channel (#236). A rising failed line means people are not being told.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 41,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "sum by (outcome, kind) (increase(nexusinfra_notifications_total[1h])) or vector(0)",
+          "legendFormat": "{{kind}} {{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 23,
+      "type": "row",
+      "title": "Processes",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 49,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 24,
+      "type": "timeseries",
+      "title": "Memory (RSS)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 50,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "process_resident_memory_bytes",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "Monitored by the Control Room",
+      "description": "Services and nodes by their heartbeat status.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 50,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "nexusinfra_monitored_sources",
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 26,
+      "type": "table",
+      "title": "Versions running",
+      "description": "What is deployed where \u2014 a service left behind on an upgrade shows a different version.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 50,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "nexusinfra_build_info",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {},
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true,
+              "instance": true
+            },
+            "renameByName": {
+              "job": "Service",
+              "version": "Version",
+              "edition": "Edition",
+              "service": "Reports as"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 27,
+      "type": "stat",
+      "title": "Metrics that could not be read (last hour)",
+      "description": "A gauge that failed to read is left out of the scrape rather than reported as zero (#246); this counts how often that happened.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nexusinfra-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 58,
+        "w": 8,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nexusinfra-prometheus"
+          },
+          "expr": "sum(increase(nexusinfra_metric_errors_total[1h])) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {}
+    }
+  ],
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  }
+}
