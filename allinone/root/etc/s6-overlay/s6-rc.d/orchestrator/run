@@ -3,4 +3,5 @@ set -a
 . /run/nexusinfra.env
 set +a
 exec 2>&1
-exec sh -c 'cd /app/services/orchestrator && npx prisma migrate deploy && node dist/index.js'
+# db:deploy applies the SQLite or PostgreSQL migrations, whichever DATABASE_URL names (#241).
+exec sh -c 'cd /app/services/orchestrator && npm run db:deploy && node dist/index.js'

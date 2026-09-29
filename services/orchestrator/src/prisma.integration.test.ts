@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'child_process';
 import { mkdtempSync, rmSync } from 'fs';
+import { createRequire } from 'module';
+import { randomUUID } from 'crypto';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -13,33 +15,69 @@ import { PortConflictError } from './portPool.js';
 // the migrations apply from nothing, a unique index refuses a race, a
 // conditional update claims a row once, a transaction deletes everything.
 //
-// SQLite, because that is what ships; the same file runs against PostgreSQL
-// once #241 lands.
+// Against each database the panel supports (#241): SQLite always, PostgreSQL
+// when TEST_POSTGRES_URL names one — which CI's integration job does, with
+// REQUIRE_POSTGRES so a lost database fails the job instead of skipping it.
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serviceDir = path.resolve(here, '..');
+const prismaBin = path.join(serviceDir, '..', '..', 'node_modules', '.bin', 'prisma');
+const PG_URL = process.env.TEST_POSTGRES_URL;
+if (process.env.REQUIRE_POSTGRES && !PG_URL) throw new Error('REQUIRE_POSTGRES is set but TEST_POSTGRES_URL is not');
 
-describe('PrismaRepository against a real database (#242)', () => {
-  let dir: string;
+interface Target {
+  name: string;
+  /** Migrate a fresh database from nothing, and return a client for it plus how to throw it away. */
+  setup(): { client: PrismaClient; teardown(): Promise<void> };
+}
+
+const targets: Target[] = [
+  {
+    name: 'SQLite',
+    setup() {
+      const dir = mkdtempSync(path.join(os.tmpdir(), 'nexusinfra-prisma-'));
+      const url = `file:${path.join(dir, 'test.db')}`;
+      // Every migration, in order, from an empty file — what a fresh install does.
+      execFileSync(prismaBin, ['migrate', 'deploy'], { cwd: serviceDir, env: { ...process.env, DATABASE_URL: url }, stdio: 'pipe' });
+      const client = new PrismaClient({ datasources: { db: { url } } });
+      return { client, teardown: async () => { await client.$disconnect(); rmSync(dir, { recursive: true, force: true }); } };
+    },
+  },
+];
+
+if (PG_URL) {
+  targets.push({
+    name: 'PostgreSQL',
+    setup() {
+      // A schema of its own per run, so runs never see each other's rows.
+      const schema = `it_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+      const url = `${PG_URL}${PG_URL.includes('?') ? '&' : '?'}schema=${schema}`;
+      execFileSync(prismaBin, ['migrate', 'deploy', '--schema', 'prisma/postgres/schema.prisma'], { cwd: serviceDir, env: { ...process.env, DATABASE_URL: url }, stdio: 'pipe' });
+      const { PrismaClient: PgClient } = createRequire(import.meta.url)('../generated/postgres/index.js') as { PrismaClient: new (o: unknown) => PrismaClient };
+      const client = new PgClient({ datasources: { db: { url } } });
+      return {
+        client,
+        teardown: async () => {
+          await client.$executeRawUnsafe(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+          await client.$disconnect();
+        },
+      };
+    },
+  });
+}
+
+describe.each(targets)('PrismaRepository against $name (#242, #241)', (target) => {
   let client: PrismaClient;
+  let teardown: () => Promise<void>;
   let repo: PrismaRepository;
 
   beforeAll(() => {
-    dir = mkdtempSync(path.join(os.tmpdir(), 'nexusinfra-prisma-'));
-    const url = `file:${path.join(dir, 'test.db')}`;
-    // Every migration, in order, from an empty file — what a fresh install does.
-    execFileSync(path.join(serviceDir, '..', '..', 'node_modules', '.bin', 'prisma'), ['migrate', 'deploy'], {
-      cwd: serviceDir,
-      env: { ...process.env, DATABASE_URL: url },
-      stdio: 'pipe',
-    });
-    client = new PrismaClient({ datasources: { db: { url } } });
+    ({ client, teardown } = target.setup());
     repo = new PrismaRepository(client);
-  });
+  }, 60_000);
 
   afterAll(async () => {
-    await client?.$disconnect();
-    rmSync(dir, { recursive: true, force: true });
+    await teardown?.();
   });
 
   async function server(name: string, extra: Record<string, unknown> = {}) {

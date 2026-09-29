@@ -21,6 +21,9 @@ COPY --from=builder /app/shared/package*.json ./shared/
 COPY --from=builder /app/services/orchestrator/dist ./services/orchestrator/dist
 COPY --from=builder /app/services/orchestrator/package*.json ./services/orchestrator/
 COPY --from=builder /app/services/orchestrator/prisma ./services/orchestrator/prisma
+# db:deploy picks SQLite or PostgreSQL migrations by DATABASE_URL (#241), and the
+# SQLite → PostgreSQL copy lives there too; both are repo-root scripts.
+COPY scripts/ ./scripts/
 # prisma (CLI, for migrate deploy) + @prisma/client are runtime deps; the
 # orchestrator postinstall regenerates the client against the copied schema.
 RUN npm install --omit=dev

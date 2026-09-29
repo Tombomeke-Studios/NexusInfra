@@ -6,3 +6,5 @@ export * from './version.js';
 export * from './outbox.js';
 export * from './internalToken.js';
 export * from './metrics.js';
+export * from './database.js';
+export * from './copyDatabase.js';

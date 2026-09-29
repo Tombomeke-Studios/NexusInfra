@@ -1,0 +1,342 @@
+// GENERATED from ../schema.prisma by scripts/postgres-schema.mjs — do not edit.
+// Change ../schema.prisma, run `npm run db:sync-postgres`, and add a migration
+// for each database (see docs/deployment.md#postgresql).
+
+// Orchestrator persistence — Prisma + SQLite (FinVault pattern, PostgreSQL-ready).
+// This schema (and its generated migrations/) is the source of truth for the data
+// model; docs describe it in prose only (see CLAUDE.md documentation rules).
+//
+// Entities mirror CONCEPTS/infrastructure-platform/functional-analysis.md §2.2.
+// JSON-shaped columns (ports, environmentVars, resourceLimits) are stored as
+// serialized strings because SQLite has no native JSON type.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../generated/postgres"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// A person who can sign in to the panel (#174). Identity is local: the
+// Orchestrator stores the credential and issues the JWT. `platformRole` is
+// panel-wide standing (who may manage nodes and see every server), distinct from
+// the per-server role a user holds on an individual deployment.
+//
+// `id` is deliberately free-form rather than always a UUID: the backfill
+// migration seeds rows whose ids are the legacy `ServerConfig.userId` strings
+// ("admin", "dev-user") so existing deployments keep a valid owner.
+model User {
+  id           String   @id
+  email        String   @unique
+  displayName  String
+  passwordHash String
+  platformRole String   @default("user")
+  createdAt    DateTime @default(now())
+  // Two-factor (#229). The secret is present from the moment enrolment starts;
+  // enabledAt is what says the person proved they can produce a code from it.
+  totpSecret    String?
+  totpEnabledAt DateTime?
+}
+
+// One unused recovery code (#229) — the answer to a lost phone. Stored as a
+// digest, deleted as it is used, so a code works exactly once.
+model RecoveryCode {
+  id       String   @id
+  userId   String
+  codeHash String   @unique
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// One signed-in session (#227).
+//
+// JWTs are stateless, so before this a token stayed valid until it expired no
+// matter what happened to the account behind it: changing your password, or
+// removing someone's access, did not end their session. The token now names a
+// session row, and a session that is gone is a token that no longer works.
+//
+// The cost is a database read per authenticated request, which is the price of
+// being able to answer "log me out everywhere" truthfully.
+model Session {
+  id         String   @id
+  userId     String
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  // Recorded so a person can recognise their own sessions when ending one.
+  userAgent  String?
+  ipAddress  String?
+
+  @@index([userId])
+}
+
+// A group of people who share servers (#177). Per-server invitations cover
+// one-off sharing; a team means "everyone here gets my servers" without
+// re-inviting each person to each one. A server is still owned by an individual
+// and is optionally shared to one team, so ownership never becomes ambiguous.
+model Team {
+  id        String       @id
+  name      String
+  ownerId   String
+  createdAt DateTime     @default(now())
+  members   TeamMember[]
+  servers   ServerConfig[]
+}
+
+// Somebody's standing inside a team, which becomes their role on every server
+// that team is shared with.
+model TeamMember {
+  id        String   @id
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId    String
+  userId    String
+  role      String   @default("viewer")
+  createdAt DateTime @default(now())
+
+  @@unique([teamId, userId])
+}
+
+// A Docker host the Orchestrator can place containers on. Rows are maintained
+// from node heartbeats (monitoring.heartbeat.node.#), not created by hand.
+//
+// `maintenance` is the one field a heartbeat must never touch: it is an
+// administrator draining the host, and a liveness beat that reset it would put
+// the node back in the placement pool a second later (#258).
+model Node {
+  id            String       @id
+  name          String
+  location      String?
+  ipAddress     String?
+  agentUrl      String?
+  lastHeartbeat DateTime
+  cpuPercent    Float?
+  cpuCores      Int?
+  ramUsedMb     Float?
+  ramTotalMb    Float?
+  diskUsedGb    Float?
+  diskTotalGb   Float?
+  maintenance   Boolean      @default(false)
+  // The host ports servers here may be given (#233). Both null means no pool:
+  // any free port may be named, and "auto" has nothing to choose from.
+  portRangeStart Int?
+  portRangeEnd   Int?
+  createdAt     DateTime     @default(now())
+  deployments   Deployment[]
+}
+
+// A user's desired server (image + runtime config). One config can be deployed
+// many times over its lifetime.
+model ServerConfig {
+  id              String       @id
+  userId          String
+  // Detaching rather than cascading: deleting a team must never delete servers.
+  team            Team?        @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  teamId          String?
+  name            String
+  dockerImage     String
+  ports           String       @default("{}")
+  environmentVars String       @default("{}")
+  resourceLimits  String       @default("{}")
+  autoRestart     Boolean      @default(false)
+  // An existing host directory on the node, mounted as this server's data
+  // directory (#268). Null for the normal case of a server that starts empty.
+  dataPath        String?
+  // Extra container directories kept in named volumes across restarts (#324),
+  // as a JSON list. The egg's own data directory is not stored here — it
+  // follows the catalogue, like dataPath's mount point does.
+  persistPaths    String       @default("[]")
+  // How many backups to keep, and for how long (#232), as JSON. Empty keeps
+  // everything, which is what every server did before this existed.
+  backupRetention String       @default("{}")
+  type            String       @default("generic")
+  createdAt       DateTime     @default(now())
+  deployments     Deployment[]
+}
+
+// A single placement of a ServerConfig onto a Node. Status transitions:
+// pending -> running -> stopped, or -> crashed / failed.
+model Deployment {
+  id             String            @id
+  serverConfig   ServerConfig      @relation(fields: [serverConfigId], references: [id])
+  serverConfigId String
+  node           Node?             @relation(fields: [nodeId], references: [id])
+  nodeId         String?
+  containerId    String?
+  status         String            @default("pending")
+  startedAt      DateTime?
+  stoppedAt      DateTime?
+  createdAt      DateTime          @default(now())
+  events         DeploymentEvent[]
+  databases      ServerDatabase[]
+  backups        ServerBackup[]
+  schedules      ServerSchedule[]
+  subusers       ServerSubuser[]
+}
+
+// A person granted access to a server, with a role (#112). These are the grants
+// access.ts resolves on every request (#175).
+//
+// An invitation is addressed to an email, which may not correspond to an account
+// yet — you should be able to share a server with someone before they have signed
+// up. Such a grant stays pending and carries no access; it is bound to the
+// account and activated the moment that person appears (#176). The address is
+// kept either way, so revoking by email works in both states.
+model ServerSubuser {
+  id           String     @id
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+  deploymentId String
+  email        String
+  userId       String?
+  status       String     @default("pending")
+  role         String     @default("viewer")
+  createdAt    DateTime   @default(now())
+
+  @@unique([deploymentId, email])
+}
+
+// A recurring task for a server, evaluated by the orchestrator's scheduler on a
+// 5-field cron expression (#111). Actions: restart the server or snapshot a backup.
+model ServerSchedule {
+  id           String     @id
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+  deploymentId String
+  name         String
+  cron         String
+  action       String
+  enabled      Boolean    @default(true)
+  lastRunAt    DateTime?
+  createdAt    DateTime   @default(now())
+}
+
+// A point-in-time snapshot of a server's data directory, stored as a tar on the
+// owning node and restorable back into the container (#110).
+model ServerBackup {
+  id           String     @id
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+  deploymentId String
+  name         String
+  path         String
+  ref          String
+  sizeBytes    Int        @default(0)
+  status       String     @default("ready")
+  // Whether a copy left the node (#232): null when the node has no off-site
+  // target, "stored" or "failed" otherwise.
+  offsite      String?
+  createdAt    DateTime   @default(now())
+}
+
+// A managed database provisioned for a server: its own engine container with
+// generated credentials, started by the owning node agent (#109).
+model ServerDatabase {
+  id           String     @id
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+  deploymentId String
+  engine       String
+  name         String
+  username     String
+  password     String
+  host         String
+  port         Int
+  containerId  String?
+  status       String     @default("running")
+  createdAt    DateTime   @default(now())
+}
+
+// Append-only audit trail for a deployment's lifecycle.
+model DeploymentEvent {
+  id           String     @id
+  deployment   Deployment @relation(fields: [deploymentId], references: [id])
+  deploymentId String
+  event        String
+  message      String
+  timestamp    DateTime   @default(now())
+}
+
+// A non-interactive credential belonging to one account (#228). The secret is
+// never stored — only its digest — so a stolen database yields no usable tokens.
+model ApiToken {
+  id         String    @id
+  userId     String
+  name       String
+  tokenHash  String    @unique
+  // Space-separated; absent write/admin means the token is read-only.
+  scopes     String    @default("")
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+
+  @@index([userId])
+}
+
+// A self-service password reset (#344). Like an API token, the secret is only
+// ever stored as its digest; it is single-use and short-lived.
+model PasswordReset {
+  id        String    @id
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// One host port held by one server on one node (#233). The unique constraint is
+// what makes double-booking impossible rather than merely unlikely: two creates
+// that both checked and both found the port free cannot both write it.
+model PortAllocation {
+  id           String   @id
+  nodeId       String
+  port         Int
+  deploymentId String
+  // The one the Network tab shows first — "the" address of the server.
+  primary      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@unique([nodeId, port])
+  @@index([deploymentId])
+}
+
+// Where an account wants to hear about events (#236): a webhook URL, or its own
+// email address. `events` is a JSON list. The webhook secret signs each body so
+// the receiver can check it came from this panel; it is stored because signing
+// needs it, and shown to the owner once.
+model NotificationChannel {
+  id             String    @id
+  userId         String
+  kind           String
+  target         String
+  format         String    @default("json")
+  events         String    @default("[]")
+  secret         String?
+  // Set only when a platform administrator made it: everyone else's webhooks
+  // may not reach private addresses.
+  allowPrivate   Boolean   @default(false)
+  enabled        Boolean   @default(true)
+  lastDeliveryAt DateTime?
+  lastError      String?
+  createdAt      DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// One notification on its way to one channel (#236). Rows, not memory, so a
+// restart or an unreachable endpoint delays a notification rather than losing it.
+model NotificationDelivery {
+  id            String    @id
+  channelId     String
+  event         String
+  payload       String
+  status        String    @default("pending")
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lastError     String?
+  createdAt     DateTime  @default(now())
+  sentAt        DateTime?
+
+  @@index([status, nextAttemptAt])
+  @@index([channelId])
+}

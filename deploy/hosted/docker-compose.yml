@@ -61,7 +61,8 @@ services:
     environment:
       - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:?must match FinVault, or the two cannot read each other's events}
-      - DATABASE_URL=file:/data/orchestrator.db
+      # SQLite unless ORCHESTRATOR_DATABASE_URL names PostgreSQL (#241).
+      - DATABASE_URL=${ORCHESTRATOR_DATABASE_URL:-file:/data/orchestrator.db}
       - JWT_SECRET=${JWT_SECRET:?set a strong random value in .env}
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?set a strong random value in .env}
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@local}
@@ -96,7 +97,9 @@ services:
     environment:
       - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:?must match FinVault}
-      - DATABASE_URL=file:/data/billing.db
+      # SQLite unless BILLING_DATABASE_URL names PostgreSQL — its own schema in
+      # the same database, e.g. …/nexusinfra?schema=billing (#241).
+      - DATABASE_URL=${BILLING_DATABASE_URL:-file:/data/billing.db}
       - BILLING_WALLET_ID=${BILLING_WALLET_ID:-nexusinfra}
     volumes:
       - billing_data:/data
@@ -111,8 +114,33 @@ services:
     ports: ['${DASHBOARD_PORT:-8095}:80']
     depends_on: [orchestrator]
 
+  # PostgreSQL (#241) — optional. SQLite (a file in the service's volume) is the
+  # default and needs nothing running. To use this instead:
+  #   1. set POSTGRES_PASSWORD and ORCHESTRATOR_DATABASE_URL (and BILLING_DATABASE_URL) in .env
+  #   2. docker compose --profile postgres up -d
+  # Moving an existing installation's data: docs/deployment.md#postgresql.
+  postgres:
+    image: postgres:16-alpine
+    container_name: nexusinfra-postgres
+    restart: unless-stopped
+    profiles: [postgres]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nexusinfra}
+      # Unset, the image refuses to start — which is the point.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_DB: nexusinfra
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER:-nexusinfra}']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # Not published: only the services on this network use it.
+
 volumes:
   rabbitmq_data:
   billing_data:
   orchestrator_data:
   agent_backups:
+  postgres_data:

@@ -1,5 +1,7 @@
 import { randomUUID } from 'crypto';
 import { PrismaClient } from '../generated/prisma/index.js';
+import { createRequire } from 'module';
+import { isPostgresUrl } from 'shared';
 import { DEFAULT_PLAN, type BillingPlan } from './pricing.js';
 import type {
   BillingCycleRecord,
@@ -21,8 +23,19 @@ import type { ResourceLimits } from 'shared';
 
 let prisma: PrismaClient | null = null;
 
+/**
+ * The client for the database DATABASE_URL names (#241). Prisma fixes the
+ * provider when a client is generated, so both are generated and one is picked
+ * here. The models are the same (the PostgreSQL schema is derived from the
+ * SQLite one and checked in CI), so either satisfies the same type.
+ */
 export function getPrisma(): PrismaClient {
-  if (!prisma) prisma = new PrismaClient();
+  if (!prisma) {
+    const Client = isPostgresUrl(process.env.DATABASE_URL)
+      ? (createRequire(import.meta.url)('../generated/postgres/index.js') as { PrismaClient: new () => unknown }).PrismaClient
+      : PrismaClient;
+    prisma = new Client() as PrismaClient;
+  }
   return prisma;
 }
 

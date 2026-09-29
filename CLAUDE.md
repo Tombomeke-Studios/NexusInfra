@@ -215,6 +215,8 @@ is the migrations directory.
 | `shared/src/heartbeat.ts` | `startHeartbeat(name)` (service pulse) + `startNodeHeartbeat(nodeId, collectResources, {agentUrl})` (node pulse, resources every 5s, advertises the agent URL for #171); both take an injectable publisher |
 | `shared/src/edition.ts` | Open-core edition flag: `Edition` type + `resolveEdition`/`getEdition`/`isHosted` (reads `NEXUS_EDITION`, defaults `community`) |
 | `shared/src/edition.ts` | The open-core flag. **The image decides**: `getBuildEdition()` reads a stamp baked into the image, which outranks `NEXUS_EDITION`; `assertEditionIsRunnable()` exits on a mismatch. No stamp (running from source) → the env decides (#189) |
+| `shared/src/database.ts` | `isPostgresUrl`/`databaseProvider` — which database `DATABASE_URL` names; the one rule both services use to pick a Prisma client (#241) |
+| `shared/src/copyDatabase.ts` | Moving an installation between databases (#241): `modelsFromDmmf`, `copyOrder` (topological, refuses a cycle), `copyDatabase` (paged by primary key, refuses a non-empty target, checks counts). Pure; `scripts/sqlite-to-postgres.mjs` wires it to the clients |
 | `shared/src/version.ts` | Build identity: `getVersion()` (reads `APP_VERSION`, baked by the release build) + `buildInfo()` → `{ version, edition }`, spread into every service's `/health` (#173) |
 | `shared/src/outbox.ts` | `PublishOutbox` + `startOutboxFlusher` — holds a failed publish and replays it **in order** when the broker returns; bounded (drop-oldest + `droppedCount`). Wrap publishers whose events carry state (#167) |
 | `shared/src/metrics.ts` | Prometheus metrics for every service (#246): dependency-free `MetricsRegistry` (counters, histograms, scrape-time gauges that fail soft), `httpMetrics` (labels by **route pattern**, never the raw path), `metricsHandler` (`METRICS_TOKEN`), `registerBuildInfo` |
@@ -260,6 +262,7 @@ is the migrations directory.
 ### services/orchestrator (deployment control plane)
 | Path | Contents |
 |---|---|
+| `prisma/postgres/` | The PostgreSQL schema (**generated** from `../schema.prisma` by `scripts/postgres-schema.mjs`) and its own migrations (#241) |
 | `prisma/schema.prisma` | Prisma + SQLite schema: `Node`, `ServerConfig`, `Deployment`, `DeploymentEvent`, `ServerDatabase`, `ServerBackup`, `ServerSchedule`, `ServerSubuser`, `PortAllocation` (#233). `prisma/migrations` is the schema source of truth |
 | `src/types.ts` | Domain records + the `Repository` interface (decouples logic from the DB) |
 | `src/repository.ts` | `InMemoryRepository` — backs unit tests and a DB-less local mode |
@@ -383,6 +386,7 @@ is the migrations directory.
 | `vitest.workspace.ts` | Splits tests into `backend` (node) and `dashboard` (jsdom) projects |
 | `.env.example` | Env contract — documents the FinVault-shared vars (`RABBITMQ_URL`, `FINVAULT_MESSAGE_KEY`) |
 | `allinone/` | All-in-one image (#203): one container with every service under s6, its own broker, and first-start secret generation. Published as `nexusinfra-community` / `nexusinfra-hosted`. **Single machine** — a second host runs the standalone agent |
+| `scripts/` | Repo-root scripts the images also carry (#241): `postgres-schema.mjs` (derive/check a PostgreSQL schema), `db-deploy.mjs` (`npm run db:deploy` — the migrations for whichever database `DATABASE_URL` names), `sqlite-to-postgres.mjs` (move an installation's data) |
 | `deploy/install.sh` · `deploy/install.ps1` | Release installer: picks an edition, generates `JWT_SECRET`/`INTERNAL_API_TOKEN`/admin password, writes `.env`, starts the stack. Never overwrites an existing `.env` unasked (#191) |
 | `deploy/community/` · `deploy/hosted/` | Self-contained release bundles: compose pinned to published images + `.env.example` + README. Neither needs a checkout of this repo; both are attached to each GitHub release (#179) |
 | `.github/workflows/release.yml` | On a `v*` tag: re-run CI in both editions, then publish `nexusinfra/<service>:X.Y.Z-{community,hosted}` to GHCR (nested so the six read as one family, #200). `billing-bridge` builds hosted only (#179) |
@@ -434,6 +438,11 @@ is the migrations directory.
 - **Anything hosted-only added to the dashboard must be excluded from the community build** — alias
   it in `vite.config.ts` and add a marker to `verify-edition.mjs`, or the community bundle silently
   starts shipping code it cannot run.
+- **Every schema change is made three times (#241).** Edit `prisma/schema.prisma` (SQLite, the
+  source), run `npm run db:sync-postgres` to regenerate `prisma/postgres/schema.prisma`, and add a
+  migration for **each** database. `schemas.test.ts` fails when the PostgreSQL schema is stale or the
+  SQLite migrations fall behind; CI's integration job replays the PostgreSQL migrations against a real
+  server. The client is picked by `DATABASE_URL` in `getPrisma()` — never `new PrismaClient()` elsewhere.
 - **Two Prisma schemas in one workspace collide.** They both generate into the hoisted
   `node_modules/.prisma/client` and the last one wins — invisible while each service has its own
   image, fatal once two share one. `billing-bridge` generates into its own directory; anything new

@@ -3,3 +3,4 @@ dist/
 *.db-journal
 prisma/*.db
 prisma/*.db-journal
+generated/
