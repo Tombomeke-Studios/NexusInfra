@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useFocusTrap } from '../focusTrap';
 import { getDeployment, type DeploymentDetail } from '../api';
 import { StatusBadge } from './StatusBadge';
 import { formatRelative } from '../format';
@@ -32,10 +33,16 @@ export function DeploymentDrawer({ deploymentId, onClose }: { deploymentId: stri
     return () => window.removeEventListener('keydown', onKey);
   }, [close]);
 
+  // A modal drawer keeps Tab inside and hands focus back when it closes (#247).
+  const panelRef = useRef<HTMLElement>(null);
+  useFocusTrap(panelRef, true);
+
   return (
     <>
       <div className={`drawer__scrim${closing ? ' drawer__scrim--closing' : ''}`} onClick={close} />
       <aside
+        ref={panelRef}
+        tabIndex={-1}
         className={`drawer__panel${closing ? ' drawer__panel--closing' : ''}`}
         role="dialog"
         aria-modal="true"

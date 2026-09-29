@@ -14,11 +14,17 @@
   --color-border-strong: #d3d9e0;
   --color-text: #14171c;
   --color-text-muted: #58616e;
-  --color-text-subtle: #8a94a3;
+  /* Every text token clears WCAG AA (4.5:1) on every surface it sits on —
+     measured with axe across the panel in both themes (#247). */
+  --color-text-subtle: #636d7b;
 
-  /* Accent */
+  /* Accent. `primary` is for text, borders and marks; `primary-solid` is a fill
+     with white text on it. One colour cannot do both on a dark surface: light
+     enough to read as text is too light to carry white text (#247). */
   --color-primary: #4f46e5;
   --color-primary-hover: #4338ca;
+  --color-primary-solid: #4f46e5;
+  --color-primary-solid-hover: #4338ca;
   --color-primary-fg: #ffffff;
   --color-primary-soft: #eef2ff;
 
@@ -27,11 +33,13 @@
   --color-success-soft: #dcfce7;
   --color-warning: #b45309;
   --color-warning-soft: #fef3c7;
-  --color-danger: #dc2626;
+  --color-danger: #c42121;
   --color-danger-hover: #b91c1c;
+  /* A fill with white text on it — see primary-solid. */
+  --color-danger-solid: #c42121;
   --color-danger-soft: #fee2e2;
   --color-danger-fg: #ffffff;
-  --color-neutral: #64748b;
+  --color-neutral: #5a6577;
   --color-neutral-soft: #eef1f5;
 
   --color-focus: #6366f1;
@@ -78,10 +86,12 @@
   --color-border-strong: #333b4d;
   --color-text: #e7eaf0;
   --color-text-muted: #9aa4b3;
-  --color-text-subtle: #6b7482;
+  --color-text-subtle: #8a93a2;
 
-  --color-primary: #6366f1;
-  --color-primary-hover: #818cf8;
+  --color-primary: #818cf8;
+  --color-primary-hover: #a5b4fc;
+  --color-primary-solid: #4f46e5;
+  --color-primary-solid-hover: #4338ca;
   --color-primary-fg: #ffffff;
   --color-primary-soft: #1e2333;
 
@@ -91,6 +101,7 @@
   --color-warning-soft: rgba(245, 158, 11, 0.16);
   --color-danger: #f87171;
   --color-danger-hover: #ef4444;
+  --color-danger-solid: #dc2626;
   --color-danger-soft: rgba(239, 68, 68, 0.16);
   --color-danger-fg: #ffffff;
   --color-neutral: #94a3b8;
@@ -146,6 +157,13 @@ a {
 a:hover {
   color: var(--color-primary-hover);
 }
+/* A link inside running text is underlined: colour alone does not tell
+   everyone it is a link (#247). Navigation and buttons styled as links opt out
+   by not being inside a paragraph. */
+p a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 ::selection {
   background: color-mix(in srgb, var(--color-primary) 30%, transparent);
 }
@@ -157,6 +175,19 @@ a:hover {
   border-radius: var(--radius-sm);
 }
 
+/* Text for screen readers only — a label the layout has no room to show (#247). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* Tabular figures for data columns / ids / timers */
 .tnum {
   font-variant-numeric: tabular-nums;
@@ -166,9 +197,18 @@ a:hover {
   font-family: var(--font-mono);
 }
 
+/* Reduced motion (#247). A short duration alone is not enough: an *infinite*
+   animation at 0.01ms still loops — the aurora and the drifting grid became a
+   flicker instead of stopping. Each animation now plays once, instantly, and
+   lands on its final frame. The JS effects (fx.ts, CountUp) check the same
+   preference and stay off. */
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

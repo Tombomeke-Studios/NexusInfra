@@ -197,7 +197,7 @@ export function Overview() {
       </div>
 
       {/* Nodes */}
-      <h3 style={{ marginBottom: 16 }}>Nodes</h3>
+      <h2 style={{ marginBottom: 16, fontSize: '1.17em' }}>Nodes</h2>
       <div className="stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(240px,1fr))', gap: 16 }}>
         {ns.map((n, i) => {
           const inMaint = Boolean(n.maintenance);
@@ -288,7 +288,7 @@ export function Overview() {
       </div>
 
       {/* Recent activity */}
-      <h3 style={{ margin: '30px 0 16px' }}>Recent activity</h3>
+      <h2 style={{ margin: '30px 0 16px', fontSize: '1.17em' }}>Recent activity</h2>
       <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
         {activity.length === 0 ? (
           <div className="empty">No recent activity.</div>

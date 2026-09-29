@@ -463,10 +463,13 @@ function ConsoleTab({ id, running, containerId }: { id: string; running: boolean
           {running ? 'streaming' : 'offline'}
         </span>
       </div>
-      <div ref={boxRef} style={{ background: '#0a0e16', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', padding: '12px 14px', fontFamily: 'var(--font-mono)', fontSize: '.8rem', lineHeight: 1.7, height: 340, overflowY: 'auto' }}>
+      {/* Focusable, so the log can be scrolled from the keyboard (#247). Not
+          announced line by line — a busy server would drown a screen reader —
+          but there to be read when focused. */}
+      <div ref={boxRef} tabIndex={0} role="log" aria-label="Console output" aria-live="off" style={{ background: '#0a0e16', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', padding: '12px 14px', fontFamily: 'var(--font-mono)', fontSize: '.8rem', lineHeight: 1.7, height: 340, overflowY: 'auto' }}>
         {log.map((l) => (
           <div key={l.id} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-            <span style={{ color: '#5a6473' }}>{l.time}</span> <span style={{ color: l.color }}>{l.text}</span>
+            <span style={{ color: '#7d8797' }}>{l.time}</span> <span style={{ color: l.color }}>{l.text}</span>
           </div>
         ))}
       </div>
@@ -590,7 +593,7 @@ function FilesTab({ id, running }: { id: string; running: boolean }) {
 
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
         <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', fontSize: '.88rem' }}>
           <button className="name-btn" onClick={() => setCwd('/')}>container</button>
           <span className="subtle">/</span>
@@ -601,7 +604,7 @@ function FilesTab({ id, running }: { id: string; running: boolean }) {
             </span>
           ))}
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn btn--secondary btn--sm" data-ripple onClick={newFile}>New file</button>
           <button className="btn btn--secondary btn--sm" data-ripple onClick={newFolder}>New folder</button>
           <button className="btn btn--primary btn--sm" data-ripple data-magnetic onClick={() => fileInput.current?.click()}>Upload</button>
@@ -1813,7 +1816,7 @@ function SettingsTab({
       <div className="card" style={{ padding: '20px 22px', borderColor: 'var(--color-danger-soft)' }}>
         <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6, color: 'var(--color-danger)' }}>Delete server</strong>
         <p className="subtle" style={{ margin: '0 0 14px', fontSize: '.84rem' }}>Permanently removes this server and all of its files. This cannot be undone.</p>
-        <button className="btn btn--primary btn--sm" data-ripple data-burst="danger" onClick={onDelete} style={{ background: 'var(--color-danger)' }}>Delete server</button>
+        <button className="btn btn--danger-solid btn--sm" data-ripple data-burst="danger" onClick={onDelete}>Delete server</button>
       </div>
     </>
   );

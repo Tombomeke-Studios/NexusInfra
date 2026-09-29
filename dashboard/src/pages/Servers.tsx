@@ -403,14 +403,16 @@ function ServerTable({
               />
             </th>
             <th>Name</th>
-            <th>Image</th>
-            <th>Node</th>
+            <th className="wide-only">Image</th>
+            <th className="wide-only">Node</th>
             <th>Status</th>
-            {showRole && <th>Your role</th>}
-            <th>Container</th>
-            <th>Limits</th>
-            <th>Created</th>
-            <th></th>
+            {showRole && <th className="wide-only">Your role</th>}
+            <th className="wide-only">Container</th>
+            <th className="wide-only">Limits</th>
+            <th className="wide-only">Created</th>
+            <th>
+              <span className="sr-only">Actions</span>
+            </th>
           </tr>
         </thead>
         <tbody className="stagger">
@@ -448,17 +450,17 @@ function ServerTable({
                     </span>
                   </span>
                 </td>
-                <td className="mono">{d.dockerImage}</td>
-                <td>{d.nodeId ?? '—'}</td>
+                <td className="mono wide-only">{d.dockerImage}</td>
+                <td className="wide-only">{d.nodeId ?? '—'}</td>
                 <td>
                   <StatusBadge status={d.status} />
                 </td>
-                {showRole && <td className="subtle">{role ? ROLE_LABELS[role] : '—'}</td>}
-                <td className="mono subtle">{shortId(d.containerId)}</td>
-                <td className="mono subtle" style={{ fontSize: '.82rem', whiteSpace: 'nowrap' }}>
+                {showRole && <td className="subtle wide-only">{role ? ROLE_LABELS[role] : '—'}</td>}
+                <td className="mono subtle wide-only">{shortId(d.containerId)}</td>
+                <td className="mono subtle wide-only" style={{ fontSize: '.82rem', whiteSpace: 'nowrap' }}>
                   {formatLimits(d.resourceLimits)}
                 </td>
-                <td className="subtle tnum">{formatRelative(d.createdAt)}</td>
+                <td className="subtle tnum wide-only">{formatRelative(d.createdAt)}</td>
                 <td>
                   <span className="actions">
                     {d.status === 'running' ? (

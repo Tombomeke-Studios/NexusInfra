@@ -354,8 +354,9 @@ is the migrations directory.
 | `src/pages/Users.tsx` | Accounts page (#222) — platform admins list and create accounts. The only way in for the community edition, where nobody self-registers. Nav link hidden for non-admins; `/users` answers 403 regardless |
 | `src/pages/NodeDetail.tsx` | Per-node view (`/nodes/:id`): live CPU/RAM meters + session sparkline, hosted deployments, deregister |
 | `src/routes.tsx` · `src/App.tsx` | Route table (public `/login`; the rest behind `RequireAuth` + `Layout`) wrapped in the router |
-| `src/components/{Layout,RequireAuth}.tsx` | Nav shell + auth-guard route wrapper |
+| `src/components/{Layout,RequireAuth}.tsx` | Nav shell + auth-guard route wrapper. Below 900px the nav and the bar's actions fold behind a Menu button (`aria-expanded`, closes on Escape and on navigation); on a wide screen the wrapper is `display: contents`, so nothing moves (#247) |
 | `src/components/Dialog.tsx` | `DialogProvider` + `useDialog()` → promise-shaped `confirm`/`prompt` (#299), replacing 16 `window.confirm`/`prompt` calls. Native dialogs announce the origin, give a deletion the same weight as a rename, and **freeze the page thread**, so no automated run ever reached the other side of one. Destructive confirmations look destructive and focus **Cancel**, so a reflexive Enter does not delete; prompts validate as you type. Without a provider every dialog resolves *no* — these guard deletions |
+| `src/focusTrap.ts` | `useFocusTrap` + pure `nextFocus` (#247): Tab stays inside a modal and focus returns to what opened it. Used by `Dialog`, `DeploymentDrawer` and `IntroTour`. Remembers the last focus *outside* any modal, because an `autoFocus` inside one takes focus before an effect can read the opener |
 | `src/components/InfoHint.tsx` | Accessible "?" tooltip for contextual option help (hover/focus); used across the option forms |
 | `src/components/Terminal.tsx` | xterm.js interactive terminal (#71) — dynamically imports xterm, connects the exec WebSocket (`terminalWsUrl`); mounted by the server-detail Terminal tab |
 | `src/components/IntroTour.tsx` | First-run intro walkthrough (skippable, re-openable from the nav Help button) |
@@ -439,6 +440,12 @@ is the migrations directory.
 - **Anything that runs inside a container needs LF line endings** — see `.gitattributes`. CRLF makes
   the kernel read the carriage return as part of the interpreter path (`bad interpreter`), and it
   only shows up on a fresh clone on Windows.
+- **Colour tokens are measured, not picked (#247).** Every text token clears WCAG AA on every surface
+  it sits on, in both themes — checked with axe across the whole panel. `--color-primary` is for text,
+  borders and marks; **`--color-primary-solid`** (and `--color-danger-solid`) is for a fill with white
+  text on it. In the dark theme no single colour can do both. Hard-coded hex text colours and a
+  `style={{ background: 'var(--color-danger)' }}` on a button are how contrast regresses — use the
+  classes (`btn--primary`, `btn--danger-solid`).
 - **The dashboard's `permissions.ts` is a mirror, not a second source of truth.** It exists so the
   panel doesn't offer buttons that would 403; change it in the same commit as `access.ts` or the two
   drift. Hiding a control is never a security measure — the API is.
