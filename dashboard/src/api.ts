@@ -602,6 +602,33 @@ export function startDeployment(id: string): Promise<{ status: string; deploymen
   return request(`/deployments/${id}/start`, { method: 'POST' });
 }
 
+/** The lifecycle commands that can be sent to several servers at once (#238). */
+export type BulkAction = 'start' | 'stop' | 'restart' | 'kill';
+
+/** One server's answer inside a bulk request. `name` is absent for an id you cannot see. */
+export interface BulkResult {
+  id: string;
+  name?: string;
+  ok: boolean;
+  status: number;
+  error?: string;
+}
+
+export interface BulkOutcome {
+  action: BulkAction;
+  succeeded: number;
+  failed: number;
+  results: BulkResult[];
+}
+
+/**
+ * Send one command to several servers (#238). Each is authorized on its own, so
+ * a 200 can still carry failures — read `failed`, not the status code.
+ */
+export function bulkDeploymentAction(action: BulkAction, ids: string[]): Promise<BulkOutcome> {
+  return request('/deployments/bulk', { method: 'POST', body: JSON.stringify({ action, ids }) });
+}
+
 /** Permanently delete a deployment (stops it first if running). */
 export function deleteDeployment(id: string): Promise<void> {
   return request(`/deployments/${id}`, { method: 'DELETE' });

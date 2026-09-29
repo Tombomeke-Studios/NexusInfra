@@ -597,6 +597,28 @@ Request a running deployment be restarted — emits `infra.server.restart` with 
 the agent restarts the container and reports `server.started`. `202` while restarting, `404` if
 unknown, `409` if the deployment is not running.
 
+### `POST /deployments/bulk`
+
+Send one control command to several servers at once (#238). Body:
+`{ "action": "start" | "stop" | "restart" | "kill", "ids": ["<deploymentId>", …] }` — at most 100 ids,
+duplicates counted once. Each id is authorized **on its own**, with the same resolver the per-server
+guard uses, and runs the same code as the single-server route above; they are processed in order so
+placement sees each start land before the next.
+
+Always `200` once the request is well-formed, because the answer is per server:
+
+```json
+{ "action": "stop", "succeeded": 1, "failed": 2, "results": [
+  { "id": "d1", "name": "web", "ok": true,  "status": 202 },
+  { "id": "d2", "name": "db",  "ok": false, "status": 409, "error": "deployment is not running" },
+  { "id": "d3",                "ok": false, "status": 404, "error": "deployment not found" }
+] }
+```
+
+A server the caller cannot see answers exactly like one that does not exist (`404`, no `name`), so the
+endpoint cannot be used to probe ids. One the caller can see but not control answers `403`. `400` for
+an unknown action or a missing, empty or oversized `ids` list.
+
 ### `WS /deployments/:id/terminal`
 
 Interactive terminal (#71) — a WebSocket that opens a TTY shell (`sh`) in the running container. The JWT

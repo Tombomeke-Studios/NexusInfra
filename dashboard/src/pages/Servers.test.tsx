@@ -103,6 +103,69 @@ describe('Servers', () => {
     );
     expect(startCall).toBeDefined();
   });
+  describe('bulk actions (#238)', () => {
+    const bulkReply = (body: unknown) =>
+      fetchMock.mockImplementation((url: string, options?: RequestInit) => {
+        if (url.includes('/deployments/bulk')) {
+          return Promise.resolve({ ok: true, status: 200, json: async () => body } as Response);
+        }
+        if (url.includes('/me')) return Promise.resolve({ ok: true, status: 200, json: async () => ME } as Response);
+        void options;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ items: deployments, total: deployments.length, limit: 25, offset: 0 }),
+        } as Response);
+      });
+
+    it('offers bulk controls only once something is selected', async () => {
+      renderServers();
+      await screen.findByText('my-nginx');
+      expect(screen.queryByRole('toolbar', { name: 'Bulk actions' })).not.toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole('checkbox', { name: 'Select my-nginx' }));
+      expect(screen.getByRole('toolbar', { name: 'Bulk actions' })).toHaveTextContent('1 selected');
+    });
+
+    it('sends every selected id in one request', async () => {
+      bulkReply({ action: 'stop', succeeded: 2, failed: 0, results: [{ id: 'd1', ok: true, status: 202 }, { id: 'd2', ok: true, status: 202 }] });
+      renderServers();
+      await screen.findByText('my-nginx');
+
+      await userEvent.click(screen.getByRole('checkbox', { name: 'Select all my servers' }));
+      expect(screen.getByRole('toolbar', { name: 'Bulk actions' })).toHaveTextContent('2 selected');
+      await userEvent.click(screen.getByRole('button', { name: /Stop selected/ }));
+
+      const call = fetchMock.mock.calls.find(([u]) => typeof u === 'string' && u.includes('/deployments/bulk'));
+      expect(call).toBeDefined();
+      expect(JSON.parse(String(call![1]?.body))).toEqual({ action: 'stop', ids: ['d1', 'd2'] });
+      // Everything worked, so the selection is spent.
+      await vi.waitFor(() => expect(screen.queryByRole('toolbar', { name: 'Bulk actions' })).not.toBeInTheDocument());
+    });
+
+    it('names each server that failed, with the reason, and keeps it selected for a retry', async () => {
+      bulkReply({
+        action: 'stop',
+        succeeded: 1,
+        failed: 1,
+        results: [
+          { id: 'd1', name: 'my-nginx', ok: true, status: 202 },
+          { id: 'd2', name: 'idle', ok: false, status: 409, error: 'deployment is not running' },
+        ],
+      });
+      renderServers();
+      await screen.findByText('my-nginx');
+
+      await userEvent.click(screen.getByRole('checkbox', { name: 'Select all my servers' }));
+      await userEvent.click(screen.getByRole('button', { name: /Stop selected/ }));
+
+      const report = await screen.findByText(/could not be changed/);
+      expect(report.closest('[role="alert"]')).toHaveTextContent('idle — deployment is not running');
+      expect(screen.getByRole('toolbar', { name: 'Bulk actions' })).toHaveTextContent('1 selected');
+      expect(screen.getByRole('checkbox', { name: 'Select idle' })).toBeChecked();
+      expect(screen.getByRole('checkbox', { name: 'Select my-nginx' })).not.toBeChecked();
+    });
+  });
 });
 
 // ── Search, filter and paging (#237) ─────────────────────────────────────────

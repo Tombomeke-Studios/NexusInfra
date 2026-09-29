@@ -6,6 +6,9 @@ import {
   stopDeployment,
   restartDeployment,
   startDeployment,
+  bulkDeploymentAction,
+  type BulkAction,
+  type BulkResult,
   type CurrentUser,
   type DeploymentView,
 } from '../api';
@@ -35,6 +38,12 @@ const PAGE_SIZE = 25;
 
 const STATUSES = ['pending', 'running', 'stopped', 'crashed'] as const;
 
+interface Selection {
+  selected: Set<string>;
+  toggle: (id: string) => void;
+  toggleAll: (rows: DeploymentView[], on: boolean) => void;
+}
+
 interface ServerActions {
   stop: (id: string) => void;
   restart: (id: string) => void;
@@ -54,6 +63,11 @@ export function Servers() {
   const [me, setMe] = useState<CurrentUser | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  // Multi-select for bulk actions (#238). Ids, not rows, so a poll that replaces
+  // the row objects does not drop the selection.
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkFailures, setBulkFailures] = useState<BulkResult[] | null>(null);
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -78,6 +92,66 @@ export function Servers() {
     const handle = setInterval(() => void load(), POLL_MS);
     return () => clearInterval(handle);
   }, [load]);
+
+  // A selection belongs to the rows you were looking at: changing the filter or
+  // the page starts over, rather than acting on servers that are off-screen.
+  useEffect(() => setSelected(new Set()), [q, status, offset]);
+
+  // A server that disappeared (deleted, or no longer shared) leaves the selection.
+  useEffect(() => {
+    if (!deployments) return;
+    setSelected((prev) => {
+      const present = new Set(deployments.map((d) => d.id));
+      const kept = [...prev].filter((id) => present.has(id));
+      return kept.length === prev.size ? prev : new Set(kept);
+    });
+  }, [deployments]);
+
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const toggleAll = (rows: DeploymentView[], on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const d of rows) {
+        if (on) next.add(d.id);
+        else next.delete(d.id);
+      }
+      return next;
+    });
+
+  // Every selected server is sent; the API authorizes each one and answers for
+  // each one, so a server this role cannot touch — or one already stopped — is
+  // reported by name rather than quietly left out.
+  const runBulk = async (action: BulkAction, verb: string) => {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    setBulkFailures(null);
+    try {
+      const outcome = await bulkDeploymentAction(action, ids);
+      if (outcome.failed === 0) {
+        toast(`${verb} requested for ${outcome.succeeded} server${outcome.succeeded === 1 ? '' : 's'}`, 'success');
+      } else {
+        toast(`${outcome.succeeded} of ${outcome.results.length} ${verb.toLowerCase()} requests succeeded`, outcome.succeeded ? 'info' : 'error');
+      }
+      setBulkFailures(outcome.failed ? outcome.results.filter((r) => !r.ok) : null);
+      // Keep the failures selected so a retry is one click; drop what worked.
+      setSelected(new Set(outcome.results.filter((r) => !r.ok).map((r) => r.id)));
+      await load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : `Bulk ${verb.toLowerCase()} failed`, 'error');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const nameOf = (id: string) => deployments?.find((d) => d.id === id)?.name ?? id;
 
   // Changing a filter returns to the first page: staying on page four of a new
   // filter shows an empty list, which reads as a failure rather than as paging.
@@ -168,6 +242,53 @@ export function Servers() {
         )}
       </div>
 
+      {selected.size > 0 && (
+        <div
+          role="toolbar"
+          aria-label="Bulk actions"
+          className="card"
+          style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '10px 14px', marginBottom: 'var(--space-4)' }}
+        >
+          <strong style={{ fontSize: '.9rem' }}>{selected.size} selected</strong>
+          <span style={{ flex: 1 }} />
+          <button className="btn btn--secondary btn--sm" data-ripple disabled={bulkBusy} onClick={() => void runBulk('start', 'Start')}>
+            <IconPlay size={15} />
+            Start selected
+          </button>
+          <button className="btn btn--secondary btn--sm" data-ripple disabled={bulkBusy} onClick={() => void runBulk('restart', 'Restart')}>
+            <IconRestart size={15} />
+            Restart selected
+          </button>
+          <button className="btn btn--danger btn--sm" data-ripple disabled={bulkBusy} onClick={() => void runBulk('stop', 'Stop')}>
+            {bulkBusy ? <span className="spinner" /> : <IconStop size={15} />}
+            Stop selected
+          </button>
+          <button className="btn btn--ghost btn--sm" disabled={bulkBusy} onClick={() => setSelected(new Set())}>
+            Clear selection
+          </button>
+        </div>
+      )}
+
+      {bulkFailures && bulkFailures.length > 0 && (
+        <div role="alert" className="alert alert--error" style={{ marginBottom: 'var(--space-4)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+            <strong>
+              {bulkFailures.length} server{bulkFailures.length === 1 ? '' : 's'} could not be changed
+            </strong>
+            <button className="btn btn--ghost btn--sm" onClick={() => setBulkFailures(null)} aria-label="Dismiss bulk failures">
+              Dismiss
+            </button>
+          </div>
+          <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+            {bulkFailures.map((f) => (
+              <li key={f.id}>
+                <strong>{f.name ?? nameOf(f.id)}</strong> — {f.error ?? 'failed'}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {error && (
         <p role="alert" className="alert alert--error" style={{ marginBottom: 'var(--space-4)' }}>
           {error}
@@ -196,7 +317,7 @@ export function Servers() {
           {/* Headings only earn their space once there is a second section. */}
           {shared.length > 0 && <h2 style={{ fontSize: '1rem', margin: '0 0 10px' }}>My servers</h2>}
           {owned.length > 0 ? (
-            <ServerTable rows={owned} pendingId={pendingId} actions={actions} navigate={navigate} />
+            <ServerTable rows={owned} pendingId={pendingId} actions={actions} navigate={navigate} selection={{ selected, toggle, toggleAll }} label="my servers" />
           ) : (
             <div className="table-wrap">
               <div className="empty">
@@ -213,7 +334,7 @@ export function Servers() {
                   Servers other people have given you access to
                 </span>
               </h2>
-              <ServerTable rows={shared} pendingId={pendingId} actions={actions} navigate={navigate} showRole />
+              <ServerTable rows={shared} pendingId={pendingId} actions={actions} navigate={navigate} selection={{ selected, toggle, toggleAll }} label="shared servers" showRole />
             </>
           )}
         </>
@@ -251,19 +372,36 @@ function ServerTable({
   pendingId,
   actions,
   navigate,
+  selection,
+  label,
   showRole = false,
 }: {
   rows: DeploymentView[];
   pendingId: string | null;
   actions: ServerActions;
   navigate: (to: string) => void;
+  selection: Selection;
+  label: string;
   showRole?: boolean;
 }) {
+  const allOn = rows.length > 0 && rows.every((d) => selection.selected.has(d.id));
+  const someOn = !allOn && rows.some((d) => selection.selected.has(d.id));
   return (
     <div className="table-wrap">
       <table className="table">
         <thead>
           <tr>
+            <th style={{ width: 36 }}>
+              <input
+                type="checkbox"
+                aria-label={`Select all ${label}`}
+                checked={allOn}
+                ref={(el) => {
+                  if (el) el.indeterminate = someOn;
+                }}
+                onChange={(e) => selection.toggleAll(rows, e.target.checked)}
+              />
+            </th>
             <th>Name</th>
             <th>Image</th>
             <th>Node</th>
@@ -280,7 +418,15 @@ function ServerTable({
             const role = d.role as ServerRole | undefined;
             const busy = pendingId === d.id;
             return (
-              <tr key={d.id} style={{ ['--i']: Math.min(i, 12) } as CSSProperties}>
+              <tr key={d.id} style={{ ['--i']: Math.min(i, 12) } as CSSProperties} aria-selected={selection.selected.has(d.id)}>
+                <td>
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${d.name}`}
+                    checked={selection.selected.has(d.id)}
+                    onChange={() => selection.toggle(d.id)}
+                  />
+                </td>
                 <td>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                     <button className="name-btn" onClick={() => navigate(`/servers/${d.id}`)}>
