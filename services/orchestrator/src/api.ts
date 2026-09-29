@@ -153,6 +153,19 @@ export type { MigrationTransport };
 /** Ask the owning node whether a newer image exists for a server's tag (#239). */
 export type ImageStatusFn = (req: { agentUrl: string; image: string; containerId: string | null }) => Promise<Record<string, unknown>>;
 
+/**
+ * Disk used on a node (#347): one server's (`deploymentId`) or all of them. The
+ * agent measures and caches; this only asks the node that owns the data.
+ */
+export type DiskUsageFn = (agentUrl: string, deploymentId?: string) => Promise<Record<string, unknown>>;
+
+const defaultDiskUsage: DiskUsageFn = async (agentUrl, deploymentId) => {
+  const r = await agentFetch(deploymentId ? `${agentUrl}/deployments/${encodeURIComponent(deploymentId)}/disk` : `${agentUrl}/disk`);
+  const body = (await r.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!r.ok) throw new Error(typeof body.error === 'string' ? body.error : `the node answered ${r.status}`);
+  return body;
+};
+
 /** Plan-quota check against the Billing Bridge (hosted). Fails open so billing outages never block infra. */
 export type QuotaResource = 'servers' | 'databases';
 export type CheckQuotaFn = (userId: string, resource: QuotaResource, current: number) => Promise<{ allowed: boolean; limit: number }>;
@@ -179,6 +192,7 @@ export interface ApiDeps {
   getEntitlements?: (userId: string) => Promise<Entitlements | null>;
   purgeDeploymentData?: PurgeDeploymentDataFn;
   imageStatus?: ImageStatusFn;
+  diskUsage?: DiskUsageFn;
   migrationTransport?: MigrationTransport;
   /** Runs a planned migration; tests await it, production lets it run in the background. */
   runMigration?: (run: () => Promise<void>) => void;
@@ -342,6 +356,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   const getEntitlements = deps.getEntitlements ?? ((userId: string) => fetchEntitlements(BILLING_BRIDGE_URL, userId));
   const purgeDeploymentData = deps.purgeDeploymentData ?? defaultPurgeDeploymentData;
   const imageStatus = deps.imageStatus ?? defaultImageStatus;
+  const diskUsage = deps.diskUsage ?? defaultDiskUsage;
   const migrationTransport = deps.migrationTransport ?? defaultMigrationTransport;
   const runMigration =
     deps.runMigration ??
@@ -902,6 +917,19 @@ export function createApiRouter(deps: ApiDeps): Router {
   // ── Image updates (#239) ────────────────────────────────────────────────────
   // Whether the registry has something newer than what this server runs. Asked of
   // the owning node, which is the only one that knows what it pulled.
+  // How much disk this server uses (#347) — its volumes and its writable layer,
+  // measured on the node that holds them. Stats, not configuration: whoever may
+  // see the server's live figures may see this one.
+  router.get('/deployments/:id/disk', requirePermission('server.stats'), async (req: Request, res: Response) => {
+    const { deployment } = accessOf(req);
+    if (!deployment.nodeId) return res.status(409).json({ error: 'deployment has no node yet' });
+    try {
+      return res.json(await diskUsage(await agentUrlFor(deployment.nodeId), deployment.id));
+    } catch (err) {
+      return res.status(502).json({ error: err instanceof Error ? err.message : 'node agent unreachable' });
+    }
+  });
+
   router.get('/deployments/:id/image', requirePermission('server.view'), async (req: Request, res: Response) => {
     const { deployment } = accessOf(req);
     if (!deployment.nodeId) return res.status(409).json({ error: 'deployment has no node yet' });
@@ -1078,6 +1106,27 @@ export function createApiRouter(deps: ApiDeps): Router {
   // A node's host-port pool (#233). Existing allocations outside a new range
   // are kept — servers are not renumbered behind their owners' backs — and the
   // answer says how many there are.
+  // Every server on a node by disk use, largest first (#347). Administrators
+  // only: it lists every account's servers. A volume the panel has no server
+  // for is named as such — data a deletion left behind is the first place to
+  // look when a disk fills.
+  router.get('/nodes/:id/disk', requirePlatformAdmin, async (req: Request, res: Response) => {
+    const node = (await repo.listNodes()).find((n) => n.id === req.params.id);
+    if (!node) return res.status(404).json({ error: 'node not found' });
+    let usage: Record<string, unknown>;
+    try {
+      usage = await diskUsage(await agentUrlFor(node.id));
+    } catch (err) {
+      return res.status(502).json({ error: err instanceof Error ? err.message : 'node agent unreachable' });
+    }
+    const names = new Map((await repo.listDeployments()).map((d) => [d.id, d.name]));
+    const deployments = (Array.isArray(usage.deployments) ? usage.deployments : []) as Array<{ deploymentId: string }>;
+    return res.json({
+      measuredAt: usage.measuredAt,
+      deployments: deployments.map((d) => ({ ...d, name: names.get(d.deploymentId) ?? null, known: names.has(d.deploymentId) })),
+    });
+  });
+
   router.patch('/nodes/:id/ports', requirePlatformAdmin, async (req: Request, res: Response) => {
     const parsed = parsePortRange(req.body?.range === undefined ? undefined : req.body.range);
     if (!parsed.ok) return res.status(400).json({ error: parsed.error });

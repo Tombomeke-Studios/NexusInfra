@@ -399,6 +399,24 @@ export interface AppConfig {
   passwordResetByEmail?: boolean;
 }
 
+/** One server's disk use (#347); a null is something the node could not measure. */
+export interface DeploymentDisk {
+  deploymentId: string;
+  measuredAt: string;
+  volumesBytes: number | null;
+  writableBytes: number | null;
+  volumes: Array<{ name: string; path: string | null; bytes: number | null }>;
+}
+
+export function getDeploymentDisk(id: string): Promise<DeploymentDisk> {
+  return request(`/deployments/${id}/disk`);
+}
+
+/** Every server on a node by disk use, largest first — administrators only (#347). */
+export function getNodeDisk(nodeId: string): Promise<{ measuredAt: string; deployments: Array<Omit<DeploymentDisk, 'measuredAt'> & { name: string | null; known: boolean }> }> {
+  return request(`/nodes/${encodeURIComponent(nodeId)}/disk`);
+}
+
 /** Ask for a reset link (#344). The answer is the same whether or not the account exists. */
 export function requestPasswordReset(email: string): Promise<{ status: string; message: string }> {
   return request('/auth/password-reset', { method: 'POST', body: JSON.stringify({ email }) });

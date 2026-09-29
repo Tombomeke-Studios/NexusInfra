@@ -12,6 +12,7 @@ import { createBackupRouter } from './bkRoutes.js';
 import { createExecRouter } from './execRoutes.js';
 import { createImportRouter, importRoot } from './imports.js';
 import { createDataRouter } from './volumes.js';
+import { createDiskUsageCache, createDiskUsageRouter } from './diskUsage.js';
 import { createImageRouter } from './images.js';
 import { createMigrationRouter } from './migrateRoutes.js';
 import { attachTerminal, type TerminalSocket } from './terminal.js';
@@ -160,6 +161,8 @@ app.use(createImportRouter({ root: importRoot(), realpath: async (p) => (await i
 
 // ── HTTP: a deleted server's leftovers (#324) — its containers and data volumes ──
 app.use(createDataRouter(runtime));
+// Disk used by each server here (#347): measured, cached for a minute.
+app.use(createDiskUsageRouter(createDiskUsageCache(() => runtime.systemDf())));
 
 // ── HTTP: is there a newer image for a server's tag (#239) ────────────────────
 app.use(createImageRouter(runtime));

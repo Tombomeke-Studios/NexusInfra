@@ -54,3 +54,16 @@ export function parsePathList(text: string): string[] {
     .map((p) => p.trim())
     .filter(Boolean);
 }
+
+/** Bytes the way people read them: 512 B, 1.4 KB, 26.3 MB, 2.1 GB. Null stays "—". */
+export function formatBytes(bytes: number | null | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return '—';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return unit === 0 ? `${value} B` : `${value >= 100 ? Math.round(value) : Math.round(value * 10) / 10} ${units[unit]}`;
+}
