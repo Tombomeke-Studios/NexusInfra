@@ -79,4 +79,21 @@ describe('createLifecycle', () => {
     await lifecycle.handleReport(report({ type: 'server.started', payload: { deploymentId: 'ghost', containerId: 'x', nodeId: 'n' } }));
     expect(await repo.listDeployments()).toHaveLength(0);
   });
+
+  it('records a pulled image, and whether the container was replaced (#239)', async () => {
+    const d = await seedDeployment(repo);
+    await lifecycle.handleReport(report({ type: 'server.image-updated', payload: { deploymentId: d.id, image: 'nginx', digest: 'sha256:0123456789abcdef0123', recreated: true } }));
+    const entry = (await repo.getDeployment(d.id))?.events.find((e) => e.event === 'image-updated');
+    expect(entry?.message).toContain('pulled nginx (sha256:0123456789ab');
+    expect(entry?.message).toContain('recreated');
+  });
+
+  it('records a failed update as leaving the server alone (#239)', async () => {
+    const d = await seedDeployment(repo);
+    await repo.updateDeploymentStatus(d.id, { status: 'running', containerId: 'c1' });
+    await lifecycle.handleReport(report({ type: 'server.update-failed', payload: { deploymentId: d.id, image: 'nginx:nope', reason: 'manifest unknown' } }));
+    const detail = await repo.getDeployment(d.id);
+    expect(detail?.status).toBe('running');
+    expect(detail?.events.find((e) => e.event === 'update-failed')?.message).toContain('manifest unknown');
+  });
 });

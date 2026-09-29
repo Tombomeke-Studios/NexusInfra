@@ -529,10 +529,33 @@ not running, `502` if the node operation fails.
 | `POST /deployments/:id/backups/:backupId/restore` | Extract the snapshot back into the running container |
 | `DELETE /deployments/:id/backups/:backupId` | Delete the stored tar and drop the record → `204` |
 
+### Image updates (#239)
+
+| Method + path | Purpose |
+|---|---|
+| `GET /deployments/:id/image` | Ask the owning node whether the registry has a newer image for the server's tag. Needs `server.view`. |
+| `POST /deployments/:id/update` | Pull the tag afresh; a running server is **recreated** from the new image, a stopped one uses it on its next start. Needs `server.edit`. `202 { status: "updating", recreate }` |
+
+`GET …/image` answers `{ image, status, remoteDigest, localDigest, checkedAt }`, where `status` is:
+
+| `status` | Meaning |
+|---|---|
+| `current` | The registry, the node and the running container all agree |
+| `update-available` | The registry has a digest this node has never pulled |
+| `pulled-not-applied` | A newer image is on the node, but the container was created from an older one |
+| `unknown` | The registry could not be asked (offline, rate-limited, private) — **not** the same as current |
+
+`502` when the node cannot be reached. The update is a command over the bus (`infra.server.update`):
+the agent **pulls first** and recreates only if the pull succeeded, so a registry outage or a missing
+tag leaves a running server exactly as it was and records `update-failed` in the audit trail. The
+recreate keeps the server's data, which lives in its volumes (#324), and it stays on its node.
+`409` while the server is still being placed.
+
 ### Schedules
 
 Recurring tasks the Orchestrator runs on a 5-field cron (minute hour day-of-month month day-of-week, UTC);
-actions are `restart` or `backup` (#111). The scheduler polls once a minute. `404` if the deployment/schedule
+actions are `restart`, `backup` (#111) or `update` — pull the image afresh and recreate a running server
+from it (#239). The scheduler polls once a minute. `404` if the deployment/schedule
 is unknown, `400` on a bad cron or action.
 
 | Method + path | Purpose |

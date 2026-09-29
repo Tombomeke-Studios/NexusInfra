@@ -37,6 +37,7 @@ describe('tickSchedules', () => {
   const actions: ScheduleActions = {
     restart: async (id) => void calls.push(`restart:${id}`),
     backup: async (id) => void calls.push(`backup:${id}`),
+    update: async (id) => void calls.push(`update:${id}`),
   };
 
   beforeEach(() => {
@@ -58,12 +59,19 @@ describe('tickSchedules', () => {
     expect(calls).toEqual([]);
   });
 
+  it('runs a scheduled image update (#239)', async () => {
+    await repo.createSchedule({ deploymentId: 'dep-1', name: 'Weekly update', cron: '0 4 * * *', action: 'update' });
+    await tickSchedules(repo, at4am, actions);
+    expect(calls).toEqual(['update:dep-1']);
+  });
+
   it('keeps running other schedules when one action throws', async () => {
     await repo.createSchedule({ deploymentId: 'boom', name: 'Restart', cron: '0 4 * * *', action: 'restart' });
     await repo.createSchedule({ deploymentId: 'ok', name: 'Backup', cron: '0 4 * * *', action: 'backup' });
     const flaky: ScheduleActions = {
       restart: async () => { throw new Error('nope'); },
       backup: async (id) => void calls.push(`backup:${id}`),
+      update: async (id) => void calls.push(`update:${id}`),
     };
     const ran = await tickSchedules(repo, at4am, flaky);
     expect(ran).toHaveLength(2);

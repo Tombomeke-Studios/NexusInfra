@@ -14,13 +14,14 @@ import { EGGS, getEgg, buildEggDeployment, EggValidationError, type Egg } from '
 import { containerMemoryMb, derivedHeapMb, formatHeapMb, heapBudgetProblem, parseMemoryMb } from './memory.js';
 import { nodeCapacity, availableRamMb, availableCpuCores, isOverCommitted } from './capacity.js';
 import { parsePersistPaths, startCommandFor } from './startCommand.js';
+import { requestImageUpdate } from './imageUpdate.js';
 import { planTransfer } from './transfer.js';
 import { pageOf, parseFilter, parsePage } from './deploymentQuery.js';
 import { getMinecraftVersions } from './minecraftVersions.js';
 import type { DeploymentDetail, NodeRecord, Repository, ServerConfigRecord, UpdateServerConfigInput } from './types.js';
 import type { ResourceLimits } from 'shared';
 
-const SCHEDULE_ACTIONS = ['restart', 'backup'];
+const SCHEDULE_ACTIONS = ['restart', 'backup', 'update'];
 
 // Cap on a single file upload; the body is buffered here and again in the agent,
 // so an unbounded upload is an out-of-memory crash rather than a slow request.
@@ -134,6 +135,9 @@ export type RemoveBackupFn = (agentUrl: string, ref: string) => Promise<void>;
  */
 export type PurgeDeploymentDataFn = (agentUrl: string, deploymentId: string) => Promise<void>;
 
+/** Ask the owning node whether a newer image exists for a server's tag (#239). */
+export type ImageStatusFn = (req: { agentUrl: string; image: string; containerId: string | null }) => Promise<Record<string, unknown>>;
+
 /** Plan-quota check against the Billing Bridge (hosted). Fails open so billing outages never block infra. */
 export type QuotaResource = 'servers' | 'databases';
 export type CheckQuotaFn = (userId: string, resource: QuotaResource, current: number) => Promise<{ allowed: boolean; limit: number }>;
@@ -156,6 +160,7 @@ export interface ApiDeps {
   minecraftVersions?: () => Promise<string[]>;
   checkQuota?: CheckQuotaFn;
   purgeDeploymentData?: PurgeDeploymentDataFn;
+  imageStatus?: ImageStatusFn;
 }
 
 // Default quota check: in the community edition everything is allowed (no
@@ -172,7 +177,7 @@ const defaultCheckQuota: CheckQuotaFn = async (userId, resource, current) => {
   }
 };
 
-const noopScheduleActions: ScheduleActions = { restart: async () => {}, backup: async () => {} };
+const noopScheduleActions: ScheduleActions = { restart: async () => {}, backup: async () => {}, update: async () => {} };
 
 // Default provisioning talks to the Node Agent's internal database HTTP.
 const defaultProvisionDatabase: ProvisionDatabaseFn = async ({ agentUrl, ...spec }) => {
@@ -192,6 +197,14 @@ const defaultDeprovisionDatabase: DeprovisionDatabaseFn = async (agentUrl, conta
 const defaultPurgeDeploymentData: PurgeDeploymentDataFn = async (agentUrl, deploymentId) => {
   const r = await agentFetch(`${agentUrl}/deployments/${encodeURIComponent(deploymentId)}/data`, { method: 'DELETE' });
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `the node refused (${r.status})`);
+};
+
+const defaultImageStatus: ImageStatusFn = async ({ agentUrl, image, containerId }) => {
+  const query = new URLSearchParams({ image, ...(containerId ? { containerId } : {}) });
+  const r = await agentFetch(`${agentUrl}/images/status?${query}`);
+  const body = (await r.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!r.ok) throw new Error(typeof body.error === 'string' ? body.error : `the node refused (${r.status})`);
+  return body;
 };
 
 const DB_PUBLIC_HOST = process.env.DATABASE_PUBLIC_HOST || 'localhost';
@@ -252,6 +265,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   const scheduleActions = deps.scheduleActions ?? noopScheduleActions;
   const checkQuota = deps.checkQuota ?? defaultCheckQuota;
   const purgeDeploymentData = deps.purgeDeploymentData ?? defaultPurgeDeploymentData;
+  const imageStatus = deps.imageStatus ?? defaultImageStatus;
   const router = Router();
   // Routes under `/deployments/<word>` that are not a server id must be matched
   // before the per-server guard (#238); mounting this first guarantees it.
@@ -722,6 +736,32 @@ export function createApiRouter(deps: ApiDeps): Router {
     return res.json({ action, succeeded, failed: results.length - succeeded, results });
   });
 
+  // ── Image updates (#239) ────────────────────────────────────────────────────
+  // Whether the registry has something newer than what this server runs. Asked of
+  // the owning node, which is the only one that knows what it pulled.
+  router.get('/deployments/:id/image', requirePermission('server.view'), async (req: Request, res: Response) => {
+    const { deployment } = accessOf(req);
+    if (!deployment.nodeId) return res.status(409).json({ error: 'deployment has no node yet' });
+    try {
+      const status = await imageStatus({
+        agentUrl: await agentUrlFor(deployment.nodeId),
+        image: deployment.dockerImage,
+        containerId: isRunning(deployment) ? deployment.containerId : null,
+      });
+      return res.json(status);
+    } catch (err) {
+      return res.status(502).json({ error: err instanceof Error ? err.message : 'node agent unreachable' });
+    }
+  });
+
+  // Pull the tag afresh and recreate a running server from it. `server.edit`,
+  // not a control permission: this changes which software runs, which is the
+  // server admin's call rather than an operator's.
+  router.post('/deployments/:id/update', requirePermission('server.edit'), async (req: Request, res: Response) => {
+    const outcome = await requestImageUpdate({ repo, publish }, req.params.id, 'user');
+    return res.status(outcome.status).json(outcome.body);
+  });
+
   // Permanently delete a deployment: stop its container if running, deprovision
   // any managed database containers, then drop the deployment and its records.
   router.delete('/deployments/:id', requirePermission('server.delete'), async (req: Request, res: Response) => {
@@ -1075,7 +1115,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     const { name, cron, action, enabled } = req.body ?? {};
     if (typeof name !== 'string' || !name) return res.status(400).json({ error: 'name is required' });
     if (typeof cron !== 'string' || !isValidCron(cron)) return res.status(400).json({ error: 'a valid 5-field cron expression is required' });
-    if (!SCHEDULE_ACTIONS.includes(action)) return res.status(400).json({ error: 'action must be restart or backup' });
+    if (!SCHEDULE_ACTIONS.includes(action)) return res.status(400).json({ error: 'action must be restart, backup or update' });
     const schedule = await repo.createSchedule({ deploymentId: detail.id, name, cron, action, enabled: enabled !== false });
     return res.status(201).json(schedule);
   });
@@ -1085,7 +1125,7 @@ export function createApiRouter(deps: ApiDeps): Router {
     if (!s || s.deploymentId !== req.params.id) return res.status(404).json({ error: 'schedule not found' });
     const { name, cron, action, enabled } = req.body ?? {};
     if (cron !== undefined && (typeof cron !== 'string' || !isValidCron(cron))) return res.status(400).json({ error: 'invalid cron expression' });
-    if (action !== undefined && !SCHEDULE_ACTIONS.includes(action)) return res.status(400).json({ error: 'action must be restart or backup' });
+    if (action !== undefined && !SCHEDULE_ACTIONS.includes(action)) return res.status(400).json({ error: 'action must be restart, backup or update' });
     const updated = await repo.updateSchedule(s.id, { name, cron, action, enabled });
     return res.json(updated);
   });

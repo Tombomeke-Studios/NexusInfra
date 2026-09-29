@@ -47,6 +47,10 @@ import {
   type ServerBackup,
   type ServerSchedule,
   type ScheduleAction,
+  type ImageStatus,
+  type ImageUpdateStatus,
+  getImageStatus,
+  updateImage,
   listTeams,
   setServerTeam,
   transferOwnership,
@@ -227,7 +231,9 @@ export function ServerDetail() {
       {activeTab === 'network' && <NetworkTab ports={d.ports ?? {}} />}
       {activeTab === 'schedules' && <SchedulesTab id={d.id} />}
       {activeTab === 'subusers' && <SubusersTab id={d.id} />}
-      {activeTab === 'startup' && <StartupTab image={d.dockerImage} env={d.env ?? {}} autoRestart={d.autoRestart ?? false} />}
+      {activeTab === 'startup' && (
+        <StartupTab image={d.dockerImage} env={d.env ?? {}} autoRestart={d.autoRestart ?? false} deploymentId={d.id} running={running} canUpdate={allows('server.edit')} onUpdated={load} />
+      )}
       {activeTab === 'activity' && <ActivityTab id={d.id} />}
       {activeTab === 'settings' && <SettingsTab deployment={d} allows={allows} onDelete={onDelete} onSaved={load} />}
     </div>
@@ -1024,7 +1030,7 @@ function SchedulesTab({ id }: { id: string }) {
         <div>
           <span className="field__label" style={{ fontSize: '.78rem' }}>Action</span>
           <div style={{ display: 'flex', gap: 6 }}>
-            {(['backup', 'restart'] as ScheduleAction[]).map((a) => (
+            {(['backup', 'restart', 'update'] as ScheduleAction[]).map((a) => (
               <button key={a} type="button" data-ripple onClick={() => setAction(a)} className={`opt${action === a ? ' is-active' : ''}`} style={{ textTransform: 'capitalize' }}>{a}</button>
             ))}
           </div>
@@ -1189,14 +1195,93 @@ function SubusersTab({ id }: { id: string }) {
 // What this server actually runs (#218): its image, its restart policy and its own
 // environment. It used to render three invented variables (EULA, MAX_MEMORY, …)
 // and a startup command nothing executes. Editing these is #220.
-function StartupTab({ image, env, autoRestart }: { image: string; env: Record<string, string>; autoRestart: boolean }) {
+const IMAGE_STATUS_TEXT: Record<ImageUpdateStatus, string> = {
+  current: 'Up to date with the registry.',
+  'update-available': 'A newer image is available for this tag.',
+  'pulled-not-applied': 'A newer image is on the node but this server still runs the old one — update to apply it.',
+  unknown: 'Could not ask the registry, so this is not known to be current.',
+};
+
+function StartupTab({
+  image,
+  env,
+  autoRestart,
+  deploymentId,
+  running,
+  canUpdate,
+  onUpdated,
+}: {
+  image: string;
+  env: Record<string, string>;
+  autoRestart: boolean;
+  deploymentId: string;
+  running: boolean;
+  canUpdate: boolean;
+  onUpdated: () => Promise<void> | void;
+}) {
   const vars = Object.entries(env);
+  const { toast } = useToast();
+  const [imageStatus, setImageStatus] = useState<ImageStatus | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
+  const [updating, setUpdating] = useState(false);
+
+  // Asked on demand rather than on every visit: it goes to the registry, which
+  // rate-limits anonymous callers (#239).
+  const check = async () => {
+    setChecking(true);
+    setCheckError(null);
+    try {
+      setImageStatus(await getImageStatus(deploymentId));
+    } catch (e) {
+      setCheckError(e instanceof Error ? e.message : 'Could not check for updates');
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const update = async () => {
+    setUpdating(true);
+    try {
+      const r = await updateImage(deploymentId);
+      toast(
+        r.recreate
+          ? 'Pulling the image — the server is recreated from it once the pull finishes. Its data is kept.'
+          : 'Pulling the image — it is used the next time this server starts.',
+        'success',
+        'Update',
+      );
+      setImageStatus(null);
+      await onUpdated();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not start the update', 'error');
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   return (
     <>
       <div className="card" style={{ padding: '20px 22px', marginBottom: 18 }}>
         <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 12 }}>Container image</strong>
         <div className="mono" style={{ fontSize: '.84rem', background: '#0a0e16', color: '#c9d1d9', padding: '12px 14px', borderRadius: 'var(--radius)', wordBreak: 'break-all' }}>
           {image}
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
+          <button className="btn btn--secondary btn--sm" data-ripple onClick={() => void check()} disabled={checking}>
+            {checking ? 'Checking…' : 'Check for updates'}
+          </button>
+          {canUpdate && (
+            <button className="btn btn--primary btn--sm" data-ripple onClick={() => void update()} disabled={updating}>
+              {updating ? 'Starting update…' : running ? 'Update and recreate' : 'Pull latest'}
+            </button>
+          )}
+          {imageStatus && (
+            <span role="status" style={{ fontSize: '.84rem', color: imageStatus.status === 'current' ? 'var(--color-success)' : imageStatus.status === 'unknown' ? 'var(--color-text-subtle)' : 'var(--color-warning)' }}>
+              {IMAGE_STATUS_TEXT[imageStatus.status]}
+            </span>
+          )}
+          {checkError && <span role="alert" style={{ fontSize: '.84rem', color: 'var(--color-danger)' }}>{checkError}</span>}
         </div>
         <p className="subtle" style={{ margin: '12px 0 0', fontSize: '.84rem' }}>
           The image runs its own entrypoint; the variables below are what NexusInfra passes in.

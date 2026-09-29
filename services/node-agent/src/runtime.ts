@@ -10,6 +10,7 @@ import { detectCgroupSupport, withCgroupSupport, type CgroupSupport } from './cg
 import { buildTarball, normalizeContainerPath, parseLsOutput, type FileEntry } from './files.js';
 import { collectDisk, resolveDiskPath, type DiskPathChoice } from './disk.js';
 import { publishPorts } from './ports.js';
+import { digestOf, type ImageFacts } from './images.js';
 import { DEPLOYMENT_LABEL, pathsToPersist, volumeMounts, volumeNameFor, type VolumeMount } from './volumes.js';
 import type { TerminalSession } from './terminal.js';
 
@@ -58,6 +59,10 @@ export interface ContainerRuntime {
    * deleted server. Never touches a bind-mounted host directory.
    */
   purgeDeployment(deploymentId: string): Promise<{ containers: number; volumes: number }>;
+  /** Pull an image even when a copy exists — how a tag picks up a new version (#239). */
+  pullImage(image: string): Promise<{ imageId: string; digest: string | null }>;
+  /** What the registry, this node and a container each say an image is (#239). */
+  imageFacts(image: string, containerId?: string): Promise<ImageFacts>;
   collectResources(): Promise<NodeResources>;
   /** Follow a container's logs, invoking `onLine` per line. Returns an unsubscribe. */
   logs(containerId: string, onLine: (line: string) => void): () => void;
@@ -503,6 +508,48 @@ export class DockerodeRuntime implements ContainerRuntime {
 
   // Pull the image if it isn't present locally, so start() doesn't fail on a
   // fresh host. No-op when the image already exists.
+  async pullImage(image: string): Promise<{ imageId: string; digest: string | null }> {
+    await new Promise<void>((resolve, reject) => {
+      this.docker.pull(image, (err: unknown, stream: NodeJS.ReadableStream) => {
+        if (err) return reject(err as Error);
+        this.docker.modem.followProgress(stream, (doneErr: unknown) => (doneErr ? reject(doneErr as Error) : resolve()));
+      });
+    });
+    const info = await this.docker.getImage(image).inspect();
+    return { imageId: info.Id, digest: (info.RepoDigests ?? []).map(digestOf).find(Boolean) ?? null };
+  }
+
+  async imageFacts(image: string, containerId?: string): Promise<ImageFacts> {
+    let localImageId: string | null = null;
+    let localRepoDigests: string[] = [];
+    try {
+      const info = await this.docker.getImage(image).inspect();
+      localImageId = info.Id;
+      localRepoDigests = info.RepoDigests ?? [];
+    } catch {
+      // Never pulled on this node.
+    }
+
+    let remoteDigest: string | null = null;
+    try {
+      const dist = (await this.docker.getImage(image).distribution()) as { Descriptor?: { digest?: string } };
+      remoteDigest = dist.Descriptor?.digest ?? null;
+    } catch {
+      // Registry unreachable, rate limited, or a private image without credentials:
+      // reported as unknown rather than guessed.
+    }
+
+    let containerImageId: string | null = null;
+    if (containerId) {
+      try {
+        containerImageId = (await this.docker.getContainer(containerId).inspect()).Image;
+      } catch {
+        // The container is gone; judge by the local image alone.
+      }
+    }
+    return { image, remoteDigest, localRepoDigests, localImageId, containerImageId };
+  }
+
   private async ensureImage(image: string): Promise<void> {
     const images = await this.docker.listImages({ filters: { reference: [image] } });
     if (images.length > 0) return;
