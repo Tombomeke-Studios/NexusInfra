@@ -37,3 +37,41 @@ jobs:
         run: npm test
         env:
           NEXUS_EDITION: hosted
+
+  # Against a real broker and database (#242): bindings, encryption on the wire,
+  # dead-lettering, the migrations from nothing, unique-index races, and the
+  # command → agent → report loop. The unit suite replaces each of these with a
+  # captured function, so a broken binding used to pass CI.
+  integration:
+    name: Integration (RabbitMQ + database)
+    runs-on: ubuntu-latest
+    services:
+      rabbitmq:
+        image: rabbitmq:3-alpine
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 10s
+          --health-retries 24
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Integration tests
+        run: npm run test:integration
+        env:
+          RABBITMQ_URL: amqp://guest:guest@localhost:5672
+          # Fail rather than skip if the broker is missing.
+          REQUIRE_BROKER: '1'

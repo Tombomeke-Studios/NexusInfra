@@ -17,7 +17,8 @@
     "build": "npm run build --workspace=shared && npm run build --workspaces --if-present",
     "install:all": "npm install",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:integration": "VITEST_INTEGRATION=1 vitest run"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

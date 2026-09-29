@@ -156,7 +156,9 @@ A "unit" = one function, feature, fix, or refactor — the smallest shippable sl
 - **Dashboard (React):** Vitest for unit tests, colocated `*.test.ts(x)` files.
 - **New backend logic => unit tests required** (event handlers, node selection, billing calculations).
 - **Bug fixes:** when feasible, write the test that catches the bug first (TDD).
-- **Integration tests:** Docker Compose test target for RabbitMQ/database-dependent tests.
+- **Integration tests (#242):** `*.integration.test.ts`, run by `npm run test:integration` (never by
+  `npm test`) and by CI's `integration` job against a real RabbitMQ and a real Prisma database. Put a
+  test there when only the real thing can prove it — a binding, a unique index, a transaction.
 - **Wire compatibility with FinVault is test-guarded** — `shared/src/events.test.ts` locks the envelope
   shape and AES-256-GCM layout. Never change these without an equivalent change in FinVault.
 
@@ -191,6 +193,7 @@ is the migrations directory.
 | Build everything (shared first) | `npm run build` |
 | Build/run the CLI | `npm run build --workspace=cli` · `node cli/dist/index.js --help` |
 | Run all tests | `npm test` |
+| Integration tests (real broker + DB, #242) | `RABBITMQ_URL=amqp://guest:guest@localhost:5672 npm run test:integration` |
 | Lint all workspaces | `npm run lint` |
 | Dev watch: shared + control-room | `npm run dev` |
 | Start stack (RabbitMQ + services, Docker) | `docker-compose up` |
