@@ -74,8 +74,8 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > look, and **revoking access took effect on the next request**. Self-registration was refused in
 > community, and the served dashboard bundle contained **no billing code**.
 >
->  **⚠️ Still not verified live:** the terminal's PTY/WebSocket path, the gateway proxy, and the
-> hosted edition (needs FinVault on a shared broker).
+>  **⚠️ Still not verified live:** the hosted edition (needs FinVault on a shared broker). The terminal's
+> PTY/WebSocket path and the gateway proxy have since been run end to end (#69, #20).
 >
 > **Phase 6 is complete (#173–#179) — the panel is multi-user and both editions are shippable.**
 > Real accounts replace the single hardcoded login, and **every** server route is now authorized:
@@ -152,9 +152,9 @@ gateway work" above.)_
 
 ### Phase 3+ — remaining console / gateway work
 
-- [~] WebSocket transport for a persistent exec/terminal session (JWT) (#69 — **console/terminal over WS done**; logs/stats still SSE)
+- [x] WebSocket transport for a persistent exec/terminal session (JWT) (#69) — the terminal is a WebSocket end to end, through the gateway too; logs/stats stay server-sent events, which the gateway now streams instead of buffering (a second transport for a one-way stream would be two things to keep working)
 - [x] Dashboard: full interactive terminal (xterm.js, persistent PTY) for a server (#71)
-- [~] API Gateway: JWT validation, routing, WebSocket proxy (#20) — **HTTP core done** (CORS, rate limit, JWT, reverse proxy, `:9400`); WS proxy pending with the terminal
+- [x] API Gateway: JWT validation, routing, WebSocket proxy (#20) — CORS, rate limit, JWT, streaming reverse proxy, WebSocket upgrades, API tokens passed through; verified live (terminal, SSE logs/stats, `nexusctl`)
 - [ ] Replace stub login with real FinVault JWT via the Gateway (#17, #20)
 
 ### Phase 6 — Multi-user sharing + two shippable editions

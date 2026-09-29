@@ -842,18 +842,36 @@ entry and emits `payment.request` to FinVault; credit is added only on `payment.
 ## API Gateway (`:9400`)
 
 The single external entry point (#20). It applies **CORS**, **per-client rate limiting** (token bucket,
-per authenticated user or IP), and **JWT validation** on protected routes, then reverse-proxies to the
+per authenticated user or IP), and **token validation** on protected routes, then reverse-proxies to the
 backend (the Orchestrator, which itself fronts Billing Bridge + Control Room). Public routes (`/auth/*`,
-`/config`) skip auth; everything else requires a valid `Authorization: Bearer <jwt>`. The gateway
-forwards the token and adds `x-user-id`/`x-forwarded-for` for the backend.
+`/config`) skip auth; everything else requires `Authorization: Bearer <token>`. The gateway forwards the
+token and adds `x-user-id`/`x-forwarded-for` for the backend; an `x-user-id` sent by the caller is
+dropped, never forwarded.
 
+- A **JWT** is verified here (signature and expiry) before anything is proxied.
+- An **API token** (`nxi_…`, #228) is passed through unverified: it is an opaque secret whose hash only
+  the Orchestrator holds, so the Orchestrator is the one that accepts or refuses it (and enforces its
+  scope). Such callers are rate-limited by address, since an unverified token names nobody.
 - `GET /health` — the gateway's own liveness (not proxied).
 - Any other path → matched by longest prefix and proxied: `401` (missing/invalid token on a protected
   route), `404` (no route), `429` (rate limit exceeded), `502` (backend unreachable), else the backend's
   response verbatim.
 
-The WebSocket proxy for the interactive terminal (#69/#71) is not built yet. The dashboard currently
-calls the Orchestrator directly; routing it through the gateway is a follow-up.
+**Responses stream.** Nothing is buffered, so live logs and stats (`/deployments/:id/logs`, `/stats` —
+server-sent events) arrive as they happen and backup downloads keep their `content-disposition` and
+`content-length`. When the client disconnects, the request to the backend is aborted with it. Backend
+redirects are relayed, not followed.
+
+**WebSocket upgrades** (#69) pass the same gate — route, rate limit, token — and are then proxied byte
+for byte to the backend, so the interactive terminal works through the gateway:
+`ws://<gateway>/deployments/:id/terminal?token=<jwt>&cols=&rows=`. Browsers cannot set headers on a
+handshake, so the token rides in `?token=`; an `Authorization` header works too. A refused handshake is
+answered with its status (`401`, `404`, `429`) before the backend is dialed; a backend that refuses —
+the Orchestrator hangs up on a caller without console access, or on an API token — surfaces as `502`.
+Closing either side closes the other.
+
+The dashboard's nginx still calls the Orchestrator directly; the gateway is the entry point for
+scripts, `nexusctl` and anything else that should sit behind its rate limit.
 
 ## Event contract (bus API)
 

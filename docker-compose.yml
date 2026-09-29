@@ -110,9 +110,9 @@ services:
       - rabbitmq
 
   # API Gateway (#20) — single external entry point: CORS, per-client rate
-  # limiting, JWT validation, and a reverse proxy to the Orchestrator. Available
-  # on :9400; the dashboard still calls the Orchestrator directly for now (rewire
-  # nginx /api → gateway once the WS terminal proxy lands).
+  # limiting, token validation, and a streaming reverse proxy (WebSockets too, #69)
+  # to the Orchestrator. Available on :9400 for scripts and nexusctl; the
+  # dashboard's nginx still calls the Orchestrator directly.
   gateway:
     build:
       context: .

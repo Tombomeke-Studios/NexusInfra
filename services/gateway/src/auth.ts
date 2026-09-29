@@ -22,3 +22,18 @@ export function verifyToken(token: string, secret: string = JWT_SECRET): Verifie
 export function bearerToken(header: string | undefined): string | null {
   return header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : null;
 }
+
+/**
+ * An API token (#228) — `nxi_…`, minted and verified by the Orchestrator.
+ *
+ * The gateway cannot check one: it is an opaque secret whose hash lives in the
+ * Orchestrator's database, not a signed claim. So it is passed through and the
+ * Orchestrator decides — rejecting it here, as the gateway used to, made every
+ * script and nexusctl call fail with 401 at the front door while the same token
+ * worked one hop further in. It never names a user for rate limiting either:
+ * an unverified token is a caller-chosen key, so those callers share their IP's
+ * bucket.
+ */
+export function isApiToken(token: string): boolean {
+  return token.startsWith('nxi_') && token.length > 'nxi_'.length;
+}

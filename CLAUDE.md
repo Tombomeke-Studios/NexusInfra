@@ -330,8 +330,10 @@ is the migrations directory.
 | `src/routes.ts` | Pure routing table + `matchRoute` (longest-prefix, public/protected) |
 | `src/auth.ts` | `verifyToken`/`bearerToken` — validates the same JWTs the orchestrator issues (FinVault JWT later, #17) |
 | `src/rateLimit.ts` | Pure token-bucket `RateLimiter` (per-IP/user, injected clock) |
-| `src/gateway.ts` | `createGatewayApp` — CORS → rate limit → JWT (protected routes) → reverse proxy (fetch) to the matched backend; injectable seams for tests |
-| `src/index.ts` | Entry: builds the app for `ORCHESTRATOR_URL`, heartbeat, listens `:9400`. WS terminal proxy pending (#69/#71) |
+| `src/gateway.ts` | `createGateway` → `{ app, upgrade }` (and `createGatewayApp` for just the app) — CORS → rate limit → token (protected routes) → **streaming** reverse proxy to the matched backend. One `gate` decides for HTTP and WebSocket upgrades alike, so a socket is no way around the limiter. A JWT is verified; an `nxi_` API token is opaque here and passed through for the orchestrator to judge. A client disconnect aborts the backend request — a log tail never ends on its own |
+| `src/upgrade.ts` | `proxyUpgrade`/`refuseUpgrade` — the WebSocket proxy (#69), at the byte level: the handshake is replayed, the 101 relayed, the sockets piped. No frame parsing, so no WS library at runtime |
+| `src/live.test.ts` | Real sockets on both sides: SSE arrives before the stream ends, disconnects propagate, terminal frames round-trip, refusals answer before dialing |
+| `src/index.ts` | Entry: builds the gateway for `ORCHESTRATOR_URL`, wires `upgrade` on the HTTP server, heartbeat, listens `:9400` |
 | `Dockerfile` | Multi-stage build |
 
 ### dashboard (React web panel)

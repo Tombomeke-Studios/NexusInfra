@@ -17,7 +17,7 @@ event contracts, or infra topology.
 | `services/orchestrator` | ✅ Built | Node registry, deployment API + least-loaded node selection, lifecycle events |
 | `dashboard` | ✅ Built (MVP) | React/Vite panel: login, overview, deployment form, live server list + stop |
 | `services/billing-bridge` | ✅ Built (hosted) | Runtime tracking, credit wallet + ledger, FinVault top-up flow, plan quotas — inert in community edition (#146) |
-| `services/gateway` | ✅ Built (HTTP) | Single entry point: CORS, per-client rate limiting, JWT validation, reverse proxy to the orchestrator (#20). WS terminal proxy pending (#69/#71) |
+| `services/gateway` | ✅ Built | Single entry point: CORS, per-client rate limiting, token validation (JWT verified, API tokens passed to the orchestrator), streaming reverse proxy to the orchestrator (#20), and a WebSocket upgrade proxy for the terminal (#69) |
 | Live container console | ✅ Logs + stats (SSE) + terminal (WS) | Orchestrator proxies the agent's `/logs` + `/stats` SSE and the `/terminal` WebSocket (interactive xterm.js shell, JWT-authenticated) to the dashboard (#68/#71) |
 
 ## Editions (open-core)
@@ -95,7 +95,7 @@ counted in `nexusinfra_metric_errors_total` rather than reported as zero.
 | orchestrator | `nexusinfra_deployments{status}`, `nexusinfra_nodes{health}` (+ `maintenance`), `nexusinfra_events_published_total{routing_key,outcome}` (a failed publish is an event the broker never took), `nexusinfra_lifecycle_reports_total{type}`, `nexusinfra_notifications_total{outcome,kind}` |
 | node-agent | `nexusinfra_agent_containers{state}`, `nexusinfra_agent_commands_total{type}`, `nexusinfra_agent_container_events_total{action}` (#332), `nexusinfra_outbox_pending`, `nexusinfra_outbox_dropped` (#167) |
 | control-room | `nexusinfra_monitored_sources{status}`, `nexusinfra_dead_letters` (#243; absent when the broker cannot be asked) |
-| gateway | `nexusinfra_gateway_requests_total{route,outcome,status}` — `route` is the routing-table prefix; outcomes `proxied`, `rate_limited`, `unauthorized`, `no_route`, `upstream_error` |
+| gateway | `nexusinfra_gateway_requests_total{route,outcome,status}` — `route` is the routing-table prefix; outcomes `proxied`, `upgraded` (WebSocket handshakes), `rate_limited`, `unauthorized`, `no_route`, `upstream_error` |
 | billing-bridge | the common set |
 
 ## Heartbeat / status model

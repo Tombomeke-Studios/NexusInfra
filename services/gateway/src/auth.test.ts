@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import jwt from 'jsonwebtoken';
-import { bearerToken, verifyToken } from './auth.js';
+import { bearerToken, isApiToken, verifyToken } from './auth.js';
 
 const SECRET = 'test-secret';
 
@@ -26,5 +26,15 @@ describe('verifyToken', () => {
   it('throws when the subject is missing', () => {
     const token = jwt.sign({ foo: 'bar' }, SECRET);
     expect(() => verifyToken(token, SECRET)).toThrow();
+  });
+});
+
+describe('isApiToken (#228)', () => {
+  it('recognises the nxi_ prefix', () => {
+    expect(isApiToken('nxi_abc')).toBe(true);
+  });
+  it('does not mistake a JWT or the bare prefix for one', () => {
+    expect(isApiToken(jwt.sign({ sub: 'u' }, SECRET))).toBe(false);
+    expect(isApiToken('nxi_')).toBe(false);
   });
 });
