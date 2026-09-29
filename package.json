@@ -1,13 +1,14 @@
 {
   "name": "nexusinfra-monorepo",
   "version": "0.1.0",
-  "description": "NexusInfra — infrastructure & server management platform (TypeScript). Integrates with FinVault via RabbitMQ.",
+  "description": "NexusInfra \u2014 infrastructure & server management platform (TypeScript). Integrates with FinVault via RabbitMQ.",
   "type": "module",
   "private": true,
   "workspaces": [
     "services/*",
     "shared",
-    "dashboard"
+    "dashboard",
+    "cli"
   ],
   "scripts": {
     "dev:shared": "npm run dev --workspace=shared",

@@ -245,7 +245,7 @@ scrolling log lines describing events that never happened.
 - [x] Search, filter and pagination on the Servers list (#237)
 - [x] Bulk actions on multiple servers (#238)
 - [x] Update a deployment's container image (pull + recreate) (#239)
-- [ ] `nexusctl` — a CLI client for the panel (#240)
+- [x] `nexusctl` — a CLI client for the panel (#240)
 
 ### 🐛 Bugs / fixes (open)
 

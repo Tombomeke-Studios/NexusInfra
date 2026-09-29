@@ -189,6 +189,7 @@ is the migrations directory.
 |---|---|
 | Install workspace deps | `npm install` |
 | Build everything (shared first) | `npm run build` |
+| Build/run the CLI | `npm run build --workspace=cli` · `node cli/dist/index.js --help` |
 | Run all tests | `npm test` |
 | Lint all workspaces | `npm run lint` |
 | Dev watch: shared + control-room | `npm run dev` |
@@ -355,6 +356,14 @@ is the migrations directory.
 | `src/health.ts` | Status → colour helpers shared across pages |
 | `src/test/setup.ts` · `vitest.config.ts` | jsdom + Testing Library setup; in-memory localStorage |
 | `Dockerfile` · `nginx.conf` | Static build served by nginx, which proxies `/api` to the orchestrator |
+
+### cli (`nexusctl`, #240)
+| Path | Contents |
+|---|---|
+| `cli/src/commands.ts` | Every command, dependency-injected (`run(argv, deps)` → exit code) so the CLI is tested with a fake fetch. Servers are resolved by id or **exact** name — an ambiguous name is refused with the ids. Start/stop/restart/kill go through `POST /deployments/bulk` |
+| `cli/src/client.ts` | `Client` — JSON requests, binary download, SSE stream; bearer API token |
+| `cli/src/config.ts` | `~/.config/nexusctl/config.json` (mode 600), `NEXUSCTL_URL`/`NEXUSCTL_TOKEN` win |
+| `cli/src/index.ts` | The `nexusctl` bin |
 
 ### Infrastructure
 | Path | Contents |

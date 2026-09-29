@@ -33,6 +33,7 @@ other people. An optional hosted edition adds usage-based billing through
 - [Architecture](#architecture)
 - [Components](#components)
 - [HTTP API](#http-api)
+- [Command line: nexusctl](#command-line-nexusctl)
 - [FinVault integration](#finvault-integration)
 - [Development](#development)
 - [Documentation](#documentation)
@@ -350,6 +351,34 @@ token, **and** a sufficient role on the server being addressed.
 
 Full request and response shapes, status codes and the event contract are in
 [docs/api.md](docs/api.md).
+
+---
+
+## Command line: nexusctl
+
+`nexusctl` drives the same API from a terminal or a script. It lives in [`cli/`](cli), needs Node 20
+and nothing else, and authenticates with an **API token** — create one under *Account → API tokens*
+(the `write` scope is needed to change anything; a read-only token can list and inspect).
+
+```bash
+npm run build --workspace=cli
+alias nexusctl="node $PWD/cli/dist/index.js"
+
+nexusctl login --url https://panel.example.com/api --token nxi_…   # checked, then saved (mode 600)
+nexusctl servers list --status running
+nexusctl servers create --name web --image nginx:alpine --port 8080:80 --persist /usr/share/nginx/html
+nexusctl servers create --name survival --egg minecraft-java --var TYPE=PAPER
+nexusctl servers restart survival web          # by name or id; one request, reported per server
+nexusctl servers logs survival --follow
+nexusctl backups create survival
+nexusctl backups download survival <backup id> # saves the tar under the panel's file name
+nexusctl nodes list
+```
+
+Every listing takes `--json`. `NEXUSCTL_URL` and `NEXUSCTL_TOKEN` override the saved login, so CI
+never has to write a token to disk. Exit codes: `0` success, `1` the panel refused (or part of a
+bulk action failed), `2` a usage error. Destructive commands (`servers delete`, `backups restore`)
+need `--yes`. `nexusctl --help` lists everything.
 
 ---
 
