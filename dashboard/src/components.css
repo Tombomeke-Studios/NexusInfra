@@ -779,39 +779,52 @@ input[type='range']::-moz-range-thumb {
 .appbar__menu-toggle {
   display: none;
 }
-@media (max-width: 900px) {
-  .appbar {
-    justify-content: space-between;
-    padding: 0 var(--space-4);
-  }
-  .appbar__menu-toggle {
-    display: inline-flex;
-  }
-  .appbar__menu {
-    display: none;
-  }
-  .appbar__menu.is-open {
-    position: absolute;
-    top: var(--nav-height);
-    left: 0;
-    right: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-1);
-    padding: var(--space-3) var(--space-4) var(--space-4);
-    background: var(--color-surface);
-    border-bottom: 1px solid var(--color-border);
-    box-shadow: var(--shadow-lg);
-    max-height: calc(100dvh - var(--nav-height));
-    overflow-y: auto;
-  }
-  .appbar__menu.is-open .appbar__nav {
-    flex-direction: column;
-  }
-  .appbar__menu.is-open .navlink {
-    padding: var(--space-3);
-  }
+/* Folded when the full bar does not fit — measured in Layout.tsx (#352), not a
+   fixed width, because how much the bar holds depends on the edition and role. */
+.appbar--compact {
+  justify-content: space-between;
+  padding: 0 var(--space-4);
+}
+.appbar--compact .appbar__menu-toggle {
+  display: inline-flex;
+}
+.appbar--compact .appbar__menu {
+  display: none;
+}
+.appbar--compact .appbar__menu.is-open {
+  position: absolute;
+  top: var(--nav-height);
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
+  max-height: calc(100dvh - var(--nav-height));
+  overflow-y: auto;
+}
+.appbar--compact .appbar__menu.is-open .appbar__nav {
+  flex-direction: column;
+}
+.appbar--compact .appbar__menu.is-open .navlink {
+  padding: var(--space-3);
+}
+/* In the full bar nothing wraps or gets squeezed: when it does not fit, that
+   shows as overflow — which is what folds it — instead of a two-line label or a
+   theme toggle squashed to a sliver. */
+.appbar:not(.appbar--compact) .appbar__menu > *,
+.appbar > .appbar__brand {
+  flex-shrink: 0;
+}
+.appbar:not(.appbar--compact) .appbar__nav {
+  flex-shrink: 1;
+}
+.appbar .navlink {
+  white-space: nowrap;
 }
 .navlink {
   padding: var(--space-2) var(--space-3);

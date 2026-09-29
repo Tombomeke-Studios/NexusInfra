@@ -290,6 +290,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [x] The credit balance never refreshes on its own — a stale balance is a wrong answer stated with confidence (#296)
 - [x] Creating a server is never charged and the form shows no plan entitlements (RAM ceiling, storage, backups, databases) (#297) — memory ceiling across an account's servers + backups-per-server ceiling, shown in the form with a one-click fit, enforced against the owner's plan; the charging model stated in the form and on the Billing page. Storage deliberately not modelled: it cannot be enforced (#278)
 - [x] The FinVault integration has never been exercised end to end — written, not verified; a mismatched message key fails *silently* (#298) — run against FinVault's own code: encryption, confirmations and the cycle-to-suspend path work; a double-delivered confirmation credited twice (fixed); a wrong key now shows as *Not confirmed*
+- [x] The top bar overflowed between 900px and ~1300px for a hosted administrator — it now folds when it does not fit, measured (#352) 🐛
 - [ ] FinVault never acts on NexusInfra's `payment.request`, so a top-up cannot complete — needs a FinVault consumer and an identity it can resolve (#351) 🐛
 - [x] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)
 - [x] `docs/billing.md` is missing from the documentation ownership table (#248)
