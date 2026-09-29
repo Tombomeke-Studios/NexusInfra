@@ -21,6 +21,7 @@ import { createLifecycle } from './lifecycle.js';
 import { createSuspendHandler, type SuspendPayload } from './suspend.js';
 import { startScheduler, type ScheduleActions } from './scheduler.js';
 import { requestImageUpdate } from './imageUpdate.js';
+import { backfillPortAllocations } from './portAllocation.js';
 import { sweepRetention, takeBackup, type BackupDeps, type Snapshot } from './backups.js';
 import { createReconcileHandler } from './reconcile.js';
 
@@ -252,6 +253,11 @@ void users
 
 // Evaluate schedules once a minute (restart/backup on a cron).
 startScheduler(repo, scheduleActions);
+// Servers from before #233 hold ports nothing recorded; record them once, so the
+// conflict check knows about them.
+void backfillPortAllocations(repo)
+  .then((n) => n && console.log(`[Orchestrator] Recorded ${n} host port${n === 1 ? '' : 's'} held by existing servers (#233)`))
+  .catch((err) => console.warn('[Orchestrator] Could not backfill port allocations:', err));
 // A "keep 30 days" policy has to expire backups even when none are being made
 // (#232). Hourly is plenty for a policy measured in days.
 setInterval(() => void sweepRetention(backupDeps, new Date()).catch(() => undefined), 60 * 60 * 1000).unref();

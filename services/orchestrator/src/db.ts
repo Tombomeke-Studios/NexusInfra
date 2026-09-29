@@ -1,7 +1,8 @@
 import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import { parseRetention, type BackupRetention } from './retention.js';
-import type {
+import { PortConflictError } from './portPool.js';
+import type { PortAllocationRecord,
   CreateServerConfigInput,
   DeploymentDetail,
   DeploymentRecord,
@@ -144,6 +145,8 @@ function toApiTokenRecord(t: {
 function toNodeRecord(n: PrismaNode): NodeRecord {
   return {
     maintenance: n.maintenance,
+    portRangeStart: n.portRangeStart ?? null,
+    portRangeEnd: n.portRangeEnd ?? null,
     cpuCores: n.cpuCores,
     id: n.id,
     name: n.name,
@@ -514,6 +517,8 @@ export class PrismaRepository implements Repository {
         location: input.location ?? null,
         agentUrl: input.agentUrl ?? null,
         maintenance: input.maintenance ?? false,
+        portRangeStart: input.portRange?.start ?? null,
+        portRangeEnd: input.portRange?.end ?? null,
         // Registered-but-unseen → epoch so it reads offline until its agent beats.
         lastHeartbeat: new Date(0),
       },
@@ -522,6 +527,9 @@ export class PrismaRepository implements Repository {
         ...(input.location !== undefined ? { location: input.location } : {}),
         ...(input.agentUrl !== undefined ? { agentUrl: input.agentUrl } : {}),
         ...(input.maintenance !== undefined ? { maintenance: input.maintenance } : {}),
+        ...(input.portRange !== undefined
+          ? { portRangeStart: input.portRange?.start ?? null, portRangeEnd: input.portRange?.end ?? null }
+          : {}),
       },
     });
     return toNodeRecord(node);
@@ -530,6 +538,8 @@ export class PrismaRepository implements Repository {
   async deleteNode(id: string): Promise<void> {
     // Detach deployments first so the FK doesn't block the delete.
     await this.client.deployment.updateMany({ where: { nodeId: id }, data: { nodeId: null } });
+    // Ports on a machine that is gone are held by nothing (#233).
+    await this.client.portAllocation.deleteMany({ where: { nodeId: id } });
     await this.client.node.delete({ where: { id } });
   }
 
@@ -708,6 +718,7 @@ export class PrismaRepository implements Repository {
       this.client.serverBackup.deleteMany({ where: { deploymentId: id } }),
       this.client.serverSchedule.deleteMany({ where: { deploymentId: id } }),
       this.client.serverSubuser.deleteMany({ where: { deploymentId: id } }),
+      this.client.portAllocation.deleteMany({ where: { deploymentId: id } }),
       this.client.deployment.delete({ where: { id } }),
     ]);
     await this.client.serverConfig.delete({ where: { id: deployment.serverConfigId } }).catch(() => {
@@ -732,6 +743,48 @@ export class PrismaRepository implements Repository {
 
   async deleteDatabase(id: string): Promise<void> {
     await this.client.serverDatabase.delete({ where: { id } });
+  }
+
+  async listPortAllocations(filter: { nodeId?: string; deploymentId?: string }): Promise<PortAllocationRecord[]> {
+    const rows = await this.client.portAllocation.findMany({
+      where: { ...(filter.nodeId ? { nodeId: filter.nodeId } : {}), ...(filter.deploymentId ? { deploymentId: filter.deploymentId } : {}) },
+      orderBy: { port: 'asc' },
+    });
+    return rows.map((a) => ({ ...a, createdAt: a.createdAt.toISOString() }));
+  }
+
+  async replacePortAllocations(deploymentId: string, nodeId: string | null, ports: number[]): Promise<PortAllocationRecord[]> {
+    const current = await this.client.portAllocation.findMany({ where: { deploymentId } });
+    const primary = current.find((a) => a.primary)?.port;
+    const keepPrimary = primary !== undefined && ports.includes(primary) ? primary : ports[0];
+    const rows = nodeId
+      ? ports.map((port) => ({ id: randomUUID(), nodeId, port, deploymentId, primary: port === keepPrimary }))
+      : [];
+    try {
+      // One transaction: the old set goes and the new set lands together, and the
+      // unique (node, port) index refuses a port someone else holds.
+      await this.client.$transaction([
+        this.client.portAllocation.deleteMany({ where: { deploymentId } }),
+        ...rows.map((data) => this.client.portAllocation.create({ data })),
+      ]);
+    } catch (err) {
+      if ((err as { code?: string }).code === 'P2002' && nodeId) {
+        const held = await this.client.portAllocation.findMany({ where: { nodeId, port: { in: ports }, NOT: { deploymentId } } });
+        throw new PortConflictError(held[0]?.port ?? ports[0], nodeId);
+      }
+      throw err;
+    }
+    return this.listPortAllocations({ deploymentId });
+  }
+
+  async setPrimaryPort(deploymentId: string, port: number): Promise<boolean> {
+    const mine = await this.client.portAllocation.findMany({ where: { deploymentId } });
+    if (!mine.some((a) => a.port === port)) return false;
+    await this.client.$transaction([
+      this.client.portAllocation.updateMany({ where: { deploymentId }, data: { primary: false } }),
+      this.client.portAllocation.updateMany({ where: { deploymentId, port }, data: { primary: true } }),
+    ]);
+    return true;
   }
 
   async createBackup(input: CreateServerBackupInput): Promise<ServerBackupRecord> {

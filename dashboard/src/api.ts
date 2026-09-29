@@ -28,6 +28,9 @@ export interface NodeView {
   diskTotalGb: number | null;
   health: NodeHealth;
   /** Drained on purpose (#258): still running, but taking nothing new. */
+  /** The node's host-port pool (#233); null for none. */
+  portRangeStart?: number | null;
+  portRangeEnd?: number | null;
   maintenance?: boolean;
   /**
    * What the node has, what it has already promised, and what it is using (#275).
@@ -96,6 +99,8 @@ export interface DeploymentDetail extends DeploymentView {
   backupRetention?: BackupRetention;
   /** True while the server is being moved to another node (#234). */
   migrating?: boolean;
+  /** The host ports this server holds on its node, and which is primary (#233). */
+  portAllocations?: Array<{ port: number; primary: boolean }>;
 }
 
 export interface ResourceLimits {
@@ -672,6 +677,28 @@ export function updateImage(id: string): Promise<{ status: string; recreate: boo
  */
 export function migrateDeployment(id: string, nodeId: string): Promise<{ status: string; nodeId: string }> {
   return request(`/deployments/${id}/migrate`, { method: 'POST', body: JSON.stringify({ nodeId }) });
+}
+
+/** Make one of a server's host ports the one shown first (#233). */
+export function setPrimaryPort(id: string, port: number): Promise<{ port: number }> {
+  return request(`/deployments/${id}/ports/primary`, { method: 'PUT', body: JSON.stringify({ port }) });
+}
+
+export interface NodePortAllocation {
+  port: number;
+  deploymentId: string;
+  name: string | null;
+  primary: boolean;
+}
+
+/** Every host port held on a node, and by which server — administrators only (#233). */
+export function listNodePorts(nodeId: string): Promise<NodePortAllocation[]> {
+  return request(`/nodes/${nodeId}/ports`);
+}
+
+/** Set a node's host-port pool, or remove it with null (#233). */
+export function setNodePortRange(nodeId: string, range: { start: number; end: number } | null): Promise<NodeView & { outsideRange: number }> {
+  return request(`/nodes/${nodeId}/ports`, { method: 'PATCH', body: JSON.stringify({ range }) });
 }
 
 /** Permanently delete a deployment (stops it first if running). */

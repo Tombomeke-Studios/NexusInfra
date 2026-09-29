@@ -254,7 +254,7 @@ is the migrations directory.
 ### services/orchestrator (deployment control plane)
 | Path | Contents |
 |---|---|
-| `prisma/schema.prisma` | Prisma + SQLite schema: `Node`, `ServerConfig`, `Deployment`, `DeploymentEvent`, `ServerDatabase`, `ServerBackup`, `ServerSchedule`, `ServerSubuser`. `prisma/migrations` is the schema source of truth |
+| `prisma/schema.prisma` | Prisma + SQLite schema: `Node`, `ServerConfig`, `Deployment`, `DeploymentEvent`, `ServerDatabase`, `ServerBackup`, `ServerSchedule`, `ServerSubuser`, `PortAllocation` (#233). `prisma/migrations` is the schema source of truth |
 | `src/types.ts` | Domain records + the `Repository` interface (decouples logic from the DB) |
 | `src/repository.ts` | `InMemoryRepository` — backs unit tests and a DB-less local mode |
 | `src/db.ts` | `getPrisma()` + `PrismaRepository` (SQLite-backed `Repository`) |
@@ -273,6 +273,8 @@ is the migrations directory.
 | `src/retention.ts` | Pure backup retention (#232): `expiredBackups` (keepLast / keepDays are both limits; the newest backup is never expired) + `parseRetention` |
 | `src/backups.ts` | `takeBackup` / `enforceRetention` / `sweepRetention` (#232) — the one path for the Backups tab, the `backup` schedule action and the hourly sweep. Defaults the snapshot to the server's own data directory, not `/data` |
 | `src/migrate.ts` | `planMigration` (#234): validates synchronously, returns the work to run in the background; copy volumes → copy backups → switch node → clean source. A failure before the switch removes only what it created. `isMigrating` is the lock start/update/delete check |
+| `src/portPool.ts` | Pure host-port planning (#233): `planPorts` (`auto` from the node's range, explicit ports held to it, conflicts named, 400 vs 409) + `parsePortRange`, `rangeOf`, `PortConflictError` |
+| `src/portAllocation.ts` | The repository side of host ports: `takenPorts`, `checkPorts`, `allocatePorts` (plan + write; the unique (node, port) index is the real guard), `backfillPortAllocations` (servers from before #233, once at start) |
 | `src/cron.ts` | Pure 5-field cron matcher (`cronMatches`, `isValidCron`) for the schedule runner |
 | `src/scheduler.ts` | Schedule runner: pure `selectDue`/`tickSchedules` + `startScheduler` (1-min poll); actions injected |
 | `src/users.ts` | Account domain: bcrypt hashing, email normalisation, password rules, edition-derived signup policy, and `createUserService` (register / authenticate / change password / first-run bootstrap) (#174) |

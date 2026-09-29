@@ -470,6 +470,28 @@ with no node yet (or whose node was deregistered) is placed on the least-loaded 
 while starting, `404` if unknown, `409` if it is already running/pending or its node is unavailable,
 `503` if no healthy node is available.
 
+### Host ports (#233)
+
+Two servers on one node can never hold the same host port. Every server's host ports are recorded
+per node, with a **unique (node, port)** constraint as the guard — so even two concurrent creates
+for one port cannot both succeed. A clash answers `409` naming the holder: *"port 25565 is already
+used by survival on this node"*. Checked on create, on a `ports` edit (`PATCH /deployments/:id`),
+on first placement, and on the target of a migration; released on delete.
+
+A node may have a **port range**. Then explicit ports must lie inside it (`400` otherwise), and a
+host port written as **`auto`** — `{ "ports": { "auto": "25565" } }` — takes the lowest free port in
+the range (`409` when the range is full). Without a range, any free port may be named and `auto` is
+refused.
+
+| Method + path | Purpose |
+|---|---|
+| `PATCH /nodes/:id/ports` | Platform admin. `{ range: { start, end } }`, or `{ range: null }` to remove it. Existing ports outside a new range are **kept**, not renumbered; the answer says how many (`outsideRange`). |
+| `GET /nodes/:id/ports` | Platform admin. `[{ port, deploymentId, name, primary }]` |
+| `PUT /deployments/:id/ports/primary` | `server.edit`. `{ port }` — which of the server's ports the Network tab shows first. `404` if it holds no such port. |
+
+`GET /deployments/:id` carries `portAllocations: [{ port, primary }]`. Servers created before this
+are recorded once at orchestrator start; of two old servers already sharing a port, the first keeps it.
+
 ### `POST /deployments/:id/migrate`
 
 Move a **stopped** server to another node (#234) — body `{ nodeId }`. **Platform administrators only**:

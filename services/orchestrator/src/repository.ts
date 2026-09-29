@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
-import type {
+import { PortConflictError } from './portPool.js';
+import type { PortAllocationRecord,
   CreateServerBackupInput,
   CreateServerConfigInput,
   CreateServerDatabaseInput,
@@ -45,6 +46,7 @@ export class InMemoryRepository implements Repository {
   private teams = new Map<string, TeamRecord>();
   private teamMembers = new Map<string, TeamMemberRecord>();
   private nodes = new Map<string, NodeRecord>();
+  private portAllocations = new Map<string, PortAllocationRecord>();
   private configs = new Map<string, ServerConfigRecord>();
   private deployments = new Map<string, DeploymentRecord>();
   private events: DeploymentEventRecord[] = [];
@@ -158,6 +160,9 @@ export class InMemoryRepository implements Repository {
       // Maintenance is an administrator's decision; a liveness beat never touches
       // it, or the node would silently re-enter the pool a second later (#258).
       maintenance: existing?.maintenance ?? false,
+      // An administrator's setting, like maintenance: a heartbeat never touches it.
+      portRangeStart: existing?.portRangeStart ?? null,
+      portRangeEnd: existing?.portRangeEnd ?? null,
     };
     this.nodes.set(node.id, node);
     return node;
@@ -289,6 +294,9 @@ export class InMemoryRepository implements Repository {
           location: input.location !== undefined ? input.location : existing.location,
           agentUrl: input.agentUrl !== undefined ? input.agentUrl : existing.agentUrl,
           maintenance: input.maintenance !== undefined ? input.maintenance : existing.maintenance,
+          ...(input.portRange !== undefined
+            ? { portRangeStart: input.portRange?.start ?? null, portRangeEnd: input.portRange?.end ?? null }
+            : {}),
         }
       : {
           id: input.id,
@@ -305,6 +313,8 @@ export class InMemoryRepository implements Repository {
           diskUsedGb: null,
           diskTotalGb: null,
           maintenance: input.maintenance ?? false,
+          portRangeStart: input.portRange?.start ?? null,
+          portRangeEnd: input.portRange?.end ?? null,
         };
     this.nodes.set(node.id, node);
     return node;
@@ -315,6 +325,8 @@ export class InMemoryRepository implements Repository {
     for (const [depId, d] of this.deployments) {
       if (d.nodeId === id) this.deployments.set(depId, { ...d, nodeId: null });
     }
+    // Ports on a machine that is gone are held by nothing (#233).
+    for (const [key, a] of this.portAllocations) if (a.nodeId === id) this.portAllocations.delete(key);
     this.nodes.delete(id);
   }
 
@@ -428,6 +440,7 @@ export class InMemoryRepository implements Repository {
     for (const [key, b] of this.backups) if (b.deploymentId === id) this.backups.delete(key);
     for (const [key, s] of this.schedules) if (s.deploymentId === id) this.schedules.delete(key);
     for (const [key, su] of this.subusers) if (su.deploymentId === id) this.subusers.delete(key);
+    for (const [key, a] of this.portAllocations) if (a.deploymentId === id) this.portAllocations.delete(key);
     this.deployments.delete(id);
     this.configs.delete(deployment.serverConfigId);
   }
@@ -511,6 +524,39 @@ export class InMemoryRepository implements Repository {
 
   async deleteDatabase(id: string): Promise<void> {
     this.databases.delete(id);
+  }
+
+  async listPortAllocations(filter: { nodeId?: string; deploymentId?: string }): Promise<PortAllocationRecord[]> {
+    return [...this.portAllocations.values()]
+      .filter((a) => (!filter.nodeId || a.nodeId === filter.nodeId) && (!filter.deploymentId || a.deploymentId === filter.deploymentId))
+      .sort((a, b) => a.port - b.port);
+  }
+
+  async replacePortAllocations(deploymentId: string, nodeId: string | null, ports: number[]): Promise<PortAllocationRecord[]> {
+    const mine = [...this.portAllocations.values()].filter((a) => a.deploymentId === deploymentId);
+    // The unique (node, port) check, as the database would make it — before any write.
+    if (nodeId) {
+      for (const port of ports) {
+        const clash = [...this.portAllocations.values()].find((a) => a.nodeId === nodeId && a.port === port && a.deploymentId !== deploymentId);
+        if (clash) throw new PortConflictError(port, nodeId);
+      }
+    }
+    const primary = mine.find((a) => a.primary)?.port;
+    for (const a of mine) this.portAllocations.delete(a.id);
+    if (!nodeId) return [];
+    const keepPrimary = primary !== undefined && ports.includes(primary) ? primary : ports[0];
+    return ports.map((port) => {
+      const record: PortAllocationRecord = { id: randomUUID(), nodeId, port, deploymentId, primary: port === keepPrimary, createdAt: new Date().toISOString() };
+      this.portAllocations.set(record.id, record);
+      return record;
+    });
+  }
+
+  async setPrimaryPort(deploymentId: string, port: number): Promise<boolean> {
+    const mine = [...this.portAllocations.values()].filter((a) => a.deploymentId === deploymentId);
+    if (!mine.some((a) => a.port === port)) return false;
+    for (const a of mine) this.portAllocations.set(a.id, { ...a, primary: a.port === port });
+    return true;
   }
 
   async createBackup(input: CreateServerBackupInput): Promise<ServerBackupRecord> {

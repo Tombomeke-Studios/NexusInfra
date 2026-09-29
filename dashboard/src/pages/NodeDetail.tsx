@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { listNodes, listAllDeployments, deregisterNode, type NodeView, type DeploymentView } from '../api';
+import { listNodes, listAllDeployments, deregisterNode, getCurrentUser, listNodePorts, setNodePortRange, type NodeView, type DeploymentView, type NodePortAllocation } from '../api';
+import { InfoHint } from '../components/InfoHint';
 import { StatusBadge } from '../components/StatusBadge';
 import { useToast } from '../components/Toast';
 import { useDialog } from '../components/Dialog';
@@ -104,6 +105,8 @@ export function NodeDetail() {
         </div>
       </div>
 
+      <PortPool node={node} />
+
       <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 12 }}>Servers on this node</strong>
       <div style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface)', overflow: 'hidden' }}>
         {deps.map((d) => (
@@ -120,6 +123,102 @@ export function NodeDetail() {
         ))}
         {deps.length === 0 && <div className="empty">No servers on this node.</div>}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The node's host-port pool and who holds what (#233). Administrators only —
+ * the API refuses everyone else, and the list names servers they may not see.
+ */
+function PortPool({ node }: { node: NodeView }) {
+  const { toast } = useToast();
+  const [admin, setAdmin] = useState(false);
+  const [held, setHeld] = useState<NodePortAllocation[]>([]);
+  const [start, setStart] = useState(node.portRangeStart != null ? String(node.portRangeStart) : '');
+  const [end, setEnd] = useState(node.portRangeEnd != null ? String(node.portRangeEnd) : '');
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(() => {
+    void listNodePorts(node.id)
+      .then(setHeld)
+      .catch(() => undefined);
+  }, [node.id]);
+
+  useEffect(() => {
+    void getCurrentUser()
+      .then((me) => {
+        const isAdmin = me.platformRole === 'admin' || me.platformRole === 'owner';
+        setAdmin(isAdmin);
+        if (isAdmin) refresh();
+      })
+      .catch(() => undefined);
+  }, [refresh]);
+
+  if (!admin) return null;
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const range = start.trim() || end.trim() ? { start: Number(start), end: Number(end) } : null;
+      const r = await setNodePortRange(node.id, range);
+      toast(
+        range
+          ? `Port range saved${r.outsideRange ? ` — ${r.outsideRange} port${r.outsideRange === 1 ? ' is' : 's are'} already in use outside it and kept` : ''}`
+          : 'Port range removed — any free port may be named',
+        'success',
+        'Node',
+      );
+      refresh();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not save the range', 'error', 'Node');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ padding: '18px 20px', marginBottom: 24 }}>
+      <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 10 }}>
+        Host ports
+        <InfoHint text="With a range, servers here may only use ports inside it, and a port written as auto takes the lowest free one. Without a range any free port may be named. Two servers on one node can never hold the same port." label="Host ports help" />
+      </strong>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 14 }}>
+        <label>
+          <span className="field__label" style={{ fontSize: '.78rem' }}>From</span>
+          <input className="input" type="number" min={1} max={65535} value={start} onChange={(e) => setStart(e.target.value)} placeholder="none" aria-label="Port range start" style={{ width: 120 }} />
+        </label>
+        <label>
+          <span className="field__label" style={{ fontSize: '.78rem' }}>To</span>
+          <input className="input" type="number" min={1} max={65535} value={end} onChange={(e) => setEnd(e.target.value)} placeholder="none" aria-label="Port range end" style={{ width: 120 }} />
+        </label>
+        <button className="btn btn--secondary btn--sm" data-ripple disabled={busy} onClick={() => void save()} style={{ minHeight: 40 }}>
+          Save range
+        </button>
+      </div>
+      {held.length === 0 ? (
+        <p className="subtle" style={{ margin: 0, fontSize: '.84rem' }}>No ports are held on this node.</p>
+      ) : (
+        <table className="table" style={{ fontSize: '.84rem' }}>
+          <thead>
+            <tr>
+              <th>Port</th>
+              <th>Server</th>
+            </tr>
+          </thead>
+          <tbody>
+            {held.map((a) => (
+              <tr key={a.port}>
+                <td className="mono">
+                  {a.port}
+                  {a.primary && <span className="subtle"> · primary</span>}
+                </td>
+                <td>{a.name ?? a.deploymentId}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
