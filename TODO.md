@@ -236,6 +236,7 @@ scrolling log lines describing events that never happened.
 - [x] Minecraft egg: NeoForge + pick the game version from a list instead of typing it (#311)
 - [x] Every published port was mapped as TCP, so the UDP game servers were unreachable (#313) 🐛
 - [x] Add Minecraft Bedrock and Palworld eggs (#315)
+- [x] The Valheim egg pointed at an image the project no longer publishes from (#317)
 - [x] Import an existing server directory into the panel (#268)
 - [x] Backup retention, download, and off-site (S3) targets (#232)
 - [x] Port allocation management per node — pool, conflicts, primary port (#233)
