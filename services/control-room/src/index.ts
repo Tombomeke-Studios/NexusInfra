@@ -1,14 +1,6 @@
 import express from 'express';
 import { readDlq, type QueueProbe } from './dlq.js';
-import {
-  assertEditionIsRunnable,
-  buildInfo,
-  consumeRabbitQueue,
-  startHeartbeat,
-  readPayload,
-  connectRabbitMQ,
-  type EventEnvelope,
-} from 'shared';
+import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, startHeartbeat, readPayload, connectRabbitMQ, type EventEnvelope, MetricsRegistry, registerBuildInfo, httpMetrics, metricsHandler } from 'shared';
 import { DEGRADED_MS, Monitor, OFFLINE_MS } from './monitor.js';
 
 // ── Control Room ──────────────────────────────────────────────────────────────
@@ -34,6 +26,26 @@ const monitor = new Monitor();
 
 // ── HTTP: health + live status view ───────────────────────────────────────────
 const app = express();
+
+// Prometheus metrics (#246). Registered before the routes, so every request is
+// measured.
+const metrics = new MetricsRegistry();
+registerBuildInfo(metrics, 'control-room', buildInfo());
+app.use(httpMetrics(metrics, 'control-room'));
+metrics.gauge('nexusinfra_monitored_sources', 'Heartbeat sources, by derived status.', ['status'], () => {
+  const counts = { healthy: 0, degraded: 0, offline: 0 };
+  for (const s of monitor.snapshot(Date.now())) counts[s.status as keyof typeof counts]++;
+  return Object.entries(counts).map(([status, value]) => ({ labels: { status }, value }));
+});
+// Left out of a scrape when the broker cannot be asked, rather than reported as
+// zero — the same rule as /status (#243): not knowing is not "nothing failed".
+metrics.gauge('nexusinfra_dead_letters', 'Messages waiting in the dead-letter queue.', [], async () => {
+  const dlq = await readDlq(probe);
+  if (dlq.depth === null) throw new Error(dlq.error ?? 'unknown');
+  return dlq.depth;
+});
+
+app.get('/metrics', metricsHandler(metrics));
 
 app.get('/health', (_req, res) => {
   res.json({ service: 'control-room', status: 'healthy', ...buildInfo(), uptimeSec: Math.round(process.uptime()) });

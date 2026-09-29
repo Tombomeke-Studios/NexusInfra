@@ -81,6 +81,23 @@ enforces the plan's `maxServers`/`maxDatabases` at create-time by asking the Bil
 deploys. See the [CONCEPTS routing-key table](../../CONCEPTS/integration/rabbitmq-architecture.md)
 and [billing.md](billing.md).
 
+## Metrics (#246)
+
+Every service answers `GET /metrics` in the Prometheus text format, from a small dependency-free
+registry in `shared/src/metrics.ts`. Common to all: `nexusinfra_http_requests_total` and
+`nexusinfra_http_request_duration_seconds` labelled by **route pattern** (`/deployments/:id`, never
+the raw path, so ids cannot mint series), `nexusinfra_build_info`, and process memory/uptime.
+Gauges are read at scrape time, and a gauge that cannot be read is left out of that scrape and
+counted in `nexusinfra_metric_errors_total` rather than reported as zero.
+
+| Service | Its own metrics |
+|---|---|
+| orchestrator | `nexusinfra_deployments{status}`, `nexusinfra_nodes{health}` (+ `maintenance`), `nexusinfra_events_published_total{routing_key,outcome}` (a failed publish is an event the broker never took), `nexusinfra_lifecycle_reports_total{type}`, `nexusinfra_notifications_total{outcome,kind}` |
+| node-agent | `nexusinfra_agent_containers{state}`, `nexusinfra_agent_commands_total{type}`, `nexusinfra_agent_container_events_total{action}` (#332), `nexusinfra_outbox_pending`, `nexusinfra_outbox_dropped` (#167) |
+| control-room | `nexusinfra_monitored_sources{status}`, `nexusinfra_dead_letters` (#243; absent when the broker cannot be asked) |
+| gateway | `nexusinfra_gateway_requests_total{route,outcome,status}` — `route` is the routing-table prefix; outcomes `proxied`, `rate_limited`, `unauthorized`, `no_route`, `upstream_error` |
+| billing-bridge | the common set |
+
 ## Heartbeat / status model
 
 1s pulse per source. Control Room derives status from last-seen age: **healthy** < 3s ≤ **degraded**

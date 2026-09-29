@@ -97,6 +97,19 @@ it. Nothing else changes.
 | `FINVAULT_MESSAGE_KEY` | hosted | Derives the AES-256-GCM key for event payloads. **Must be identical to FinVault's**, or neither platform can read the other's events. Optional in community. |
 | `PORT` | no | Overrides the default in the table above. |
 | `NEXUS_EDITION` | no | Ignored in a released image; the image's own edition wins. Only meaningful when running from source. |
+| `METRICS_TOKEN` | no | Protects `GET /metrics` (#246) with `Authorization: Bearer <token>`. Open when unset — the numbers are aggregates with no names or ids — but **set it on the orchestrator and gateway**, whose ports are public (the dashboard's `/api` proxy reaches the orchestrator's `/metrics` too). |
+
+Every service serves **Prometheus metrics** at `GET /metrics` (text format 0.0.4): request counts
+and durations by route pattern, `nexusinfra_build_info`, process memory and uptime, plus what is
+particular to it — see [architecture.md](architecture.md#metrics-246). A scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: nexusinfra
+    authorization: { credentials: <METRICS_TOKEN> }
+    static_configs:
+      - targets: ['orchestrator:9200', 'control-room:9000', 'gateway:9400', 'node-agent:9100', 'billing-bridge:9300']
+```
 
 ### `orchestrator`
 

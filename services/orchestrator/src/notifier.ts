@@ -31,7 +31,13 @@ export interface Notifier {
 
 class PermanentFailure extends Error {}
 
-export function createNotifier(deps: { repo: Repository; transports: NotifierTransports; emailEnabled: boolean }): Notifier {
+export function createNotifier(deps: {
+  repo: Repository;
+  transports: NotifierTransports;
+  emailEnabled: boolean;
+  /** Told how each delivery attempt ended — for metrics (#246). */
+  onOutcome?: (outcome: 'sent' | 'retrying' | 'failed', kind: string) => void;
+}): Notifier {
   const { repo, transports } = deps;
   let draining: Promise<number> | null = null;
 
@@ -95,13 +101,16 @@ export function createNotifier(deps: { repo: Repository; transports: NotifierTra
       try {
         await send(channel, JSON.parse(d.payload) as Notification, d.id);
         await repo.updateDelivery(d.id, { status: 'sent', attempts, sentAt: now.toISOString(), lastError: null });
+        deps.onOutcome?.('sent', channel.kind);
         await repo.updateNotificationChannel(channel.id, { lastDeliveryAt: now.toISOString(), lastError: null });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         const delay = err instanceof PermanentFailure ? null : nextAttemptDelayMs(attempts);
         if (delay === null) {
           await repo.updateDelivery(d.id, { status: 'failed', attempts, lastError: message });
+          deps.onOutcome?.('failed', channel.kind);
         } else {
+          deps.onOutcome?.('retrying', channel.kind);
           await repo.updateDelivery(d.id, { attempts, lastError: message, nextAttemptAt: new Date(now.getTime() + delay).toISOString() });
         }
         await repo.updateNotificationChannel(channel.id, { lastError: message });
