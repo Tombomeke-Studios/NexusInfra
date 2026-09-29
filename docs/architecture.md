@@ -111,6 +111,14 @@ Before this, every stop deleted the server's files. The start command is built i
 (`startCommand.ts`) for creation, start and reconciliation — reconciliation's hand-written copy had
 already lost the imported mount.
 
+**Containers that stop on their own (#332).** Each agent follows Docker's `die`/`start` events for
+the containers it manages. A container that exits without the agent having asked is reported —
+`server.crashed` with the exit code (and "killed by the OOM killer" when that was it), or
+`server.stopped` for a clean exit — and one a restart policy brings back is reported running again.
+The agent's own work is not mistaken for this: a container it removed (stop, kill, recreate) is
+gone by the time it looks, and its own restarts are marked for their duration. Before this, a
+server that crashed stayed "running" in the panel until the agent itself restarted.
+
 **Moving a server (#234).** Because a server's data is a set of volumes on one node, moving it is
 moving those: the orchestrator streams each from the source agent's volume export into the target
 agent's import (a created-never-started container of the server's own image carries the volume, so

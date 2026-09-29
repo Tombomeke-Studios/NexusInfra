@@ -247,7 +247,7 @@ is the migrations directory.
 | `src/execRoutes.ts` | `createExecRouter` — internal console HTTP: one-shot `sh -c` command exec in a container (#68) |
 | `src/terminal.ts` | `attachTerminal` — pure bridge wiring a WebSocket to an interactive TTY session (`runtime.execInteractive`); JSON `input`/`resize` frames in, raw output out (#71) |
 | `src/internalAuth.ts` | `requireInternalToken` (Express) + `upgradeAuthorized` (WS handshake) — every internal route/upgrade needs the shared token; `/health` stays open (#169) |
-| `src/agent.ts` | Command handling: consumes server.start/stop/restart for this node, publishes server.started/stopped/crashed; dependency-injected for testing (index.ts injects the outbox-backed publisher) |
+| `src/agent.ts` | Command handling: consumes server.start/stop/restart/update for this node, publishes server.started/stopped/crashed; dependency-injected for testing (index.ts injects the outbox-backed publisher). `handleContainerEvent` (#332) reports containers that die or come back **without being asked** — fed by `runtime.watchContainers` (Docker events); a container the agent removed is gone when it looks, and its own restarts are marked only while they run |
 | `src/agent.test.ts` | Unit tests with a fake runtime + captured publisher (no Docker/broker needed) |
 | `src/index.ts` | Entry: DockerodeRuntime + agent, binds `nexusinfra.node-agent.{nodeId}`, HTTP `/health` + internal SSE `/logs/:containerId` · `/stats/:containerId` + file CRUD + internal WS `/terminal/:containerId` (PTY shell, #71) |
 

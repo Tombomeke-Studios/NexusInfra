@@ -14,7 +14,13 @@ export function createLifecycle(repo: Repository): Lifecycle {
   async function handleReport(envelope: EventEnvelope): Promise<void> {
     const type = envelope.event.type;
     const payload = readPayload(envelope.event) as Record<string, unknown>;
-    const deploymentId = String(payload.deploymentId ?? '');
+    let deploymentId = String(payload.deploymentId ?? '');
+    // A container created before #324 carries no deployment label, so a report
+    // the agent saw by watching Docker (#332) names only the container.
+    if (!deploymentId && payload.containerId) {
+      const owner = (await repo.listDeployments()).find((d) => d.containerId === String(payload.containerId));
+      deploymentId = owner?.id ?? '';
+    }
     if (!deploymentId) return;
 
     switch (type) {
@@ -52,6 +58,11 @@ export function createLifecycle(repo: Repository): Lifecycle {
       }
 
       case 'server.crashed': {
+        // As for a stop: news about a container the server has since replaced is
+        // history (#332). A crash with no container — a failed start — always counts.
+        const crashed = String(payload.containerId ?? '');
+        const now = crashed ? await repo.getDeployment(deploymentId) : null;
+        if (crashed && now?.containerId && now.containerId !== crashed) return;
         const reason = String(payload.reason ?? 'unknown');
         const updated = await repo.updateDeploymentStatus(deploymentId, {
           status: 'crashed',

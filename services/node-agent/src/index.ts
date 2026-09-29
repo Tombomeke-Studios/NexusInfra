@@ -58,6 +58,12 @@ const agent = createAgent({ nodeId: NODE_ID, runtime, publish: (key, envelope) =
 // the outbox, so a broker that has not come up yet does not lose it.
 void agent.reportInventory();
 
+// Containers that die or come back without being asked (#332). Without this a
+// crashed server stayed "running" in the panel until the agent itself restarted.
+runtime.watchContainers((event) => {
+  void agent.handleContainerEvent(event).catch((err) => console.error(`[Node Agent ${NODE_ID}] could not report a container event:`, err));
+});
+
 // ── HTTP: health probe ────────────────────────────────────────────────────────
 const app = express();
 app.use(express.json({ limit: '4mb' })); // file writes carry content in the body

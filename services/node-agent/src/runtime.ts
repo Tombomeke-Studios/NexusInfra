@@ -14,6 +14,7 @@ import { publishPorts } from './ports.js';
 import { digestOf, type ImageFacts } from './images.js';
 import { DEPLOYMENT_LABEL, pathsToPersist, volumeMounts, volumeNameFor, type VolumeMount } from './volumes.js';
 import type { TerminalSession } from './terminal.js';
+import type { ContainerEvent } from './agent.js';
 
 // NodeResources is the shared event-payload type (shared/src/events.ts) — the
 // host snapshot reported to the Control Room via the node heartbeat.
@@ -72,6 +73,11 @@ export interface ContainerRuntime {
   importVolume(deploymentId: string, path: string, image: string, tar: NodeJS.ReadableStream): Promise<void>;
   /** Remove one of a server's volumes — only to undo an import. */
   removeDeploymentVolume(deploymentId: string, path: string): Promise<void>;
+  // ── Watching (#332) — containers that stop or start without being asked ─────
+  /** Follow Docker's die/start events for managed containers. Reconnects on its own; returns an unsubscribe. */
+  watchContainers(onEvent: (event: ContainerEvent) => void): () => void;
+  /** A container's state, or null when it no longer exists. */
+  inspectContainer(containerId: string): Promise<{ running: boolean; exitCode: number; oomKilled: boolean } | null>;
   /** Pull an image even when a copy exists — how a tag picks up a new version (#239). */
   pullImage(image: string): Promise<{ imageId: string; digest: string | null }>;
   /** What the registry, this node and a container each say an image is (#239). */
@@ -235,6 +241,65 @@ export class DockerodeRuntime implements ContainerRuntime {
       Labels: { 'nexusinfra.helper': 'volume-transfer' },
       HostConfig: { Mounts: [{ Type: 'volume', Source: volume, Target: VOLUME_TRANSFER_MOUNT }] },
     });
+  }
+
+  watchContainers(onEvent: (event: ContainerEvent) => void): () => void {
+    let stopped = false;
+    let stream: NodeJS.ReadableStream | null = null;
+    const reconnect = () => {
+      if (!stopped) setTimeout(() => void connect(), 2000).unref?.();
+    };
+    const connect = async () => {
+      try {
+        stream = (await this.docker.getEvents({
+          filters: { type: ['container'], event: ['die', 'start'], label: [`${MANAGED_LABEL}=true`] },
+        })) as NodeJS.ReadableStream;
+      } catch {
+        return reconnect();
+      }
+      let buffered = '';
+      stream.on('data', (chunk: Buffer) => {
+        buffered += chunk.toString();
+        const lines = buffered.split('\n');
+        buffered = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const e = JSON.parse(line) as { Action?: string; status?: string; id?: string; Actor?: { ID?: string; Attributes?: Record<string, string> } };
+            const action = e.Action ?? e.status;
+            const containerId = e.Actor?.ID ?? e.id;
+            if ((action !== 'die' && action !== 'start') || !containerId) continue;
+            const attrs = e.Actor?.Attributes ?? {};
+            onEvent({
+              action,
+              containerId,
+              deploymentId: attrs[DEPLOYMENT_LABEL] ?? null,
+              ...(attrs.exitCode !== undefined ? { exitCode: Number(attrs.exitCode) } : {}),
+            });
+          } catch {
+            // A line that is not an event is not one to act on.
+          }
+        }
+      });
+      // Docker restarting ends the stream; a watcher that stopped then would be
+      // the silence this exists to end.
+      stream.on('end', reconnect);
+      stream.on('error', reconnect);
+    };
+    void connect();
+    return () => {
+      stopped = true;
+      (stream as unknown as { destroy?: () => void } | null)?.destroy?.();
+    };
+  }
+
+  async inspectContainer(containerId: string): Promise<{ running: boolean; exitCode: number; oomKilled: boolean } | null> {
+    try {
+      const info = await this.docker.getContainer(containerId).inspect();
+      return { running: Boolean(info.State.Running || info.State.Restarting), exitCode: info.State.ExitCode, oomKilled: Boolean(info.State.OOMKilled) };
+    } catch {
+      return null;
+    }
   }
 
   async listDeploymentVolumes(deploymentId: string): Promise<{ name: string; path: string }[]> {
