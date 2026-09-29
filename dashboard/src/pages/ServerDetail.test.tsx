@@ -590,3 +590,72 @@ describe('ServerDetail image updates (#239)', () => {
     expect(screen.queryByRole('button', { name: 'Update and recreate' })).not.toBeInTheDocument();
   });
 });
+
+describe('ServerDetail backups (#232)', () => {
+  beforeEach(() => vi.resetAllMocks());
+  afterEach(() => vi.unstubAllGlobals());
+
+  const BACKUPS = [
+    { id: 'b1', deploymentId: 'dep-1', name: 'backup-1', path: '/data', sizeBytes: 2048, status: 'ready', createdAt: '', offsite: 'stored' },
+    { id: 'b2', deploymentId: 'dep-1', name: 'backup-2', path: '/data', sizeBytes: 2048, status: 'ready', createdAt: '', offsite: 'failed' },
+  ];
+
+  function stubBackups(retention: Record<string, number> = {}) {
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const path = String(url);
+      if (path.endsWith('/deployments/dep-1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ ...BASE, role: 'owner', backupRetention: retention }) } as Response);
+      if (path.endsWith('/backups/retention') && init?.method === 'PUT') return Promise.resolve({ ok: true, status: 200, json: async () => ({ backupRetention: JSON.parse(String(init.body)), expired: 1 }) } as Response);
+      if (path.endsWith('/backups/b1/download'))
+        return Promise.resolve({ ok: true, status: 200, headers: new Headers({ 'content-disposition': 'attachment; filename="web-backup-1.tar"' }), blob: async () => new Blob(['tar']) } as unknown as Response);
+      if (path.endsWith('/backups')) return Promise.resolve({ ok: true, status: 200, json: async () => BACKUPS } as Response);
+      return Promise.resolve({ ok: true, status: 200, json: async () => [] } as Response);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <MemoryRouter initialEntries={['/servers/dep-1']}>
+        <ToastProvider>
+          <DialogProvider>
+            <Routes>
+              <Route path="/servers/:id" element={<ServerDetail />} />
+            </Routes>
+          </DialogProvider>
+        </ToastProvider>
+      </MemoryRouter>
+    );
+    return fetchMock;
+  }
+
+  it('says which backups made it off the node, and which did not', async () => {
+    stubBackups();
+    await userEvent.click(await screen.findByRole('button', { name: 'backups' }));
+    expect(await screen.findByText('copied off-site')).toBeInTheDocument();
+    expect(screen.getByText(/on the node only/)).toBeInTheDocument();
+  });
+
+  it('saves a retention policy, blank meaning no limit', async () => {
+    const fetchMock = stubBackups({ keepDays: 30 });
+    await userEvent.click(await screen.findByRole('button', { name: 'backups' }));
+    expect(await screen.findByLabelText('Keep backups for N days')).toHaveValue(30);
+    await userEvent.type(screen.getByLabelText('Keep the last N backups'), '7');
+    await userEvent.clear(screen.getByLabelText('Keep backups for N days'));
+    await userEvent.click(screen.getByRole('button', { name: 'Save retention' }));
+
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(([u, o]) => String(u).endsWith('/backups/retention') && o?.method === 'PUT');
+      expect(JSON.parse(String(put![1].body))).toEqual({ keepLast: 7, keepDays: null });
+    });
+    expect(await screen.findByText(/1 old backup was removed/)).toBeInTheDocument();
+  });
+
+  it('downloads a backup as a file', async () => {
+    const createObjectURL = vi.fn(() => 'blob:x');
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() }));
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    stubBackups();
+    await userEvent.click(await screen.findByRole('button', { name: 'backups' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Download backup-1' }));
+    await waitFor(() => expect(click).toHaveBeenCalled());
+    expect(createObjectURL).toHaveBeenCalled();
+    click.mockRestore();
+  });
+});

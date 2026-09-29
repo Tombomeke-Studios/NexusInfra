@@ -3,6 +3,7 @@
 // an interface, not a concrete database — enabling an in-memory fake in tests.
 
 import type { ResourceLimits } from 'shared';
+import type { BackupRetention } from './retention.js';
 
 // Re-exported so the rest of the Orchestrator imports it from one place; the
 // canonical definition lives in shared (it also rides on the server.start event).
@@ -78,6 +79,8 @@ export interface ServerConfigRecord {
    * application — which has no egg to say where its data lives — keeps it.
    */
   persistPaths: string[];
+  /** How many backups to keep and for how long (#232); empty keeps all. */
+  backupRetention: BackupRetention;
   type: string;
   createdAt: string;
 }
@@ -150,6 +153,8 @@ export interface ServerBackupRecord {
   sizeBytes: number;
   status: string;
   createdAt: string;
+  /** Whether a copy left the node (#232): null when it has no off-site target. */
+  offsite: string | null;
 }
 
 export interface CreateServerBackupInput {
@@ -158,6 +163,7 @@ export interface CreateServerBackupInput {
   path: string;
   ref: string;
   sizeBytes: number;
+  offsite?: string | null;
 }
 
 export type SubuserRole = 'admin' | 'viewer';
@@ -256,6 +262,7 @@ export interface DeploymentDetail extends DeploymentView {
   autoRestart: boolean;
   /** Directories kept across restarts in addition to the egg's own (#324). */
   persistPaths: string[];
+  backupRetention: BackupRetention;
 }
 
 export interface UpsertNodeInput {
@@ -330,6 +337,7 @@ export interface UpdateServerConfigInput {
   resourceLimits?: ResourceLimits;
   autoRestart?: boolean;
   persistPaths?: string[];
+  backupRetention?: BackupRetention;
 }
 
 /** One signed-in session (#227). A token names one; deleting it ends that login. */

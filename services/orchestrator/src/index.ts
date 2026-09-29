@@ -21,6 +21,7 @@ import { createLifecycle } from './lifecycle.js';
 import { createSuspendHandler, type SuspendPayload } from './suspend.js';
 import { startScheduler, type ScheduleActions } from './scheduler.js';
 import { requestImageUpdate } from './imageUpdate.js';
+import { sweepRetention, takeBackup, type BackupDeps, type Snapshot } from './backups.js';
 import { createReconcileHandler } from './reconcile.js';
 
 // ── Orchestrator ────────────────────────────────────────────────────────────
@@ -63,6 +64,21 @@ const suspend = createSuspendHandler({ repo });
 
 // Actions the schedule runner (#111) performs for a due schedule: restart the
 // server (over the bus) or snapshot a backup (via the owning node agent).
+// What backups need from the outside world (#232) — the owning node's agent.
+const backupDeps: BackupDeps = {
+  repo,
+  agentUrlFor,
+  async snapshot({ agentUrl, ...spec }) {
+    const r = await agentFetch(`${agentUrl}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(spec) });
+    if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? 'backup failed');
+    return (await r.json()) as Snapshot;
+  },
+  async remove(agentUrl, ref) {
+    const r = await agentFetch(`${agentUrl}/backups/${ref}`, { method: 'DELETE' });
+    if (!r.ok && r.status !== 404) throw new Error(`the node refused to delete backup ${ref} (${r.status})`);
+  },
+};
+
 const scheduleActions: ScheduleActions = {
   async restart(deploymentId) {
     const detail = await repo.getDeployment(deploymentId);
@@ -79,13 +95,10 @@ const scheduleActions: ScheduleActions = {
     if (outcome.status >= 300) throw new Error(outcome.body.error ?? 'scheduled update failed');
   },
   async backup(deploymentId) {
-    const detail = await repo.getDeployment(deploymentId);
-    if (detail?.status !== 'running' || !detail.containerId) return;
-    const r = await agentFetch(`${await agentUrlFor(detail.nodeId)}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ containerId: detail.containerId }) });
-    if (!r.ok) throw new Error('scheduled backup failed');
-    const snap = (await r.json()) as { ref: string; sizeBytes: number; path: string };
-    await repo.createBackup({ deploymentId: detail.id, name: `backup-${new Date().toISOString().replace(/[:.]/g, '-')}`, path: snap.path, ref: snap.ref, sizeBytes: snap.sizeBytes });
-    await repo.appendDeploymentEvent(detail.id, 'schedule-backup', 'snapshot created by schedule');
+    // The same path as the Backups tab (#232): default data directory,
+    // off-site copy, then retention.
+    const outcome = await takeBackup(backupDeps, deploymentId, { by: 'schedule' });
+    if (!outcome.ok && outcome.status !== 409) throw new Error(`scheduled backup failed: ${outcome.error}`);
   },
 };
 
@@ -239,6 +252,9 @@ void users
 
 // Evaluate schedules once a minute (restart/backup on a cron).
 startScheduler(repo, scheduleActions);
+// A "keep 30 days" policy has to expire backups even when none are being made
+// (#232). Hourly is plenty for a policy measured in days.
+setInterval(() => void sweepRetention(backupDeps, new Date()).catch(() => undefined), 60 * 60 * 1000).unref();
 console.log('[Orchestrator] Schedule runner started (1-minute tick)');
 
 // ── Event bus: node heartbeats + server lifecycle reports ─────────────────────

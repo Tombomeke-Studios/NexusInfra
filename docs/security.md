@@ -314,8 +314,15 @@ plaintext on the private network. mTLS and rotation belong with the production h
 - A backup is a tar the agent writes under an **opaque, filesystem-safe ref** (validated so a crafted
   ref can't traverse out of the backup directory); the agent's backup endpoint is internal
   (token-guarded, #169).
-- Tars live on the **node that made them** (single-node MVP); the Orchestrator stores only metadata, not
-  the blob. Multi-node placement + off-node backup storage is a later (production) concern.
+- Tars live on the **node that made them**; the Orchestrator stores only metadata, not the blob.
+- **Off-site (#232)** is optional and configured per node (`BACKUP_S3_*`, see images.md). The
+  credentials live in the agent's environment only — never in the database or on the wire to the
+  panel — and should be scoped to the one bucket/prefix. Requests are signed with AWS SigV4
+  (`s3.ts`, checked against AWS's published example and byte-for-byte against botocore). A failed
+  upload is recorded on the backup rather than hidden, so "copied off-site" in the panel is a claim
+  that was checked. Tars are uploaded as-is: encrypt at the bucket (SSE) if the data warrants it.
+- **Download** streams through the Orchestrator behind `backup.manage`, so a backup's contents reach
+  exactly the people who could have restored it.
 
 ## Subusers (#112)
 

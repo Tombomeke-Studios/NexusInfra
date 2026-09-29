@@ -8,6 +8,7 @@ import { parseDockerStats, type ContainerStats } from './stats.js';
 import { resourceLimitsToHostConfig } from './limits.js';
 import { detectCgroupSupport, withCgroupSupport, type CgroupSupport } from './cgroupSupport.js';
 import { buildTarball, normalizeContainerPath, parseLsOutput, type FileEntry } from './files.js';
+import { restoreTargetFor } from './backups.js';
 import { collectDisk, resolveDiskPath, type DiskPathChoice } from './disk.js';
 import { publishPorts } from './ports.js';
 import { digestOf, type ImageFacts } from './images.js';
@@ -374,7 +375,9 @@ export class DockerodeRuntime implements ContainerRuntime {
   }
 
   async restoreArchive(containerId: string, path: string, tar: Buffer): Promise<void> {
-    await this.docker.getContainer(containerId).putArchive(tar, { path: normalizeContainerPath(path) });
+    // The archive names the directory itself, so it is extracted into the
+    // parent (#327) — into `path`, it nested rather than replaced.
+    await this.docker.getContainer(containerId).putArchive(tar, { path: restoreTargetFor(normalizeContainerPath(path)) });
   }
 
   // Run a command in the container, collecting demuxed stdout/stderr and the exit
