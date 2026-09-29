@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { InMemoryRepository } from './repository.js';
-import { defaultBackupPath, enforceRetention, sweepRetention, takeBackup, type BackupDeps } from './backups.js';
+import { BackupPathMissingError, defaultBackupPath, enforceRetention, sweepRetention, takeBackup, type BackupDeps } from './backups.js';
 import type { ServerConfigRecord } from './types.js';
 
 describe('backups (#232)', () => {
@@ -45,6 +45,14 @@ describe('backups (#232)', () => {
     deps.snapshot = async () => ({ ref: 'bk_x', sizeBytes: 1, path: '/srv/www', offsite: 'failed', offsiteError: 'off-site upload failed (403 AccessDenied)' });
     await takeBackup(deps, id, { by: 'schedule' });
     expect((await repo.getDeployment(id))?.events.at(-1)?.message).toContain('NOT copied off-site: off-site upload failed (403 AccessDenied)');
+  });
+
+  it("answers 404 for a directory the server does not have, not a failed node (#342)", async () => {
+    deps.snapshot = async () => {
+      throw new BackupPathMissingError('nothing at /data in this server — name a directory to back up');
+    };
+    expect(await takeBackup(deps, id, { by: 'user' })).toEqual({ ok: false, status: 404, error: 'nothing at /data in this server — name a directory to back up' });
+    expect(await repo.listBackups(id)).toEqual([]);
   });
 
   it('refuses a server that is not running and keeps every old backup', async () => {

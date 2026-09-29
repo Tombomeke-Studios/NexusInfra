@@ -15,7 +15,7 @@ import { containerMemoryMb, derivedHeapMb, formatHeapMb, heapBudgetProblem, pars
 import { nodeCapacity, availableRamMb, availableCpuCores, isOverCommitted } from './capacity.js';
 import { parsePersistPaths, startCommandFor } from './startCommand.js';
 import { requestImageUpdate } from './imageUpdate.js';
-import { enforceRetention, takeBackup, type Snapshot } from './backups.js';
+import { BackupPathMissingError, enforceRetention, takeBackup, type Snapshot } from './backups.js';
 import { parseRetention } from './retention.js';
 import { isMigrating, planMigration, type MigrationTransport } from './migrate.js';
 import { allocatePorts, checkPorts } from './portAllocation.js';
@@ -278,6 +278,7 @@ const DB_PUBLIC_HOST = process.env.DATABASE_PUBLIC_HOST || 'localhost';
 
 const defaultSnapshotBackup: SnapshotBackupFn = async ({ agentUrl, ...spec }) => {
   const r = await agentFetch(`${agentUrl}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(spec) });
+  if (r.status === 404) throw new BackupPathMissingError((await r.json().catch(() => ({}))).error ?? 'nothing to back up at that path');
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? 'backup failed');
   return (await r.json()) as Snapshot;
 };

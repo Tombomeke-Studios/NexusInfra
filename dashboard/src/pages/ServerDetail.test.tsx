@@ -647,6 +647,33 @@ describe('ServerDetail backups (#232)', () => {
     expect(await screen.findByText(/1 old backup was removed/)).toBeInTheDocument();
   });
 
+  // #342: a server with no data directory of its own fell back to /data, and
+  // the tab only reported Docker's "no such container".
+  it('asks which directory to back up when the server has none of its own', async () => {
+    const fetchMock = stubBackups();
+    const posts: unknown[] = [];
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/backups') && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body));
+        posts.push(body);
+        if (!body.path) return Promise.resolve({ ok: false, status: 404, statusText: 'Not Found', json: async () => ({ error: 'nothing at /data in this server — name a directory to back up', path: '/data' }) } as Response);
+        return Promise.resolve({ ok: true, status: 201, json: async () => ({ ...BACKUPS[0], name: 'backup-3', path: body.path }) } as Response);
+      }
+      return base(url, init);
+    });
+    await userEvent.click(await screen.findByRole('button', { name: 'backups' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Create backup' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/^Nothing at \/data in this server\. Name the directory/)).toBeInTheDocument();
+    await userEvent.type(within(dialog).getByLabelText('Directory'), '/usr/share/nginx/html');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Back up' }));
+
+    await waitFor(() => expect(posts).toEqual([{}, { path: '/usr/share/nginx/html' }]));
+    expect(await screen.findByText(/Backup backup-3 created/)).toBeInTheDocument();
+  });
+
   it('downloads a backup as a file', async () => {
     const createObjectURL = vi.fn(() => 'blob:x');
     vi.stubGlobal('URL', Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() }));

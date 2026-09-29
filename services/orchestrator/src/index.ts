@@ -27,7 +27,7 @@ import { createSuspendHandler, type SuspendPayload } from './suspend.js';
 import { startScheduler, type ScheduleActions } from './scheduler.js';
 import { requestImageUpdate } from './imageUpdate.js';
 import { backfillPortAllocations } from './portAllocation.js';
-import { sweepRetention, takeBackup, type BackupDeps, type Snapshot } from './backups.js';
+import { BackupPathMissingError, sweepRetention, takeBackup, type BackupDeps, type Snapshot } from './backups.js';
 import { fetchEntitlements } from './entitlements.js';
 import { createReconcileHandler } from './reconcile.js';
 
@@ -124,6 +124,7 @@ const backupDeps: BackupDeps = {
   },
   async snapshot({ agentUrl, ...spec }) {
     const r = await agentFetch(`${agentUrl}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(spec) });
+    if (r.status === 404) throw new BackupPathMissingError(((await r.json().catch(() => ({}))) as { error?: string }).error ?? 'nothing to back up at that path');
     if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? 'backup failed');
     return (await r.json()) as Snapshot;
   },

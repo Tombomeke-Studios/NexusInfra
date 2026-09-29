@@ -913,8 +913,9 @@ export function listBackups(id: string): Promise<ServerBackup[]> {
   return request(`/deployments/${id}/backups`);
 }
 
-export function createBackup(id: string): Promise<ServerBackup> {
-  return request(`/deployments/${id}/backups`, { method: 'POST', body: JSON.stringify({}) });
+/** Snapshot a server; `path` names the directory, or the server's own data directory is used. */
+export function createBackup(id: string, path?: string): Promise<ServerBackup> {
+  return request(`/deployments/${id}/backups`, { method: 'POST', body: JSON.stringify(path ? { path } : {}) });
 }
 
 export function restoreBackup(id: string, backupId: string): Promise<{ status: string }> {

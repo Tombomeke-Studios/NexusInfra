@@ -84,6 +84,12 @@ export function createBackupRouter(runtime: ContainerRuntime, opts: { dir?: stri
       }
       res.status(201).json({ ref, sizeBytes: tar.length, path: snapPath, offsite: offsiteState, ...(offsiteError ? { offsiteError } : {}) });
     } catch (err) {
+      // Docker answers 404 for a path the container does not have, and its
+      // message says "no such container" — about the path (#342). Say what is
+      // missing, and not with the container id in it.
+      if ((err as { statusCode?: number }).statusCode === 404) {
+        return res.status(404).json({ error: `nothing at ${snapPath} in this server — name a directory to back up`, path: snapPath });
+      }
       fail(res, err);
     }
   });
