@@ -30,7 +30,19 @@ export interface BillingServiceDeps {
   now?: () => string;
   /** NexusInfra's receiver wallet id on payment.request (FinVault resolves the sender). */
   billingWalletId?: string;
+  log?: (message: string) => void;
 }
+
+/**
+ * How long a top-up may wait for FinVault before it is shown as unconfirmed
+ * (#298). A mismatched FINVAULT_MESSAGE_KEY, a FinVault that never received the
+ * request, or one that answered on a key nobody binds all look the same from
+ * here — silence — so silence has to end somewhere visible.
+ */
+export const DEFAULT_TOPUP_TIMEOUT_MS = 30 * 60 * 1000;
+
+/** A confirmed amount "matches" to the cent: the ledger stores money, not floats. */
+const sameAmount = (a: number, b: number) => Math.round(a * 100) === Math.round(b * 100);
 
 export interface TopUpResult {
   reference: string;
@@ -42,6 +54,7 @@ export function createBillingService(deps: BillingServiceDeps) {
   const publish = deps.publish ?? publishRabbitEvent;
   const now = deps.now ?? (() => new Date().toISOString());
   const billingWalletId = deps.billingWalletId ?? process.env.BILLING_WALLET_ID ?? 'nexusinfra';
+  const log = deps.log ?? ((m: string) => console.warn(`[BillingBridge] ${m}`));
 
   // deploymentId → owner/plan/limits, learned from deployment.created. Falls back
   // to the latest stored interval if we missed the creation (e.g. after restart).
@@ -108,11 +121,26 @@ export function createBillingService(deps: BillingServiceDeps) {
       return { reference, entry };
     },
 
-    /** A top-up succeeded in FinVault: mark it confirmed and add the credit. */
-    async handlePaymentConfirmed(payload: { reference: string; amount: number }): Promise<CreditWallet | null> {
+    /**
+     * A top-up succeeded in FinVault: mark it confirmed and add the credit.
+     *
+     * The status change is conditional, so a confirmation delivered twice — which
+     * an at-least-once broker is allowed to do — credits once. A late confirmation
+     * of an expired top-up is still credited: the money moved.
+     */
+    async handlePaymentConfirmed(payload: { reference: string; amount?: number }): Promise<CreditWallet | null> {
       const entry = await repo.getLedgerByReference(payload.reference);
-      if (!entry || entry.type !== 'topup' || entry.status !== 'pending') return null;
-      await repo.updateLedgerStatus(entry.id, 'confirmed');
+      // FinVault confirms every payment on one key, including ones that are none
+      // of NexusInfra's business; an unknown reference is not an error.
+      if (!entry || entry.type !== 'topup') return null;
+      if (typeof payload.amount === 'number' && !sameAmount(payload.amount, entry.amount)) {
+        // Neither amount can be trusted over the other, so nothing is credited
+        // automatically — and the entry stays open for someone to look at.
+        log(`top-up ${entry.reference} was confirmed for ${payload.amount} but requested for ${entry.amount}; not credited — check it by hand`);
+        return null;
+      }
+      if (!(await repo.transitionLedgerStatus(entry.id, ['pending', 'expired'], 'confirmed'))) return null;
+      if (entry.status === 'expired') log(`top-up ${entry.reference} was confirmed after it had expired; credited`);
       const wallet = await repo.getWallet(entry.userId);
       return repo.setBalance(entry.userId, applyTopUp(wallet.balance, entry.amount));
     },
@@ -120,8 +148,29 @@ export function createBillingService(deps: BillingServiceDeps) {
     /** A top-up failed in FinVault: mark it failed, no credit added. */
     async handlePaymentFailed(payload: { reference: string }): Promise<CreditLedgerEntry | null> {
       const entry = await repo.getLedgerByReference(payload.reference);
-      if (!entry || entry.type !== 'topup' || entry.status !== 'pending') return null;
-      return repo.updateLedgerStatus(entry.id, 'failed');
+      if (!entry || entry.type !== 'topup') return null;
+      if (!(await repo.transitionLedgerStatus(entry.id, ['pending', 'expired'], 'failed'))) return null;
+      return { ...entry, status: 'failed' };
+    },
+
+    /**
+     * Mark top-ups FinVault has not answered within `timeoutMs` as expired (#298),
+     * so the panel says "not confirmed" instead of "pending" forever. Returns the
+     * ones it expired.
+     */
+    async expireStaleTopUps(timeoutMs = DEFAULT_TOPUP_TIMEOUT_MS): Promise<CreditLedgerEntry[]> {
+      const cutoff = new Date(new Date(now()).getTime() - timeoutMs).toISOString();
+      const expired: CreditLedgerEntry[] = [];
+      for (const entry of await repo.listPendingTopUps(cutoff)) {
+        if (await repo.transitionLedgerStatus(entry.id, ['pending'], 'expired')) expired.push({ ...entry, status: 'expired' });
+      }
+      if (expired.length > 0) {
+        log(
+          `${expired.length} top-up(s) had no answer from FinVault in ${Math.round(timeoutMs / 60000)} min and are now shown as not confirmed. ` +
+            'If none are ever confirmed, check that FINVAULT_MESSAGE_KEY matches FinVault\'s and that both use the same broker.'
+        );
+      }
+      return expired;
     },
 
     /**

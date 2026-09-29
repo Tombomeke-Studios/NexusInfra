@@ -98,6 +98,17 @@ export class InMemoryRepository implements Repository {
     return { ...entry };
   }
 
+  async transitionLedgerStatus(id: string, from: LedgerStatus[], to: LedgerStatus): Promise<boolean> {
+    const entry = this.ledger.find((e) => e.id === id);
+    if (!entry || !from.includes(entry.status)) return false;
+    entry.status = to;
+    return true;
+  }
+
+  async listPendingTopUps(createdBefore: string): Promise<CreditLedgerEntry[]> {
+    return this.ledger.filter((e) => e.type === 'topup' && e.status === 'pending' && e.createdAt < createdBefore).map((e) => ({ ...e }));
+  }
+
   async listLedger(userId: string): Promise<CreditLedgerEntry[]> {
     return this.ledger.filter((e) => e.userId === userId).map((e) => ({ ...e }));
   }

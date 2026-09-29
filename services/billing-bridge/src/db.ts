@@ -190,6 +190,20 @@ export class PrismaRepository implements Repository {
     return toLedger(row);
   }
 
+  async transitionLedgerStatus(id: string, from: LedgerStatus[], to: LedgerStatus): Promise<boolean> {
+    // One conditional UPDATE: of two concurrent callers, exactly one sees a row change.
+    const { count } = await this.client.creditLedger.updateMany({ where: { id, status: { in: from } }, data: { status: to } });
+    return count === 1;
+  }
+
+  async listPendingTopUps(createdBefore: string): Promise<CreditLedgerEntry[]> {
+    const rows = await this.client.creditLedger.findMany({
+      where: { type: 'topup', status: 'pending', createdAt: { lt: new Date(createdBefore) } },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map(toLedger);
+  }
+
   async listLedger(userId: string): Promise<CreditLedgerEntry[]> {
     const rows = await this.client.creditLedger.findMany({ where: { userId }, orderBy: { createdAt: 'desc' } });
     return rows.map(toLedger);

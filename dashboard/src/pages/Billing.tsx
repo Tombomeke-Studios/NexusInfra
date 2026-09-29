@@ -28,9 +28,25 @@ export function refreshInterval(ledger: LedgerEntry[]): number {
   return ledger.some((e) => e.type === 'topup' && e.status === 'pending') ? PENDING_POLL_MS : POLL_MS;
 }
 
+/** How a ledger status reads in the table (#298). */
+export function statusLabel(status: LedgerEntry['status']): string {
+  switch (status) {
+    case 'pending':
+      return 'Pending';
+    case 'confirmed':
+      return 'Confirmed';
+    case 'failed':
+      return 'Failed';
+    case 'expired':
+      return 'Not confirmed';
+  }
+}
+
 /** Top-ups that were pending in `before` and are confirmed in `after`. */
 export function newlyConfirmed(before: LedgerEntry[], after: LedgerEntry[]): LedgerEntry[] {
-  const waiting = new Set(before.filter((e) => e.type === 'topup' && e.status === 'pending').map((e) => e.id));
+  // An expired top-up is still waiting in the sense that matters: FinVault may
+  // confirm it late, and then the credit lands and deserves the same toast.
+  const waiting = new Set(before.filter((e) => e.type === 'topup' && (e.status === 'pending' || e.status === 'expired')).map((e) => e.id));
   return after.filter((e) => waiting.has(e.id) && e.status === 'confirmed');
 }
 
@@ -224,6 +240,14 @@ export function Billing() {
         {ledger.length === 0 ? (
           <div className="empty">No top-ups or charges yet.</div>
         ) : (
+          <>
+          {ledger.some((e) => e.type === 'topup' && e.status === 'expired') && (
+            <p role="status" className="alert alert--warning" style={{ marginBottom: 12 }}>
+              A top-up was not confirmed by FinVault in time, so no credit was added for it. If the payment did go through
+              in FinVault, the credit is still added when FinVault confirms it. If it keeps happening, tell the operator
+              of this panel — the two platforms may not be connected correctly.
+            </p>
+          )}
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '.86rem' }}>
             <thead>
               <tr style={{ textAlign: 'left', color: 'var(--color-text-soft)' }}>
@@ -240,7 +264,7 @@ export function Billing() {
                   <td style={{ padding: '6px 8px' }}>{formatRelative(e.createdAt)}</td>
                   <td style={{ padding: '6px 8px', textTransform: 'capitalize' }}>{e.type}</td>
                   <td style={{ padding: '6px 8px' }}>{e.description}</td>
-                  <td style={{ padding: '6px 8px', textTransform: 'capitalize' }}>{e.status}</td>
+                  <td style={{ padding: '6px 8px' }}>{statusLabel(e.status)}</td>
                   <td style={{ padding: '6px 8px', textAlign: 'right', color: e.type === 'topup' ? 'var(--color-success)' : 'inherit' }}>
                     {e.type === 'topup' ? '+' : '−'}{money(e.amount, e.currency)}
                   </td>
@@ -248,6 +272,7 @@ export function Billing() {
               ))}
             </tbody>
           </table>
+          </>
         )}
       </div>
     </div>

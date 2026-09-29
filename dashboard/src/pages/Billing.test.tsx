@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { act } from '@testing-library/react';
-import { Billing, newlyConfirmed, refreshInterval, POLL_MS, PENDING_POLL_MS } from './Billing';
+import { Billing, newlyConfirmed, refreshInterval, statusLabel, POLL_MS, PENDING_POLL_MS } from './Billing';
 import type { LedgerEntry } from '../api';
 import { ToastProvider } from '../components/Toast';
 
@@ -83,6 +83,22 @@ describe('Billing page', () => {
       expect(refreshInterval([entry({ status: 'pending' })])).toBe(PENDING_POLL_MS);
       // A pending *charge* is not something the person is watching for.
       expect(refreshInterval([entry({ type: 'charge', status: 'pending' })])).toBe(POLL_MS);
+    });
+
+    // #298: a top-up FinVault never answered is no longer "pending" forever.
+    it('shows an expired top-up as not confirmed, and still notices a late confirmation', () => {
+      expect(statusLabel('expired')).toBe('Not confirmed');
+      expect(newlyConfirmed([entry({ id: 'x', status: 'expired' })], [entry({ id: 'x', status: 'confirmed' })]).map((e) => e.id)).toEqual(['x']);
+    });
+
+    it('explains an unconfirmed top-up above the ledger', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((url: string) => (url.endsWith('/billing/ledger') ? Promise.resolve(jsonResponse([entry({ status: 'expired' })])) : routeFetch(url)))
+      );
+      renderBilling();
+      expect(await screen.findByText('Not confirmed')).toBeInTheDocument();
+      expect(screen.getByText(/not confirmed by FinVault in time, so no credit was added/)).toHaveAttribute('role', 'status');
     });
 
     it('notices a top-up that went from pending to confirmed', () => {

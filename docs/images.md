@@ -172,6 +172,8 @@ Requires the Docker socket: `-v /var/run/docker.sock:/var/run/docker.sock`.
 |---|---|---|
 | `DATABASE_URL` | yes | `file:/data/billing.db` (mount a volume at `/data`), or PostgreSQL — its own schema if it shares the orchestrator's database, e.g. `postgresql://…/nexusinfra?schema=billing`. |
 | `BILLING_WALLET_ID` | no | NexusInfra's receiver wallet id on top-up requests to FinVault. |
+| `FINVAULT_MESSAGE_KEY` | yes | Must be FinVault's value exactly. A different key cannot decrypt anything: the log says so, the event is dead-lettered, and top-ups turn *Not confirmed* (#298). |
+| `TOPUP_TIMEOUT_MS` | no | How long a top-up waits for FinVault before the panel shows it as not confirmed (default `1800000`, 30 min). A late confirmation is still credited. |
 
 ### `dashboard`
 

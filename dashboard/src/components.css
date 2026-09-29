@@ -685,6 +685,10 @@ input[type='range']::-moz-range-thumb {
   background: var(--color-success-soft);
   color: var(--color-success);
 }
+.alert--warning {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
 
 /* A button that reads as a link (#344): an action, not a navigation, so it is a
    <button> and keyboard-operable — but it sits in running text. The global

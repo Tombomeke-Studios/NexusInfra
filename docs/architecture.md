@@ -61,6 +61,7 @@ exposes `pendingEvents` / `droppedEvents`.
 | `infra.deployment.created` | orchestrator | billing-bridge (learns owner + limits for tracking, hosted) |
 | `bank.payment.request` | billing-bridge | FinVault (credit top-up charge) |
 | `bank.payment.confirmed` / `bank.payment.failed` | FinVault | billing-bridge (add/mark-failed credit) |
+| `events.payment.confirmed` / `events.payment.failed` | FinVault's gateway (it routes every event as `events.<type>`) | billing-bridge — the same handlers; FinVault's own P2P confirmations share the key and are ignored by reference (#298) |
 | `billing.server.suspend` | billing-bridge (cycle runner) | orchestrator (stops the named servers) |
 | `invoice.generate` | billing-bridge (cycle runner) | FinVault (monthly invoice record) |
 | `monitoring.heartbeat.node.{id}` | node-agent | control-room **and** orchestrator (node registry) |
@@ -70,7 +71,8 @@ command keys and ignore commands whose payload `nodeId` is not theirs. The Orche
 queue `nexusinfra.orchestrator` to the node heartbeat topic (to maintain its node registry) and the
 three `infra.server.*` report keys (to update deployment state). In the hosted edition the Billing
 Bridge binds queue `nexusinfra.billing-bridge` to `infra.deployment.created`, the three
-`infra.server.*` report keys, and `bank.payment.confirmed`/`.failed`.
+`infra.server.*` report keys, `bank.payment.confirmed`/`.failed`, and `events.payment.confirmed`/`.failed`
+(#298).
 
 The monthly cycle runner (billing-bridge, hosted) publishes `billing.server.suspend` — the Orchestrator
 consumes it and stops the named deployments — and `invoice.generate` (→ FinVault). These are
