@@ -29,7 +29,11 @@ export default defineConfig({
     alias:
       edition === 'hosted'
         ? []
-        : [{ find: fromHere('./src/pages/Billing.tsx'), replacement: fromHere('./src/pages/Billing.stub.tsx') }],
+        : [
+            { find: fromHere('./src/pages/Billing.tsx'), replacement: fromHere('./src/pages/Billing.stub.tsx') },
+            // The plan panel in New Deployment (#297).
+            { find: fromHere('./src/components/PlanPanel.tsx'), replacement: fromHere('./src/components/PlanPanel.stub.tsx') },
+          ],
   },
   server: {
     port: 5173,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { expiredBackups, parseRetention } from './retention.js';
+import { expiredBackups, parseRetention, withPlanCeiling } from './retention.js';
 import type { ServerBackupRecord } from './types.js';
 
 const now = new Date('2026-09-25T12:00:00Z');
@@ -51,5 +51,22 @@ describe('parseRetention', () => {
     for (const bad of [{ keepLast: 0 }, { keepLast: -1 }, { keepLast: 1.5 }, { keepDays: 0 }, { keepDays: 'x' }, { keepLast: 100000 }, null, []]) {
       expect(parseRetention(bad).ok).toBe(false);
     }
+  });
+});
+
+// #297: the plan holds a server's own policy to its ceiling, never loosens it.
+describe('withPlanCeiling', () => {
+  it('adds the ceiling as keepLast when the server set none', () => {
+    expect(withPlanCeiling({ keepDays: 30 }, 10)).toEqual({ keepDays: 30, keepLast: 10 });
+  });
+  it('lowers a keepLast above the ceiling', () => {
+    expect(withPlanCeiling({ keepLast: 50 }, 10)).toEqual({ keepLast: 10 });
+  });
+  it('keeps a tighter keepLast', () => {
+    expect(withPlanCeiling({ keepLast: 3 }, 10)).toEqual({ keepLast: 3 });
+  });
+  it('changes nothing without a ceiling', () => {
+    expect(withPlanCeiling({ keepLast: 50 }, null)).toEqual({ keepLast: 50 });
+    expect(withPlanCeiling({}, undefined)).toEqual({});
   });
 });

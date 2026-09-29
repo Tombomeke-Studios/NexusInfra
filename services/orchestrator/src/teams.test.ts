@@ -14,6 +14,8 @@ const MEMBER = { id: 'user-member', email: 'member@example.com', platformRole: '
 const OUTSIDER = { id: 'user-outsider', email: 'outsider@example.com', platformRole: 'user' as const };
 
 const allowQuota: Parameters<typeof createApiRouter>[0]['checkQuota'] = async () => ({ allowed: true, limit: Infinity });
+// The same for plan entitlements (#297): no plan unless a suite brings one.
+const noPlan: Parameters<typeof createApiRouter>[0]['getEntitlements'] = async () => null;
 
 function appFor(repo: InMemoryRepository, principal: { id: string; platformRole: 'owner' | 'admin' | 'user' }) {
   const app = express();
@@ -24,7 +26,7 @@ function appFor(repo: InMemoryRepository, principal: { id: string; platformRole:
     next();
   });
   app.use(createTeamRouter({ repo }));
-  app.use(createApiRouter({ repo, checkQuota: allowQuota, publish: async () => true }));
+  app.use(createApiRouter({ repo, checkQuota: allowQuota, getEntitlements: noPlan, publish: async () => true }));
   return app;
 }
 

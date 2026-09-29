@@ -51,6 +51,37 @@ describe('billing API', () => {
     expect(over.body).toEqual({ allowed: false, limit: 3 });
   });
 
+  // #297: what the plan allows, and how it charges, stated from the same
+  // constants the charge is computed with.
+  it('states the plan entitlements and the charging model', async () => {
+    const res = await request(app).get('/billing/u1/entitlements');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      planId: 'standard',
+      planName: 'Standard',
+      maxServers: 3,
+      maxDatabases: 5,
+      maxRamMb: 8192,
+      maxBackupsPerServer: 10,
+      charging: {
+        basis: 'runtime-hours',
+        pricePerHour: 0.02,
+        currency: 'EUR',
+        freeHoursPerMonth: 100,
+        sizeFactor: { standardCpuPercent: 50, standardRamPercent: 50, minimum: 0.25 },
+      },
+    });
+  });
+
+  it('reports no ceiling as null rather than inventing one', async () => {
+    const repo = new InMemoryRepository([{ ...DEFAULT_PLAN, maxRamMb: null, maxBackupsPerServer: null }]);
+    const service = createBillingService({ repo, publish: async () => true });
+    const open = express().use(createBillingRouter({ repo, service }));
+    const res = await request(open).get('/billing/u1/entitlements');
+    expect(res.body.maxRamMb).toBeNull();
+    expect(res.body.maxBackupsPerServer).toBeNull();
+  });
+
   it('validates the quota resource', async () => {
     const res = await request(app).get('/billing/u1/quota?resource=bogus&current=0');
     expect(res.status).toBe(400);

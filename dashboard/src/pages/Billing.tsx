@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getWallet, getUsage, getLedger, topUp, type CreditWallet, type BillingUsage, type LedgerEntry } from '../api';
+import { getWallet, getUsage, getLedger, topUp, getEntitlements, type CreditWallet, type BillingUsage, type LedgerEntry, type ChargingModel } from '../api';
+import { chargingSentence } from '../plan';
 import { useToast } from '../components/Toast';
 import { formatRelative } from '../format';
 
@@ -37,6 +38,18 @@ export function Billing() {
   const { toast } = useToast();
   const [wallet, setWallet] = useState<CreditWallet | null>(null);
   const [usage, setUsage] = useState<BillingUsage | null>(null);
+  // How the plan charges (#297), said in words: "nothing was charged when I
+  // created a server" reads as a bug unless the page says that is the model.
+  const [charging, setCharging] = useState<ChargingModel | null>(null);
+  useEffect(() => {
+    let live = true;
+    getEntitlements()
+      .then((p) => live && setCharging(p.entitlements.charging))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [amount, setAmount] = useState(10);
@@ -172,6 +185,12 @@ export function Billing() {
           )}
         </div>
       </div>
+
+      {charging && (
+        <p className="subtle" style={{ fontSize: '.84rem', margin: '-8px 0 22px' }}>
+          <strong style={{ color: 'var(--color-text-soft)' }}>How you are charged.</strong> {chargingSentence(charging)}
+        </p>
+      )}
 
       {/* Top up */}
       <div className="card" style={{ padding: '20px 22px', marginBottom: 22 }}>

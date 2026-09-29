@@ -1,4 +1,4 @@
-import { expiredBackups } from './retention.js';
+import { expiredBackups, withPlanCeiling } from './retention.js';
 import { dataMountFor, persistPathsFor } from './startCommand.js';
 import type { Repository, ServerBackupRecord, ServerConfigRecord } from './types.js';
 
@@ -20,6 +20,8 @@ export interface BackupDeps {
   snapshot(req: { agentUrl: string; containerId: string; path?: string }): Promise<Snapshot>;
   remove(agentUrl: string, ref: string): Promise<void>;
   agentUrlFor(nodeId: string | null): Promise<string>;
+  /** The owner's plan ceiling on backups per server (#297); absent or null for none. */
+  backupCeiling?(userId: string): Promise<number | null>;
 }
 
 /**
@@ -79,7 +81,10 @@ export async function enforceRetention(deps: BackupDeps, deploymentId: string, n
   const { repo } = deps;
   const config = await repo.getDeploymentConfig(deploymentId);
   if (!config) return 0;
-  const expired = expiredBackups(await repo.listBackups(deploymentId), config.backupRetention ?? {}, now);
+  const ceiling = deps.backupCeiling ? await deps.backupCeiling(config.userId) : null;
+  const own = config.backupRetention ?? {};
+  const policy = withPlanCeiling(own, ceiling);
+  const expired = expiredBackups(await repo.listBackups(deploymentId), policy, now);
   if (expired.length === 0) return 0;
 
   const detail = await repo.getDeployment(deploymentId);
@@ -96,16 +101,37 @@ export async function enforceRetention(deps: BackupDeps, deploymentId: string, n
     await repo.deleteBackup(b.id);
     removed++;
   }
-  if (removed) await repo.appendDeploymentEvent(deploymentId, 'backups-expired', `retention removed ${removed} backup${removed === 1 ? '' : 's'}`);
+  if (removed) {
+    // Say which rule it was: a backup removed by the plan, not by anything the
+    // owner set, is exactly the deletion somebody will want explained.
+    const byPlan = policy.keepLast !== own.keepLast;
+    await repo.appendDeploymentEvent(
+      deploymentId,
+      'backups-expired',
+      `retention removed ${removed} backup${removed === 1 ? '' : 's'}${byPlan ? ` (your plan keeps ${policy.keepLast} per server)` : ''}`
+    );
+  }
   return removed;
 }
 
 /** The periodic half: a `keepDays` policy expires backups with nobody creating new ones. */
 export async function sweepRetention(deps: BackupDeps, now: Date): Promise<number> {
   let total = 0;
+  // One plan lookup per owner per sweep, not one per server.
+  const ceilings = new Map<string, Promise<number | null>>();
+  const ceilingOf = deps.backupCeiling;
+  const swept: BackupDeps = ceilingOf
+    ? {
+        ...deps,
+        backupCeiling: (userId) => {
+          if (!ceilings.has(userId)) ceilings.set(userId, ceilingOf(userId));
+          return ceilings.get(userId)!;
+        },
+      }
+    : deps;
   for (const d of await deps.repo.listDeployments()) {
     try {
-      total += await enforceRetention(deps, d.id, now);
+      total += await enforceRetention(swept, d.id, now);
     } catch {
       // One server's failure must not stop the sweep for the rest.
     }

@@ -281,7 +281,7 @@ far better shape than hosted; these are the gaps between "the code exists" and "
 it". Every item carries the `edition:hosted` label on GitHub.
 
 - [x] The credit balance never refreshes on its own — a stale balance is a wrong answer stated with confidence (#296)
-- [ ] Creating a server is never charged and the form shows no plan entitlements (RAM ceiling, storage, backups, databases) (#297)
+- [x] Creating a server is never charged and the form shows no plan entitlements (RAM ceiling, storage, backups, databases) (#297) — memory ceiling across an account's servers + backups-per-server ceiling, shown in the form with a one-click fit, enforced against the owner's plan; the charging model stated in the form and on the Billing page. Storage deliberately not modelled: it cannot be enforced (#278)
 - [ ] The FinVault integration has never been exercised end to end — written, not verified; a mismatched message key fails *silently* (#298)
 - [x] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)
 - [x] `docs/billing.md` is missing from the documentation ownership table (#248)

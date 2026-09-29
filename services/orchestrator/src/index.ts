@@ -28,6 +28,7 @@ import { startScheduler, type ScheduleActions } from './scheduler.js';
 import { requestImageUpdate } from './imageUpdate.js';
 import { backfillPortAllocations } from './portAllocation.js';
 import { sweepRetention, takeBackup, type BackupDeps, type Snapshot } from './backups.js';
+import { fetchEntitlements } from './entitlements.js';
 import { createReconcileHandler } from './reconcile.js';
 
 // ── Orchestrator ────────────────────────────────────────────────────────────
@@ -117,6 +118,10 @@ const suspend = createSuspendHandler({
 const backupDeps: BackupDeps = {
   repo,
   agentUrlFor,
+  // The plan's ceiling on backups per server (#297); none in community.
+  async backupCeiling(userId) {
+    return (await fetchEntitlements(process.env.BILLING_BRIDGE_URL || 'http://billing-bridge:9300', userId))?.maxBackupsPerServer ?? null;
+  },
   async snapshot({ agentUrl, ...spec }) {
     const r = await agentFetch(`${agentUrl}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(spec) });
     if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? 'backup failed');

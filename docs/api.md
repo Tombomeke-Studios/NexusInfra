@@ -804,6 +804,19 @@ and **injects the caller's authenticated userId** from the JWT (the client never
 Each forwards to the matching Billing Bridge route below for the authenticated user. `502` if the
 Billing Bridge is unreachable. These are inert in the community edition (no Billing Bridge running).
 
+### `GET /me/entitlements` — hosted edition
+
+Your plan and how much of it you have spent (#297): `{ entitlements, usage }`, where `entitlements` is
+the Billing Bridge answer below and `usage` is `{ servers, databases, ramMb, uncappedServers }` measured
+by the Orchestrator (memory in MB on each server's own node). `404` where no plan applies — the
+community edition, or a Billing Bridge that cannot answer (in which case nothing is enforced either).
+
+Enforced against the **server owner's** plan: `POST /deployments` and a `PATCH /deployments/:id` that
+raises `resourceLimits` answer `409` with a sentence naming the numbers when the memory does not fit
+(`this server needs 3 GB of memory, and your plan has 2 GB of its 3 GB left`), or when a server has no
+memory limit under a memory ceiling. Backups are never refused for the plan: past `maxBackupsPerServer`,
+the oldest goes.
+
 ## Billing Bridge (`:9300`) — hosted edition only
 
 Usage-based billing for the hosted edition. In the community edition only `GET /health` is served (it
@@ -827,6 +840,14 @@ The append-only credit ledger (top-ups + charges), newest first.
 ### `GET /billing/:userId/plan`
 
 The user's pricing/quota plan (rate, free hours, `maxServers`, `maxDatabases`).
+
+### `GET /billing/:userId/entitlements`
+
+What the user's plan allows and how it charges (#297): `{ planId, planName, maxServers, maxDatabases,
+maxRamMb, maxBackupsPerServer, charging }`. `null` means no ceiling. `charging` is `{ basis:
+"runtime-hours", pricePerHour, currency, freeHoursPerMonth, sizeFactor: { standardCpuPercent,
+standardRamPercent, minimum } }` — the same constants the charge is computed with. The Orchestrator
+measures usage against it; see [billing.md](billing.md).
 
 ### `GET /billing/:userId/quota?resource=servers|databases&current=N`
 

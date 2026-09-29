@@ -18,6 +18,14 @@ function routeFetch(url: string) {
   if (url.endsWith('/billing/usage')) return Promise.resolve(jsonResponse({ hours: 3.5, cost: 0, plan }));
   if (url.endsWith('/billing/ledger')) return Promise.resolve(jsonResponse([]));
   if (url.endsWith('/billing/topup')) return Promise.resolve(jsonResponse({ status: 'pending', reference: 'r1' }, 202));
+  if (url.endsWith('/me/entitlements')) {
+    return Promise.resolve(
+      jsonResponse({
+        entitlements: { ...plan, planId: 'standard', planName: 'Standard', maxRamMb: 8192, maxBackupsPerServer: 10, charging: { basis: 'runtime-hours', pricePerHour: 0.02, currency: 'EUR', freeHoursPerMonth: 100, sizeFactor: { standardCpuPercent: 50, standardRamPercent: 50, minimum: 0.25 } } },
+        usage: { servers: 0, databases: 0, ramMb: 0, uncappedServers: 0 },
+      })
+    );
+  }
   return Promise.resolve(jsonResponse({}));
 }
 
@@ -35,6 +43,14 @@ describe('Billing page', () => {
     vi.stubGlobal('fetch', vi.fn((url: string) => routeFetch(String(url))));
   });
   afterEach(() => vi.unstubAllGlobals());
+
+  // #297: a customer who cannot predict the bill reads "nothing was charged when
+  // I created a server" as a bug rather than as the model.
+  it('says how the plan charges', async () => {
+    renderBilling();
+    expect(await screen.findByText(/for each hour a server runs/)).toBeInTheDocument();
+    expect(screen.getByText(/first 100 hours each month are free, shared across all your servers/)).toBeInTheDocument();
+  });
 
   it('shows the credit balance and plan', async () => {
     renderBilling();

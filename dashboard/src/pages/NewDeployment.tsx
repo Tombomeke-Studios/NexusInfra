@@ -8,6 +8,9 @@ import { parsePathList } from '../format';
 import { VersionSelect } from '../components/VersionSelect';
 import { getDeploymentDefaults } from '../prefs';
 import { parseMemoryMb, jvmOverheadMb, derivedHeapMb, formatHeapMb } from '../memory';
+import { PlanPanel } from '../components/PlanPanel';
+import { BILLING_INCLUDED } from '../buildEdition';
+import { useEdition } from '../edition';
 
 // New Deployment — ported from the redesign. The deploy sends name, image, ports,
 // env, the resource limits + restart policy, the kind and the chosen placement,
@@ -41,6 +44,7 @@ function withoutKey(values: Record<string, string>, key: string): Record<string,
 export function NewDeployment() {
   // Seed the form from the user's saved defaults (#124); each field stays editable.
   const defaults = getDeploymentDefaults();
+  const { isHosted } = useEdition();
   const [kind, setKind] = useState<'app' | 'game'>(defaults.type);
   const [name, setName] = useState('');
   const [dockerImage, setDockerImage] = useState('');
@@ -423,6 +427,17 @@ export function NewDeployment() {
               )}
             </div>
           </div>
+
+          {/* The plan's boundaries beside the size being chosen (hosted, #297). */}
+          {BILLING_INCLUDED && isHosted && (
+            <PlanPanel
+              requestedRamMb={requestedRamMb}
+              onUseRamMb={(mb) => {
+                setRamUnit('mb');
+                setRamMb(mb);
+              }}
+            />
+          )}
 
           {/* Resource limits */}
           <div style={{ marginBottom: 20 }}>

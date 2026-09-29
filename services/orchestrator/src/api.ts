@@ -23,6 +23,8 @@ import { parsePortRange } from './portPool.js';
 import { planTransfer } from './transfer.js';
 import { pageOf, parseFilter, parsePage } from './deploymentQuery.js';
 import { getMinecraftVersions } from './minecraftVersions.js';
+import { fetchEntitlements, ramChangeProblem, ramProblem, usageFor, type Entitlements } from './entitlements.js';
+import { committedRamMb } from './capacity.js';
 import type { DeploymentDetail, NodeRecord, Repository, ServerConfigRecord, UpdateServerConfigInput } from './types.js';
 import type { ResourceLimits } from 'shared';
 
@@ -173,6 +175,8 @@ export interface ApiDeps {
    */
   minecraftVersions?: () => Promise<string[]>;
   checkQuota?: CheckQuotaFn;
+  /** The owner's plan entitlements (#297); null where none apply (community, or the bridge is down). */
+  getEntitlements?: (userId: string) => Promise<Entitlements | null>;
   purgeDeploymentData?: PurgeDeploymentDataFn;
   imageStatus?: ImageStatusFn;
   migrationTransport?: MigrationTransport;
@@ -334,6 +338,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   const downloadBackup = deps.downloadBackup ?? defaultDownloadBackup;
   const scheduleActions = deps.scheduleActions ?? noopScheduleActions;
   const checkQuota = deps.checkQuota ?? defaultCheckQuota;
+  const getEntitlements = deps.getEntitlements ?? ((userId: string) => fetchEntitlements(BILLING_BRIDGE_URL, userId));
   const purgeDeploymentData = deps.purgeDeploymentData ?? defaultPurgeDeploymentData;
   const imageStatus = deps.imageStatus ?? defaultImageStatus;
   const migrationTransport = deps.migrationTransport ?? defaultMigrationTransport;
@@ -484,6 +489,15 @@ export function createApiRouter(deps: ApiDeps): Router {
 
     const heapProblem = heapProblemFor(spec, limits, node);
     if (heapProblem) return res.status(400).json({ error: heapProblem });
+
+    // The plan's memory (#297), measured on the node the server lands on: a
+    // percentage cap is only a number of megabytes once the node is known.
+    const entitlements = await getEntitlements(userId);
+    if (entitlements) {
+      const usage = usageFor(userId, await repo.listDeployments(), nodes, 0);
+      const planProblem = ramProblem(entitlements, usage, committedRamMb(limits, node.ramTotalMb));
+      if (planProblem) return res.status(409).json({ error: planProblem });
+    }
 
     // Host ports on this node (#233): `auto` resolved from its pool, and a port
     // another server here already holds refused by name, instead of a start
@@ -674,6 +688,20 @@ export function createApiRouter(deps: ApiDeps): Router {
 
       const problem = heapProblemFor({ type: existing.type, env: nextEnv }, nextLimits, node);
       if (problem) return res.status(400).json({ error: problem });
+
+      // Against the *owner's* plan (#297), whoever is editing: an administrator
+      // resizing somebody's server spends that person's memory.
+      if (patch.resourceLimits) {
+        const entitlements = await getEntitlements(existing.userId);
+        if (entitlements) {
+          const nodes = await repo.listNodes();
+          const others = usageFor(existing.userId, await repo.listDeployments(), nodes, 0, req.params.id);
+          const before = committedRamMb(existing.resourceLimits, node.ramTotalMb);
+          const after = committedRamMb(patch.resourceLimits, node.ramTotalMb);
+          const planProblem = ramChangeProblem(entitlements, others, before, after);
+          if (planProblem) return res.status(409).json({ error: planProblem });
+        }
+      }
     }
 
     // New ports are claimed on the server's node before they are stored (#233),
@@ -988,6 +1016,20 @@ export function createApiRouter(deps: ApiDeps): Router {
    * A preview, not a reservation: placement is decided again at creation, and
    * between the two the fleet can move.
    */
+  // What your plan allows and how much of it you have used (#297) — shown in the
+  // New Deployment form so a size is chosen with the boundary in view rather
+  // than discovered by a refusal. 404 where there is no plan: the community
+  // edition, or a Billing Bridge that cannot answer.
+  router.get('/me/entitlements', async (req: Request, res: Response) => {
+    const userId = userIdOf(req);
+    const entitlements = await getEntitlements(userId);
+    if (!entitlements) return res.status(404).json({ error: 'no plan applies to this account' });
+    const deployments = await repo.listDeployments();
+    let databases = 0;
+    for (const d of deployments) if (d.userId === userId) databases += (await repo.listDatabases(d.id)).length;
+    return res.json({ entitlements, usage: usageFor(userId, deployments, await repo.listNodes(), databases) });
+  });
+
   router.get('/placement', async (_req: Request, res: Response) => {
     const node = selectNode(await repo.listNodes(), Date.now());
     res.json({ nodeId: node?.id ?? null });
@@ -1228,7 +1270,13 @@ export function createApiRouter(deps: ApiDeps): Router {
     res.json(await repo.listBackups(detail.id));
   });
 
-  const backupDeps = () => ({ repo, snapshot: snapshotBackup, remove: removeBackup, agentUrlFor });
+  const backupDeps = () => ({
+    repo,
+    snapshot: snapshotBackup,
+    remove: removeBackup,
+    agentUrlFor,
+    backupCeiling: async (userId: string) => (await getEntitlements(userId))?.maxBackupsPerServer ?? null,
+  });
 
   // Snapshot now. Defaults to the server's own data directory (#324), then lets
   // the retention policy (#232) drop what it no longer keeps.

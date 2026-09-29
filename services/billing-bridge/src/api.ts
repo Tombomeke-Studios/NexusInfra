@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { withinQuota, type QuotaResource } from './quotas.js';
+import { chargingModel } from './pricing.js';
 import type { BillingService } from './service.js';
 import type { Repository } from './types.js';
 
@@ -30,6 +31,22 @@ export function createBillingRouter({ repo, service }: BillingApiDeps): Router {
 
   router.get('/billing/:userId/plan', async (req: Request, res: Response) => {
     res.json(await repo.getUserPlan(req.params.userId));
+  });
+
+  // What the plan entitles this user to, and how it charges (#297). The
+  // Orchestrator measures usage against it — it is the one that knows what the
+  // user has — and the panel shows both before anyone picks a size.
+  router.get('/billing/:userId/entitlements', async (req: Request, res: Response) => {
+    const plan = await repo.getUserPlan(req.params.userId);
+    res.json({
+      planId: plan.id,
+      planName: plan.name,
+      maxServers: plan.maxServers,
+      maxDatabases: plan.maxDatabases,
+      maxRamMb: plan.maxRamMb,
+      maxBackupsPerServer: plan.maxBackupsPerServer,
+      charging: chargingModel(plan),
+    });
   });
 
   // Quota check for the Orchestrator: is creating one more `resource` allowed

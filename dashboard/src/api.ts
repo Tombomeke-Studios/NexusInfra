@@ -419,6 +419,38 @@ export interface BillingPlan {
   maxDatabases: number;
 }
 
+/** How a hosted plan charges (#297) — the same constants the Billing Bridge computes with. */
+export interface ChargingModel {
+  basis: 'runtime-hours';
+  pricePerHour: number;
+  currency: string;
+  freeHoursPerMonth: number;
+  sizeFactor: { standardCpuPercent: number; standardRamPercent: number; minimum: number };
+}
+
+/** What a hosted plan allows; null means no ceiling. */
+export interface Entitlements {
+  planId: string;
+  planName: string;
+  maxServers: number | null;
+  maxDatabases: number | null;
+  maxRamMb: number | null;
+  maxBackupsPerServer: number | null;
+  charging: ChargingModel;
+}
+
+export interface EntitlementUsage {
+  servers: number;
+  databases: number;
+  ramMb: number;
+  uncappedServers: number;
+}
+
+/** Your plan and how much of it is spent (hosted, #297). 404 where no plan applies. */
+export function getEntitlements(): Promise<{ entitlements: Entitlements; usage: EntitlementUsage }> {
+  return request('/me/entitlements');
+}
+
 export interface BillingUsage {
   hours: number;
   cost: number;

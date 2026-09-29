@@ -20,6 +20,14 @@ export interface BillingPlan {
   maxServers: number;
   /** Max managed databases a user on this plan may have. */
   maxDatabases: number;
+  /**
+   * Memory the plan lets a user commit across all their servers, in MB (#297);
+   * null for no ceiling. A total rather than a per-server cap, so it cannot be
+   * multiplied by creating more servers.
+   */
+  maxRamMb: number | null;
+  /** How many backups each server keeps at most (#297); null for no ceiling. */
+  maxBackupsPerServer: number | null;
 }
 
 /** The default plan used when a user has none assigned (keeps community-style usage free-ish). */
@@ -31,6 +39,8 @@ export const DEFAULT_PLAN: BillingPlan = {
   freeHoursPerMonth: 100,
   maxServers: 5,
   maxDatabases: 5,
+  maxRamMb: 8192,
+  maxBackupsPerServer: 10,
 };
 
 // A "standard unit" is 50% CPU + 50% RAM of a node → factor 1.0. Bigger servers
@@ -74,4 +84,31 @@ export interface ChargeInput {
 export function computeCharge({ totalHours, plan, limits }: ChargeInput): number {
   const hours = billableHours(totalHours, plan);
   return roundCurrency(hours * plan.pricePerHour * resourceFactor(limits));
+}
+
+/**
+ * How this plan charges, as data the panel can state (#297). A customer who
+ * cannot predict the bill reads "nothing was charged when I created a server"
+ * as a bug rather than as the model — so the model is said out loud, from the
+ * same constants the charge is computed with.
+ */
+export interface ChargingModel {
+  /** Charged per hour a server runs; creating one, or leaving it stopped, costs nothing. */
+  basis: 'runtime-hours';
+  pricePerHour: number;
+  currency: string;
+  /** Shared by all of a user's servers, per calendar month. */
+  freeHoursPerMonth: number;
+  /** The size multiplier: (cpu% + ram%) / (standard cpu% + standard ram%), never below `minimum`. */
+  sizeFactor: { standardCpuPercent: number; standardRamPercent: number; minimum: number };
+}
+
+export function chargingModel(plan: BillingPlan): ChargingModel {
+  return {
+    basis: 'runtime-hours',
+    pricePerHour: plan.pricePerHour,
+    currency: plan.currency,
+    freeHoursPerMonth: plan.freeHoursPerMonth,
+    sizeFactor: { standardCpuPercent: STANDARD_CPU, standardRamPercent: STANDARD_RAM, minimum: MIN_FACTOR },
+  };
 }

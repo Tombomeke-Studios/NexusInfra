@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { InMemoryRepository } from './repository.js';
 import { defaultBackupPath, enforceRetention, sweepRetention, takeBackup, type BackupDeps } from './backups.js';
 import type { ServerConfigRecord } from './types.js';
@@ -91,6 +91,49 @@ describe('backups (#232)', () => {
     expect(await sweepRetention(deps, new Date())).toBe(1);
     expect(removed).toEqual(['bk_old']);
     expect(await enforceRetention(deps, id, new Date())).toBe(0);
+  });
+
+  // #297: the plan's ceiling on backups per server rotates rather than refuses —
+  // a nightly schedule that starts failing protects nothing.
+  describe("the plan's ceiling", () => {
+    it('keeps the newest N a plan allows, oldest first out, and says it was the plan', async () => {
+      deps.backupCeiling = async () => 2;
+      const taken: string[] = [];
+      // Real backups are at least seconds apart; three in one millisecond would
+      // tie on createdAt, and "oldest" would be a coin toss.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        for (let i = 0; i < 3; i++) {
+          vi.setSystemTime(Date.UTC(2026, 8, 1, 3, i));
+          const outcome = await takeBackup(deps, id, { by: 'schedule' });
+          if (outcome.ok) taken.push(outcome.backup.ref);
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(taken).toHaveLength(3);
+      expect((await repo.listBackups(id)).map((b) => b.ref).sort()).toEqual(taken.slice(1).sort());
+      expect(removed).toEqual([taken[0]]);
+      expect((await repo.getDeployment(id))?.events.at(-1)?.message).toBe('retention removed 1 backup (your plan keeps 2 per server)');
+    });
+
+    it("never loosens the owner's own, tighter policy", async () => {
+      deps.backupCeiling = async () => 10;
+      await repo.updateDeploymentConfig(id, { backupRetention: { keepLast: 1 } });
+      await takeBackup(deps, id, { by: 'user' });
+      await takeBackup(deps, id, { by: 'user' });
+      expect(await repo.listBackups(id)).toHaveLength(1);
+      expect((await repo.getDeployment(id))?.events.at(-1)?.message).toBe('retention removed 1 backup');
+    });
+
+    it("asks for each owner's plan once per sweep, not once per server", async () => {
+      const config = await repo.createServerConfig({ userId: 'u', name: 'second', dockerImage: 'nginx' });
+      await repo.createDeployment(config.id, 'node-1');
+      let asked = 0;
+      deps.backupCeiling = async () => (asked++, null);
+      await sweepRetention(deps, new Date());
+      expect(asked).toBe(1);
+    });
   });
 });
 
