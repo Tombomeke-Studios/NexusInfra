@@ -176,6 +176,7 @@ export class InMemoryRepository implements Repository {
 
   // ── Sessions (#227) ────────────────────────────────────────────────────────
   private sessions = new Map<string, SessionRecord>();
+  private passwordResets = new Map<string, { userId: string; expiresAt: string; usedAt: string | null }>();
 
   async createSession(input: CreateSessionInput): Promise<SessionRecord> {
     const at = new Date().toISOString();
@@ -209,6 +210,20 @@ export class InMemoryRepository implements Repository {
     for (const [id, session] of this.sessions) {
       if (session.userId === userId && id !== exceptId) this.sessions.delete(id);
     }
+  }
+
+  async createPasswordReset(input: { userId: string; tokenHash: string; expiresAt: string }): Promise<void> {
+    for (const [hash, reset] of this.passwordResets) {
+      if (reset.userId === input.userId && !reset.usedAt) this.passwordResets.delete(hash);
+    }
+    this.passwordResets.set(input.tokenHash, { userId: input.userId, expiresAt: input.expiresAt, usedAt: null });
+  }
+
+  async consumePasswordReset(tokenHash: string, now: string): Promise<string | null> {
+    const reset = this.passwordResets.get(tokenHash);
+    if (!reset || reset.usedAt || reset.expiresAt <= now) return null;
+    reset.usedAt = now;
+    return reset.userId;
   }
 
   async touchSession(id: string, at: string): Promise<void> {

@@ -5,6 +5,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { Login } from './Login';
 import { getToken } from '../api';
 import { logout } from '../session';
+import { EditionProvider } from '../edition';
 
 // The login flow is driven against a mocked fetch: submitting stores the token
 // and navigates into the app; a failed login surfaces the error.
@@ -187,5 +188,49 @@ describe('Login with two-factor', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/not valid/i);
     expect(screen.getByLabelText('Two-factor code')).toBeInTheDocument();
+  });
+});
+
+// #344: "Forgot your password?" leads somewhere in both kinds of installation.
+describe('Login — forgotten password', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function serve(passwordResetByEmail: boolean) {
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = String(url);
+      if (path.endsWith('/config')) return { ok: true, status: 200, json: async () => ({ edition: 'community', passwordResetByEmail }) } as Response;
+      if (path.endsWith('/auth/password-reset')) return { ok: true, status: 202, json: async () => ({ status: 'requested', message: 'If an account uses that address, a link to reset its password is on its way.' }) } as Response;
+      return { ok: true, status: 200, json: async () => ({}) } as Response;
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <EditionProvider>
+        <MemoryRouter initialEntries={['/login']}>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+          </Routes>
+        </MemoryRouter>
+      </EditionProvider>
+    );
+    return fetchMock;
+  }
+
+  it('emails a link where the panel can send mail', async () => {
+    const fetchMock = serve(true);
+    await userEvent.type(screen.getByLabelText('Email'), 'ada@example.com');
+    await userEvent.click(await screen.findByRole('button', { name: 'Forgot your password?' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Email me a reset link' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('a link to reset its password is on its way');
+    const call = fetchMock.mock.calls.find(([u]) => String(u).endsWith('/auth/password-reset'));
+    expect(JSON.parse(String((call as unknown as [string, RequestInit])[1].body))).toEqual({ email: 'ada@example.com' });
+  });
+
+  it('says who to ask where it cannot', async () => {
+    const fetchMock = serve(false);
+    await userEvent.click(await screen.findByRole('button', { name: 'Forgot your password?' }));
+    expect(screen.getByText(/Ask one of its administrators to reset your password/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Email me a reset link' })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith('/auth/password-reset'))).toBe(false);
   });
 });

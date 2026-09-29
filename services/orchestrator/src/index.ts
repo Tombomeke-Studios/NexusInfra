@@ -13,6 +13,7 @@ import { pipeSockets, toWsUrl, type DuplexSocket } from './wsProxy.js';
 import { createBillingProxyRouter } from './billingProxy.js';
 import { createMonitoringRouter } from './monitoring.js';
 import { createConfigRouter } from './config.js';
+import { createPasswordResetRouter, parsePanelUrl, resetAvailable } from './passwordReset.js';
 import { createAccountRouter, createAuthRouter, createRequireAuth, createUserAdminRouter, requireTokenScope, requireTotpEnrolment } from './auth.js';
 import { createUserService, isTotpRequired } from './users.js';
 import { createTeamRouter } from './teams.js';
@@ -96,9 +97,10 @@ const registry = createNodeRegistry(repo);
 const reconcile = createReconcileHandler({ repo, publish: countedPublish });
 // Notifications (#236): channels per account, durable deliveries, retried until
 // they land. Email is on when SMTP_URL is set.
+const transports = defaultTransports(process.env.SMTP_URL, process.env.SMTP_FROM || 'NexusInfra <nexusinfra@localhost>');
 const notifier = createNotifier({
   repo,
-  transports: defaultTransports(process.env.SMTP_URL, process.env.SMTP_FROM || 'NexusInfra <nexusinfra@localhost>'),
+  transports,
   emailEnabled: Boolean(process.env.SMTP_URL),
   onOutcome: (outcome, kind) => notificationOutcomes.inc({ outcome, kind }),
 });
@@ -187,8 +189,15 @@ app.get('/metrics', metricsHandler(metrics));
 app.get('/health', (_req, res) => {
   res.json({ service: 'orchestrator', status: 'healthy', ...buildInfo(), uptimeSec: Math.round(process.uptime()) });
 });
+// Self-service password reset (#344): only with mail *and* a known public
+// address — the link is never built from the request's Host header.
+const panelUrl = parsePanelUrl(process.env.PANEL_URL);
+if (process.env.PANEL_URL && !panelUrl) console.warn('[Orchestrator] PANEL_URL is not an http(s) address; password reset by email is off');
+const passwordReset = { repo, users, panelUrl, sendMail: process.env.SMTP_URL ? transports.mail : null };
 // Public runtime config (edition flag) — read by the dashboard before login.
-app.use(catchAsync(createConfigRouter()));
+app.use(catchAsync(createConfigRouter(undefined, { passwordResetByEmail: resetAvailable(passwordReset) })));
+// Public, like login: somebody who forgot their password has no token.
+app.use(catchAsync(createPasswordResetRouter(passwordReset)));
 // Public login/registration, then everything below requires a valid Bearer token.
 app.use(catchAsync(createAuthRouter({ users, repo })));
 // Session-aware (#227): a valid signature is not enough, the session it names

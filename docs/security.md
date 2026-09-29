@@ -125,6 +125,26 @@ changing a password ends every *other* one, and a person can see where they are 
 of it. A token naming no session is refused outright, because an unrevocable token is what this
 replaced.
 
+### Password reset by email (#344)
+
+The other half of #226: somebody who forgot their password can have a link mailed to them, where the
+installation can send mail (`SMTP_URL`) and knows its own public address (`PANEL_URL`). Without both,
+the login page says to ask an administrator, who can reset it from the Accounts page.
+
+- **The link is built from `PANEL_URL`, never from the request.** A reset link built from the `Host`
+  header lets an attacker ask for a reset of *your* account with their own host, so the mail you
+  receive — genuine, from this panel — carries your token to their site.
+- **The response says nothing about the account.** Every request gets the same `202`, and the mail is
+  sent after the response, so the time taken does not tell either.
+- **The token is treated like an API token**: 256 random bits, only its SHA-256 digest stored, spent by
+  the first accepted submission (an atomic claim, so two submissions of one link cannot both succeed),
+  gone after 30 minutes, superseded by a newer request.
+- **Requests are limited** per address and per client — 5 an hour — separately from the login limiter,
+  so someone locked out of signing in can still ask, and one mailbox cannot be flooded.
+- **A reset ends every session**, as an administrator's reset does: it is what you do when you think
+  someone else has been in the account.
+- **Two-factor stays on.** A mailbox is one factor; the next sign-in still asks for the code.
+
 ### Two-factor authentication (#229)
 
 The panel hands out root shells inside containers and control over the Docker hosts behind them. A

@@ -103,4 +103,19 @@ describe('PrismaRepository against a real database (#242)', () => {
     const node = (await repo.listNodes()).find((n) => n.id === 'node-a');
     expect([node?.portRangeStart, node?.portRangeEnd]).toEqual([30000, 30100]);
   });
+  // #344: a reset link is single-use even when it is submitted twice at once,
+  // and a newer link supersedes the older one.
+  it('spends a password reset exactly once, and only the newest works', async () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    const now = new Date().toISOString();
+    await repo.createPasswordReset({ userId: 'u-reset', tokenHash: 'old-hash', expiresAt: future });
+    await repo.createPasswordReset({ userId: 'u-reset', tokenHash: 'new-hash', expiresAt: future });
+    expect(await repo.consumePasswordReset('old-hash', now)).toBeNull();
+
+    const claims = await Promise.all([1, 2, 3, 4].map(() => repo.consumePasswordReset('new-hash', now)));
+    expect(claims.filter((c) => c === 'u-reset')).toHaveLength(1);
+
+    await repo.createPasswordReset({ userId: 'u-reset', tokenHash: 'expired-hash', expiresAt: now });
+    expect(await repo.consumePasswordReset('expired-hash', new Date(Date.now() + 1000).toISOString())).toBeNull();
+  });
 });

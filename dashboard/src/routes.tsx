@@ -2,6 +2,7 @@ import { Routes, Route } from 'react-router-dom';
 import { RequireAuth } from './components/RequireAuth';
 import { Layout } from './components/Layout';
 import { Login } from './pages/Login';
+import { ResetPassword } from './pages/ResetPassword';
 import { Overview } from './pages/Overview';
 import { NewDeployment } from './pages/NewDeployment';
 import { Servers } from './pages/Servers';
@@ -22,6 +23,8 @@ export function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* Where the mailed reset link lands (#344) — public, like /login. */}
+      <Route path="/reset-password" element={<ResetPassword />} />
       {/* Self-registration is a hosted-edition affordance (#174): on a
           self-hosted panel an administrator creates the accounts. */}
       {isHosted && <Route path="/register" element={<Login mode="register" />} />}

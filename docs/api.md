@@ -92,10 +92,28 @@ Runtime config the dashboard reads before login to decide whether billing UI ren
 Contains no sensitive data.
 
 ```json
-{ "edition": "community" }
+{ "edition": "community", "passwordResetByEmail": false }
 ```
 
 `edition` ∈ `community | hosted`, resolved from the service's `NEXUS_EDITION` (default `community`).
+`passwordResetByEmail` says whether "Forgot your password?" can send a link (#344) — true only with
+`SMTP_URL` *and* `PANEL_URL` set; a yes/no, never the mail setup behind it.
+
+### `POST /auth/password-reset`  *(public)*
+
+Ask for a reset link by email (#344). Body `{ "email": "…" }` → `202` with the same body whether or
+not an account uses that address, and the mail is sent after the response, so neither the answer nor
+its timing says which. `429` (with `Retry-After`) past 5 requests an hour per address or per client;
+`404` where the installation cannot send one (the panel then says to ask an administrator).
+
+The mailed link is `PANEL_URL/reset-password?token=…` — built from configuration, never from the
+request's `Host` header. It works once, for 30 minutes, and a newer request supersedes it.
+
+### `POST /auth/password-reset/confirm`  *(public)*
+
+Body `{ "token": "…", "newPassword": "…" }` → `204`, and every session of the account ends. `400` for
+a password the rules refuse — checked *before* the link is spent, so a typo does not cost it — or for a
+link that is unknown, expired or already used (one message for all three).
 
 ### `POST /auth/login`  *(public)*
 

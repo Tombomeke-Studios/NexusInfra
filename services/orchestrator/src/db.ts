@@ -462,6 +462,29 @@ export class PrismaRepository implements Repository {
     await this.client.session.updateMany({ where: { id }, data: { lastSeenAt: new Date(at) } });
   }
 
+  // ── Password resets (#344) ─────────────────────────────────────────────────
+
+  async createPasswordReset(input: { userId: string; tokenHash: string; expiresAt: string }): Promise<void> {
+    // A new link supersedes the old ones: only the most recent mail works.
+    await this.client.$transaction([
+      this.client.passwordReset.deleteMany({ where: { userId: input.userId, usedAt: null } }),
+      this.client.passwordReset.create({
+        data: { id: randomUUID(), userId: input.userId, tokenHash: input.tokenHash, expiresAt: new Date(input.expiresAt) },
+      }),
+    ]);
+  }
+
+  async consumePasswordReset(tokenHash: string, now: string): Promise<string | null> {
+    const at = new Date(now);
+    // The claim is the update: only one caller can move usedAt off null.
+    const claimed = await this.client.passwordReset.updateMany({
+      where: { tokenHash, usedAt: null, expiresAt: { gt: at } },
+      data: { usedAt: at },
+    });
+    if (claimed.count !== 1) return null;
+    return (await this.client.passwordReset.findUnique({ where: { tokenHash } }))?.userId ?? null;
+  }
+
   // ── API tokens (#228) ──────────────────────────────────────────────────────
   async createApiToken(input: CreateApiTokenInput): Promise<ApiTokenRecord> {
     const token = await this.client.apiToken.create({
