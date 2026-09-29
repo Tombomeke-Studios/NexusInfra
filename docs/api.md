@@ -462,9 +462,34 @@ indefinitely. Requires `server.view`.
 
 ### `POST /deployments/:id/start`
 
-Start (or re-run) a deployment that is **not** currently running — re-places it on a healthy node and
-emits `infra.server.start` from the saved config. `202` while starting, `404` if unknown, `409` if it
-is already running/pending, `503` if no healthy node is available.
+Start (or re-run) a deployment that is **not** currently running — emits `infra.server.start` from the
+saved config. A server that has run before starts **on its own node**, because its data is there
+(#329, #324); if that node is offline or in maintenance the start is refused with `409` naming it,
+never quietly placed on a node without the data — moving a server is `POST …/migrate` (#234). A server
+with no node yet (or whose node was deregistered) is placed on the least-loaded healthy one. `202`
+while starting, `404` if unknown, `409` if it is already running/pending or its node is unavailable,
+`503` if no healthy node is available.
+
+### `POST /deployments/:id/migrate`
+
+Move a **stopped** server to another node (#234) — body `{ nodeId }`. **Platform administrators only**:
+it moves data between machines, which is fleet management rather than a server role's call.
+
+Answers `202 { status: "migrating" }` once the move is validated, and runs in the background (a
+large world takes longer than a proxy holds a request open); `GET /deployments/:id` carries
+`migrating: true` meanwhile, and start, update and delete answer `409`. The order is the safety:
+
+1. each of the server's volumes is **streamed** from the source node into a new volume on the target
+   (nothing is buffered in the orchestrator), then each backup tar;
+2. only when all of it arrived does the server's node change (`migrated` in the audit trail);
+3. then the source is cleaned — best-effort, recorded as `migration-cleanup-incomplete` if not.
+
+A failure before step 2 removes **only what this migration created** on the target and leaves the
+server untouched on its node (`migration-failed`). The target refuses to import over a volume or
+backup it already has, so two agents sharing one Docker daemon cannot lose the source.
+
+`400` unknown / same node or no `nodeId`; `409` running, already moving, target unhealthy or in
+maintenance, source node offline, or an imported directory (#268), which exists only on its node.
 
 ### `GET /deployments/:id/logs`
 

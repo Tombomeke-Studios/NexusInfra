@@ -239,7 +239,7 @@ scrolling log lines describing events that never happened.
 - [x] Import an existing server directory into the panel (#268)
 - [x] Backup retention, download, and off-site (S3) targets (#232)
 - [ ] Port allocation management per node — pool, conflicts, primary port (#233)
-- [ ] Migrate a server to another node (#234)
+- [x] Migrate a server to another node (#234)
 - [ ] Real SFTP access per server, honouring the file permissions (#235)
 - [ ] Notification service — mail/webhook on crash, suspend, node offline (#236)
 - [x] Search, filter and pagination on the Servers list (#237)
@@ -255,6 +255,7 @@ scrolling log lines describing events that never happened.
 - [x] A stopped server keeps the id of a container that no longer exists (#321) 🐛
 - [x] Stopping a server deleted its data — it now lives in named volumes owned by the server (#324) 🐛
 - [x] Restoring a backup nested it inside the directory instead of replacing it (#327) 🐛
+- [x] Starting a stopped server could move it to a node without its data (#329) 🐛
 - [x] A missing backup archive answered with the node's host path (`ENOENT …/bk_….tar`) (#339) 🐛
 
 - [x] Delete server button is a no-op — wire `DELETE /deployments/:id` end to end (#156)
@@ -294,7 +295,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 
 ### Phase 5 — Production hardening (`feature/production`)
 
-- [~] Multi-node: agent calls now route to the deployment's owning node (#171 — **done**); still to do: run several agents and verify placement across them live (#21)
+- [x] Multi-node: agent calls route to the owning node (#171); **verified live** with two agents on two separate Docker daemons — exec, files, backups and restore reach the right node, and a server moved between them (#234) (#21)
 - [~] Node Agent: offline event queue / replay on reconnect (#167 — **done**, in-memory outbox for lifecycle reports) + auto-restart on crash (still to do)
 - [~] Control Room: uptime % / history (#165 — **done**, in-memory) + alerting via the Notification/Mail service + DLQ monitoring (still to do)
 - [ ] Metrics: InfluxDB + Grafana dashboards

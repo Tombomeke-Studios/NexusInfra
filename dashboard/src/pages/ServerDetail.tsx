@@ -48,6 +48,10 @@ import {
   type ServerSchedule,
   type ScheduleAction,
   type ImageStatus,
+  type NodeView,
+  migrateDeployment,
+  getCurrentUser,
+  listNodes,
   type BackupRetention,
   setBackupRetention,
   downloadBackup,
@@ -188,6 +192,12 @@ export function ServerDetail() {
           <div className="mono" style={{ marginTop: 5, fontSize: '.85rem', color: 'var(--color-text-subtle)' }}>
             {isGame ? 'game server' : 'application'} · {d.dockerImage}
           </div>
+          {d.migrating && (
+            <p role="status" className="alert" style={{ margin: '10px 0 0', fontSize: '.84rem' }}>
+              <span className="spinner" style={{ marginRight: 8 }} />
+              Moving to another node — its data and backups are being copied. Start is unavailable until it is done.
+            </p>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {running ? (
@@ -1569,6 +1579,78 @@ function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; o
   );
 }
 
+/**
+ * Move a stopped server to another node (#234). Shown to platform
+ * administrators only — the API refuses everyone else — because it moves data
+ * between machines, which is fleet management rather than a server role's call.
+ */
+function MigrateCard({ deployment, onMoved }: { deployment: DeploymentDetail; onMoved: () => Promise<void> | void }) {
+  const { toast } = useToast();
+  const { confirm } = useDialog();
+  const [admin, setAdmin] = useState(false);
+  const [nodes, setNodes] = useState<NodeView[]>([]);
+  const [target, setTarget] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void getCurrentUser()
+      .then((me) => setAdmin(me.platformRole === 'admin' || me.platformRole === 'owner'))
+      .catch(() => undefined);
+    void listNodes()
+      .then(setNodes)
+      .catch(() => undefined);
+  }, []);
+
+  if (!admin) return null;
+  const candidates = nodes.filter((n) => n.id !== deployment.nodeId && n.health === 'healthy' && !n.maintenance);
+  const running = deployment.status === 'running' || deployment.status === 'pending';
+
+  const move = async () => {
+    const ok = await confirm({
+      title: `Move ${deployment.name} to ${target}?`,
+      message: `Its data and backups are copied to ${target}; once that has finished the server lives there and the copy on ${deployment.nodeId ?? 'its node'} is removed. If anything fails, nothing on the current node is touched.`,
+      confirmLabel: 'Move server',
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await migrateDeployment(deployment.id, target);
+      toast(`Moving ${deployment.name} to ${target} — follow it in Activity`, 'success', 'Migration');
+      await onMoved();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not start the move', 'error', 'Migration');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ padding: '20px 22px', marginBottom: 18 }}>
+      <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6 }}>
+        Move to another node
+        <InfoHint text="Copies the server's data volumes and backups to another node, points the server there, then removes them from the old node. The server must be stopped. A server running on an imported directory cannot be moved, because that directory exists only on its node." label="Move to another node help" />
+      </strong>
+      <p className="subtle" style={{ margin: '0 0 14px', fontSize: '.84rem' }}>
+        Currently on <strong className="mono">{deployment.nodeId ?? 'no node'}</strong>.{' '}
+        {running ? 'Stop the server to move it.' : candidates.length ? '' : 'No other healthy node is available.'}
+      </p>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <select className="select" value={target} onChange={(e) => setTarget(e.target.value)} aria-label="Node to move to" disabled={running || !candidates.length || deployment.migrating} style={{ width: 'auto', minWidth: 220 }}>
+          <option value="">Choose a node…</option>
+          {candidates.map((n) => (
+            <option key={n.id} value={n.id}>
+              {n.name}{n.location ? ` (${n.location})` : ''}
+            </option>
+          ))}
+        </select>
+        <button className="btn btn--secondary btn--sm" data-ripple onClick={() => void move()} disabled={!target || running || busy || deployment.migrating}>
+          {busy || deployment.migrating ? 'Moving…' : 'Move server'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** One egg variable on the edit form - the same shape the creation form uses. */
 function EggConfigField({ variable, value, onChange }: { variable: EggVariable; value: string; onChange: (v: string) => void }) {
   const id = `cfg-egg-${variable.key}`;
@@ -1644,6 +1726,7 @@ function SettingsTab({
   return (
     <>
       {allows('server.edit') && <ConfigEditor deployment={deployment} onSaved={onSaved} />}
+      <MigrateCard deployment={deployment} onMoved={onSaved} />
       <div className="card" style={{ padding: '20px 22px', marginBottom: 18 }}>
         <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6 }}>
           Share with a team

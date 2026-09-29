@@ -94,6 +94,8 @@ export interface DeploymentDetail extends DeploymentView {
   persistPaths?: string[];
   /** Absent on older responses. */
   backupRetention?: BackupRetention;
+  /** True while the server is being moved to another node (#234). */
+  migrating?: boolean;
 }
 
 export interface ResourceLimits {
@@ -661,6 +663,15 @@ export function getImageStatus(id: string): Promise<ImageStatus> {
 /** Pull the tag afresh; a running server is recreated from it, keeping its data (#239). */
 export function updateImage(id: string): Promise<{ status: string; recreate: boolean }> {
   return request(`/deployments/${id}/update`, { method: 'POST' });
+}
+
+/**
+ * Move a stopped server to another node, data and backups with it (#234).
+ * Platform administrators only. Answers once the move is accepted; progress is
+ * in the server's activity.
+ */
+export function migrateDeployment(id: string, nodeId: string): Promise<{ status: string; nodeId: string }> {
+  return request(`/deployments/${id}/migrate`, { method: 'POST', body: JSON.stringify({ nodeId }) });
 }
 
 /** Permanently delete a deployment (stops it first if running). */

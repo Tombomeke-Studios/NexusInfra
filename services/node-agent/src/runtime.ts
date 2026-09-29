@@ -22,6 +22,9 @@ export type { NodeResources };
 /** Marks a container as one this platform started, so we never touch anyone else's. */
 export const MANAGED_LABEL = 'nexusinfra.managed';
 
+/** Where a volume is mounted in the transfer carrier; export and import agree on it (#234). */
+const VOLUME_TRANSFER_MOUNT = '/nexus-volume';
+
 export interface StartSpec {
   dockerImage: string;
   containerName?: string;
@@ -60,6 +63,15 @@ export interface ContainerRuntime {
    * deleted server. Never touches a bind-mounted host directory.
    */
   purgeDeployment(deploymentId: string): Promise<{ containers: number; volumes: number }>;
+  // ── Migration (#234) — a server's volumes, moved as tar streams ────────────
+  /** The data volumes this node holds for one server. */
+  listDeploymentVolumes(deploymentId: string): Promise<{ name: string; path: string }[]>;
+  /** One volume's contents as a tar stream (entries under `nexus-volume/`). */
+  exportVolume(deploymentId: string, path: string, image: string): Promise<NodeJS.ReadableStream>;
+  /** Create the volume and fill it from an export. Refuses (code EEXIST) if it already exists. */
+  importVolume(deploymentId: string, path: string, image: string, tar: NodeJS.ReadableStream): Promise<void>;
+  /** Remove one of a server's volumes — only to undo an import. */
+  removeDeploymentVolume(deploymentId: string, path: string): Promise<void>;
   /** Pull an image even when a copy exists — how a tag picks up a new version (#239). */
   pullImage(image: string): Promise<{ imageId: string; digest: string | null }>;
   /** What the registry, this node and a container each say an image is (#239). */
@@ -207,6 +219,60 @@ export class DockerodeRuntime implements ContainerRuntime {
       });
     }
     return volumeMounts(deploymentId, paths);
+  }
+
+  /**
+   * A container that is created and never started, with one of a server's
+   * volumes mounted — so Docker's archive API can read or write the volume with
+   * no helper image to pull (#234). It uses the server's own image, which the
+   * node has or can fetch, and it is not labelled as managed, so reconciliation
+   * never mistakes it for a server.
+   */
+  private async volumeCarrier(volume: string, image: string): Promise<Docker.Container> {
+    await this.ensureImage(image);
+    return this.docker.createContainer({
+      Image: image,
+      Labels: { 'nexusinfra.helper': 'volume-transfer' },
+      HostConfig: { Mounts: [{ Type: 'volume', Source: volume, Target: VOLUME_TRANSFER_MOUNT }] },
+    });
+  }
+
+  async listDeploymentVolumes(deploymentId: string): Promise<{ name: string; path: string }[]> {
+    const { Volumes } = await this.docker.listVolumes({ filters: { label: [`${DEPLOYMENT_LABEL}=${deploymentId}`] } });
+    return (Volumes ?? []).map((v) => ({ name: v.Name, path: v.Labels?.['nexusinfra.path'] ?? '' })).filter((v) => v.path);
+  }
+
+  async exportVolume(deploymentId: string, path: string, image: string): Promise<NodeJS.ReadableStream> {
+    const carrier = await this.volumeCarrier(volumeNameFor(deploymentId, path), image);
+    const tar = await carrier.getArchive({ path: VOLUME_TRANSFER_MOUNT });
+    const cleanup = () => void carrier.remove({ force: true }).catch(() => undefined);
+    tar.on('end', cleanup);
+    tar.on('error', cleanup);
+    tar.on('close', cleanup);
+    return tar;
+  }
+
+  async importVolume(deploymentId: string, path: string, image: string, tar: NodeJS.ReadableStream): Promise<void> {
+    const name = volumeNameFor(deploymentId, path);
+    // Never over an existing volume: two agents on one daemon share volumes, and
+    // an import "into" the source followed by the source's clean-up would delete
+    // the only copy.
+    const existing = await this.docker.getVolume(name).inspect().catch(() => null);
+    if (existing) throw Object.assign(new Error(`this node already holds ${name}`), { code: 'EEXIST' });
+
+    await this.docker.createVolume({ Name: name, Labels: { [MANAGED_LABEL]: 'true', [DEPLOYMENT_LABEL]: deploymentId, 'nexusinfra.path': path } });
+    const carrier = await this.volumeCarrier(name, image);
+    try {
+      // The export's entries are `nexus-volume/…`, so extracting at the root lands
+      // them in the mounted volume.
+      await carrier.putArchive(tar, { path: '/' });
+    } finally {
+      await carrier.remove({ force: true }).catch(() => undefined);
+    }
+  }
+
+  async removeDeploymentVolume(deploymentId: string, path: string): Promise<void> {
+    await this.docker.getVolume(volumeNameFor(deploymentId, path)).remove();
   }
 
   async purgeDeployment(deploymentId: string): Promise<{ containers: number; volumes: number }> {
