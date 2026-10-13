@@ -74,3 +74,46 @@ describe('service images', () => {
     expect(stage).not.toMatch(/^ENV NEXUS_EDITION/m);
   });
 });
+
+describe('node agent backups survive the container (#357)', () => {
+  // The agent writes backups to BACKUP_DIR. The bundles mounted a volume at a
+  // path nothing pointed BACKUP_DIR at, so backups lived in the container and
+  // every upgrade (a recreate) deleted them while the panel still listed them.
+  const agentStage = runtimeStage(join(ROOT, 'services', 'node-agent', 'Dockerfile'));
+  const backupDir = /^ENV BACKUP_DIR=(\S+)$/m.exec(agentStage)?.[1];
+
+  function runtimeStage(file: string): string {
+    const stages = readFileSync(file, 'utf8').split(/^FROM /m);
+    return stages[stages.length - 1];
+  }
+
+  /** One service's block in a compose file: from its key to the next service key. */
+  function serviceBlock(file: string, name: string): string {
+    const text = readFileSync(file, 'utf8');
+    const start = text.search(new RegExp(`^  ${name}:\\s*$`, 'm'));
+    if (start < 0) return '';
+    const rest = text.slice(start + 1);
+    const next = rest.search(/^ {2}[a-z][\w-]*:\s*$|^\S/m);
+    return next < 0 ? rest : rest.slice(0, next);
+  }
+
+  it('the image keeps backups in a declared volume by default', () => {
+    expect(backupDir).toBeTruthy();
+    expect(backupDir!.startsWith('/tmp')).toBe(false);
+    expect(agentStage).toContain(`VOLUME ${backupDir}`);
+  });
+
+  it.each(COMPOSE_FILES)('mounts a named volume at the image\'s BACKUP_DIR: %s', (file) => {
+    const block = serviceBlock(file, 'node-agent');
+    expect(block).not.toBe('');
+    expect(block).toMatch(new RegExp(`- [a-z_]+:${backupDir!.replace(/\//g, '\\/')}\\s*$`, 'm'));
+  });
+
+  it('documents a standalone agent that restarts, is reachable, and keeps its backups', () => {
+    const images = readFileSync(join(ROOT, 'docs', 'images.md'), 'utf8');
+    const run = /docker run -d --name nexusinfra-node-agent[\s\S]*?node-agent:\S+/.exec(images)?.[0] ?? '';
+    expect(run).toContain('--restart unless-stopped');
+    expect(run).toContain('-p 9100:9100');
+    expect(run).toContain(`:${backupDir}`);
+  });
+});

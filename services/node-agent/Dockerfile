@@ -26,6 +26,12 @@ ARG NEXUS_EDITION=community
 ENV APP_VERSION=$APP_VERSION
 RUN mkdir -p /etc/nexusinfra && printf '%s' "$NEXUS_EDITION" > /etc/nexusinfra/edition
 ENV PORT=9100
+# Backups are kept in a volume by default (#357). The code falls back to the
+# container's /tmp, and a container is recreated on every upgrade — so without
+# this, every local backup vanished while the panel still listed it.
+ENV BACKUP_DIR=/var/lib/nexusinfra/backups
+RUN mkdir -p /var/lib/nexusinfra/backups
+VOLUME /var/lib/nexusinfra/backups
 EXPOSE 9100
 # Requires the host Docker socket mounted at runtime, e.g.
 #   -v /var/run/docker.sock:/var/run/docker.sock

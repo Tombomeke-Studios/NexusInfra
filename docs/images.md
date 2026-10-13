@@ -15,7 +15,7 @@ orchestrator, node agent, control room, gateway, nginx with the dashboard, and a
 inside a single container.
 
 ```bash
-docker run -d \
+docker run -d --restart unless-stopped \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v nexusinfra:/data \
   -p 8095:80 -p 2022:2022 \
@@ -141,7 +141,7 @@ Volume: `/data` — the database, which also holds notifications waiting to be r
 | `NODE_ID` | yes | Unique per host. |
 | `INTERNAL_API_TOKEN` | yes | Must match the orchestrator's. |
 | `AGENT_URL` | no | How the orchestrator reaches this agent, advertised on its heartbeat. Defaults to `http://<hostname>:<PORT>`, which works on a Compose network; set it explicitly for anything else. |
-| `BACKUP_DIR` | no | Where backup tarballs live. Point at a volume so they survive restarts. |
+| `BACKUP_DIR` | no | Where backup tarballs live — `/var/lib/nexusinfra/backups` in the image, a declared volume; mount a named volume there so backups survive an upgrade (#357). |
 | `BACKUP_S3_BUCKET` | no | Turns on **off-site backups** (#232): every backup is also copied to this S3-compatible bucket (AWS, Backblaze B2, Wasabi, Cloudflare R2, a self-hosted store). Off unless the bucket and both keys are set. Restore and download fall back to it when the node's own copy is gone. |
 | `BACKUP_S3_ACCESS_KEY_ID` / `BACKUP_S3_SECRET_ACCESS_KEY` | with a bucket | Credentials for the bucket. Give them access to that bucket (and prefix) only. |
 | `BACKUP_S3_ENDPOINT` | no | Defaults to AWS for `BACKUP_S3_REGION`. Set it for anything else, e.g. `https://s3.eu-central-003.backblazeb2.com`. |
@@ -248,14 +248,20 @@ service to the same value FinVault uses.
 On the second host, with the same broker and token:
 
 ```bash
-docker run -d --name nexusinfra-node-agent \
+docker run -d --name nexusinfra-node-agent --restart unless-stopped \
+  -p 9100:9100 \
   -e NODE_ID=node-berlin \
   -e RABBITMQ_URL=amqp://user:pass@broker.example.com:5672 \
   -e INTERNAL_API_TOKEN=... \
   -e AGENT_URL=http://10.0.0.42:9100 \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  -v nexusinfra-backups:/var/lib/nexusinfra/backups \
   ghcr.io/tombomeke-studios/nexusinfra/node-agent:community
 ```
+
+`--restart unless-stopped` brings the agent back after a crash or a reboot, and it then reconciles
+what its Docker is running with what the panel believes (#244). The backups volume is what keeps a
+node's backups across an upgrade, which recreates the container (#357).
 
 It registers via heartbeats and becomes a placement target. `AGENT_URL` must be an address the
 orchestrator can actually reach, and that path should not cross an untrusted network — see
