@@ -200,7 +200,8 @@ describe('loadOrCreateHostKey', () => {
     const path = join(mkdtempSync(join(tmpdir(), 'sftp-key-')), 'nested', 'host_key');
     const first = loadOrCreateHostKey(path);
     expect(first).toContain('PRIVATE KEY');
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    // Windows has no POSIX modes — every file reads back as 0666 — so there is nothing to assert there (#368).
+    if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(loadOrCreateHostKey(path)).toBe(first);
     expect(readFileSync(path, 'utf8')).toBe(first);
   });

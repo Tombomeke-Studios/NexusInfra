@@ -327,7 +327,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 ### Small cleanups / follow-ups (open)
 
 - [x] `docs/billing.md` is missing from the documentation ownership table in CLAUDE.md (#248)
-- [ ] Two file-permission tests cannot pass on Windows (#368)
+- [x] Two file-permission tests could not pass on Windows — the mode is asserted only where modes exist (#368)
 - [x] The PostgreSQL schema guards never ran on Windows — the sync script exited 0 without doing anything, and the migration check could not start Prisma (#361) 🐛
 
 ---

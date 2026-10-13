@@ -160,7 +160,8 @@ describe('config', () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'nexusctl-'));
     const file = path.join(dir, 'sub', 'config.json');
     await writeConfigFile(file, { url: 'https://p', token: 'nxi_x' });
-    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    // Windows has no POSIX modes — every file reads back as 0666 — so there is nothing to assert there (#368).
+    if (process.platform !== 'win32') expect((await stat(file)).mode & 0o777).toBe(0o600);
     expect(await readConfigFile(file)).toEqual({ url: 'https://p', token: 'nxi_x' });
     expect(JSON.parse(await readFile(file, 'utf8')).token).toBe('nxi_x');
   });
