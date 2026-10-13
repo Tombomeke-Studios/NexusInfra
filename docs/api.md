@@ -848,7 +848,10 @@ The dashboard's Billing page (#149) talks only to the Orchestrator, which proxie
 and **injects the caller's authenticated userId** from the JWT (the client never sends a user id):
 
 - `GET /billing/wallet` · `GET /billing/usage` · `GET /billing/ledger` · `GET /billing/plan`
-- `POST /billing/topup` — body `{ amount }`
+- `POST /billing/topup` — body `{ amount }`. The Orchestrator adds the signed-in account's own email
+  address as the payer; an address in the body is ignored (#351). `409` if the account has none.
+
+Without an authenticated user these routes answer `401`.
 
 Each forwards to the matching Billing Bridge route below for the authenticated user. `502` if the
 Billing Bridge is unreachable. These are inert in the community edition (no Billing Bridge running).
@@ -886,7 +889,8 @@ resource factor (derived from its CPU/RAM limits).
 
 The append-only credit ledger (top-ups + charges), newest first. A top-up's `status` is `pending`,
 `confirmed`, `failed`, or `expired` — FinVault did not answer within `TOPUP_TIMEOUT_MS` (#298). `expired`
-is not final: a late `payment.confirmed` still credits it.
+is not final: a late `payment.confirmed` still credits it. A failed top-up carries `failureReason`,
+FinVault's own words for why (declined, an unsupported currency, …) (#351).
 
 ### `GET /billing/:userId/plan`
 
@@ -907,9 +911,15 @@ Quota check used by the Orchestrator (#148): `{ allowed, limit }` — whether cr
 
 ### `POST /billing/:userId/topup`
 
-Start a credit top-up funded via FinVault — body `{ amount, currency? }`. Records a **pending** ledger
-entry and emits `payment.request` to FinVault; credit is added only on `payment.confirmed`. `202` with
-`{ status: "pending", reference, entry }`; `400` on a non-positive amount.
+Start a credit top-up funded via FinVault — body `{ amount, email, currency? }`. `email` is the
+FinVault account that is asked to pay (#351). Records a **pending** ledger entry and emits
+`payment.request` to FinVault; credit is added only on `payment.confirmed`. `202` with
+`{ status: "pending", reference, entry, payerEmail }`.
+
+- `400` on a non-positive amount or a missing email.
+- `409` when the account already has three top-ups waiting in FinVault.
+- `503` when the request could not be handed to the broker — the entry is marked failed at once, since
+  FinVault will never see it.
 
 ## API Gateway (`:9400`)
 
@@ -955,7 +965,7 @@ truth. Summary:
 | `heartbeat.service` / `heartbeat.node` | any → control-room | 1s pulse; node variant carries a resources block |
 | `server.start` / `server.stopped` / `server.started` / `server.crashed` | orchestrator ↔ node-agent | container lifecycle |
 | `deployment.created` / `deployment.failed` | orchestrator → bus | audit; `deployment.created` also carries `resourceLimits` for billing tracking |
-| `payment.request` | billing-bridge → FinVault | credit top-up charge; payload shape matches FinVault's `payment.request` exactly |
+| `payment.request` | billing-bridge → FinVault | credit top-up charge; FinVault's `payment.request` shape plus `customerEmail`, which names the payer (#351) |
 | `payment.confirmed` / `payment.failed` | FinVault → billing-bridge | consumed to add / mark-failed a top-up's credit |
 | `billing.server.suspend` | billing-bridge → orchestrator | stop a user's servers when credit is exhausted (hosted; NexusInfra-only key) |
 | `invoice.generate` | billing-bridge → FinVault | monthly invoice record for a closed cycle (hosted; NexusInfra-only key) |

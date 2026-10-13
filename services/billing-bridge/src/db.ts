@@ -90,6 +90,7 @@ function toLedger(e: PrismaLedger): CreditLedgerEntry {
     reference: e.reference,
     status: e.status as LedgerStatus,
     description: e.description,
+    failureReason: e.failureReason,
     createdAt: e.createdAt.toISOString(),
   };
 }
@@ -190,9 +191,12 @@ export class PrismaRepository implements Repository {
     return toLedger(row);
   }
 
-  async transitionLedgerStatus(id: string, from: LedgerStatus[], to: LedgerStatus): Promise<boolean> {
+  async transitionLedgerStatus(id: string, from: LedgerStatus[], to: LedgerStatus, failureReason?: string): Promise<boolean> {
     // One conditional UPDATE: of two concurrent callers, exactly one sees a row change.
-    const { count } = await this.client.creditLedger.updateMany({ where: { id, status: { in: from } }, data: { status: to } });
+    const { count } = await this.client.creditLedger.updateMany({
+      where: { id, status: { in: from } },
+      data: failureReason === undefined ? { status: to } : { status: to, failureReason },
+    });
     return count === 1;
   }
 

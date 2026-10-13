@@ -71,6 +71,8 @@ model CreditLedger {
   reference   String   @unique
   status      String   @default("pending")
   description String   @default("")
+  // Why a top-up failed, in FinVault's words (#351). Null for anything else.
+  failureReason String?
   createdAt   DateTime @default(now())
 
   @@index([userId])

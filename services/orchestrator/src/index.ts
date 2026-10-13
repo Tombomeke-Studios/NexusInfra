@@ -228,7 +228,7 @@ app.use(catchAsync(createUserAdminRouter({ users, repo })));
 app.use(catchAsync(createTeamRouter({ repo })));
 app.use(catchAsync(createApiRouter({ repo, scheduleActions, publish: countedPublish })));
 // Authenticated billing proxy → Billing Bridge (hosted edition; injects the JWT user id).
-app.use(catchAsync(createBillingProxyRouter()));
+app.use(catchAsync(createBillingProxyRouter({ emailOf: async (userId) => (await repo.getUser(userId))?.email ?? null })));
 // Surfaces the Control Room's live service/node monitoring to the dashboard (#157).
 app.use(catchAsync(createMonitoringRouter()));
 // Last: turns anything the routes threw into a 500 for that caller only (#294).

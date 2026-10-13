@@ -48,7 +48,9 @@ export type NexusInfraEvent =
   | { type: 'deployment.created'; payload: { deploymentId: string; userId: string; resourceLimits?: ResourceLimits } }
   | { type: 'deployment.failed'; payload: { deploymentId: string; reason: string } }
   // ── Billing bridge → FinVault (payload shapes match FinVault's events.ts) ──
-  | { type: 'payment.request'; payload: { reference: string; senderWalletId: string; receiverWalletId: string; amount: number; currency: string; description: string } }
+  // `customerEmail` names who should pay in a way FinVault can resolve (#351): a
+  // NexusInfra user id means nothing there until the two share an identity (#17).
+  | { type: 'payment.request'; payload: { reference: string; senderWalletId: string; receiverWalletId: string; amount: number; currency: string; description: string; customerEmail?: string } }
   | { type: 'payment.confirmed'; payload: { transactionId: string; reference: string; amount: number; senderWalletId: string; receiverWalletId: string } }
   | { type: 'payment.failed'; payload: { transactionId: string; reference: string; reason: string } }
   // ── Billing (hosted edition, NexusInfra-only routing keys) ───────────

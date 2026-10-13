@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { withinQuota, type QuotaResource } from './quotas.js';
 import { chargingModel } from './pricing.js';
-import type { BillingService } from './service.js';
+import { TopUpError, type BillingService } from './service.js';
 import type { Repository } from './types.js';
 
 // HTTP API for the Billing Bridge (hosted edition). The dashboard's Billing page
@@ -66,17 +66,22 @@ export function createBillingRouter({ repo, service }: BillingApiDeps): Router {
   });
 
   // Start a credit top-up (funded via FinVault). Credit is added on
-  // payment.confirmed, not here.
+  // payment.confirmed, not here. `email` is who FinVault asks to pay (#351); the
+  // Orchestrator fills it in from the signed-in account.
   router.post('/billing/:userId/topup', async (req: Request, res: Response) => {
-    const { amount, currency } = req.body ?? {};
+    const { amount, currency, email } = req.body ?? {};
     if (typeof amount !== 'number' || !(amount > 0)) {
       return res.status(400).json({ error: 'amount must be a positive number' });
     }
+    if (typeof email !== 'string' || !email.includes('@')) {
+      return res.status(400).json({ error: 'a top-up needs the email address FinVault should ask to pay' });
+    }
     try {
-      const { reference, entry } = await service.requestTopUp(req.params.userId, amount, typeof currency === 'string' ? currency : undefined);
-      return res.status(202).json({ status: 'pending', reference, entry });
+      const { reference, entry } = await service.requestTopUp(req.params.userId, amount, typeof currency === 'string' ? currency : undefined, email.trim().toLowerCase());
+      return res.status(202).json({ status: 'pending', reference, entry, payerEmail: email.trim().toLowerCase() });
     } catch (err) {
-      return res.status(400).json({ error: err instanceof Error ? err.message : 'top-up failed' });
+      const status = err instanceof TopUpError ? err.status : 400;
+      return res.status(status).json({ error: err instanceof Error ? err.message : 'top-up failed' });
     }
   });
 

@@ -308,7 +308,7 @@ is the migrations directory.
 | `src/reconcile.ts` | Pure `reconcileNode` (records vs what a node actually runs) + the `infra.node.inventory` handler (#244). The outbox (#167) protects reports from a *broker* outage; nothing protected them from the agent process dying, after which a stopped server kept showing green — and nobody investigates a green light |
 | `src/lifecycle.ts` | Consumes `infra.server.started/stopped/crashed`, updates deployment status + audit |
 | `src/suspend.ts` | `createSuspendHandler` — consumes `billing.server.suspend` (hosted), stops each named running deployment + audits it |
-| `src/billingProxy.ts` | `createBillingProxyRouter` — authenticated `/billing/*` proxy → Billing Bridge, injecting the JWT user id (dashboard never sends a user id) |
+| `src/billingProxy.ts` | `createBillingProxyRouter` — authenticated `/billing/*` proxy → Billing Bridge, injecting the JWT user id (dashboard never sends a user id) and, on a top-up, the account's own email as the payer (#351). No user, no answer: 401 |
 | `src/monitoring.ts` | `createMonitoringRouter` — `GET /monitoring` proxies the Control Room's `/status` to the dashboard (`reachable:false` if it's down) |
 | `src/wsProxy.ts` | Pure `pipeSockets` + `toWsUrl` — the terminal WS proxy plumbing; `index.ts` authenticates the JWT, resolves the container, and pipes the client WS ↔ the Node Agent's `/terminal` WS (#71) |
 | `src/index.ts` | Entry: PrismaRepository + consumers on `nexusinfra.orchestrator`, mounts API, starts the schedule runner (restart/backup actions), HTTP `/health` (`:9200`) |
@@ -325,7 +325,7 @@ is the migrations directory.
 | `src/types.ts` | Domain records + the `Repository` interface (plans, intervals, wallet, ledger, cycles) |
 | `src/repository.ts` | `InMemoryRepository` — backs unit tests and a DB-less mode |
 | `src/db.ts` | `getPrisma()` + `PrismaRepository` (SQLite) + `ensureDefaultPlan` seed |
-| `src/service.ts` | `createBillingService` — events→intervals, wallet, and the FinVault top-up flow (`payment.request`/confirmed/failed); dependency-injected. A confirmation credits once (conditional transition) and only for the requested amount; `expireStaleTopUps` turns an unanswered top-up *Not confirmed* after `TOPUP_TIMEOUT_MS` — not final, a late confirmation still credits (#298) |
+| `src/service.ts` | `createBillingService` — events→intervals, wallet, and the FinVault top-up flow (`payment.request`/confirmed/failed); dependency-injected. A top-up carries the payer's email, is capped at `MAX_PENDING_TOPUPS` waiting per account, fails at once if the broker did not take it, and keeps FinVault's reason when it fails (#351). A confirmation credits once (conditional transition) and only for the requested amount; `expireStaleTopUps` turns an unanswered top-up *Not confirmed* after `TOPUP_TIMEOUT_MS` — not final, a late confirmation still credits (#298) |
 | `src/prisma.integration.test.ts` | The billing repository on real SQLite and PostgreSQL: concurrent confirmations credit once (#298) |
 | `src/cycle.ts` | Monthly cycle runner: pure `computeCycleCost`/period helpers + `runBillingCycle` (charge credit → `billing.server.suspend` on short balance → `invoice.generate`) + `startCycleRunner` (hourly poll, idempotent) |
 | `src/api.ts` | `createBillingRouter` — HTTP: wallet/usage/ledger/plan/quota + `POST /topup` |
@@ -421,6 +421,10 @@ is the migrations directory.
 - **FinVault's gateway publishes every event as `events.<type>`** (e.g. `events.payment.confirmed`), not on
   the `bank.payment.*` keys NexusInfra named. Bind both when consuming anything FinVault sends (#298), and
   match on a reference *you* issued — FinVault's own payments share the key.
+- **A top-up names its payer by email, and the Orchestrator supplies it (#351).** FinVault cannot resolve
+  a NexusInfra user id, so `payment.request` carries `customerEmail` — taken from the signed-in account
+  in `billingProxy.ts`, never from the request body: the address decides whose FinVault inbox gets a
+  payment request. FinVault's half is `services/invoice-service/src/external-requests.ts` in that repo.
 - **A ledger status changes through `transitionLedgerStatus`, never read-then-write.** The broker delivers
   at least once; two deliveries of one confirmation used to both see "pending" and both credit (#298).
 - Consumers `nack` without requeue on error → message dead-letters to `finvault.events.dlq` (3-retry

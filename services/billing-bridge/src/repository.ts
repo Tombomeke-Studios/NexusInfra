@@ -81,7 +81,7 @@ export class InMemoryRepository implements Repository {
   }
 
   async createLedgerEntry(input: CreateLedgerInput): Promise<CreditLedgerEntry> {
-    const entry: CreditLedgerEntry = { id: randomUUID(), createdAt: new Date().toISOString(), ...input };
+    const entry: CreditLedgerEntry = { id: randomUUID(), createdAt: new Date().toISOString(), failureReason: null, ...input };
     this.ledger.push(entry);
     return { ...entry };
   }
@@ -98,10 +98,11 @@ export class InMemoryRepository implements Repository {
     return { ...entry };
   }
 
-  async transitionLedgerStatus(id: string, from: LedgerStatus[], to: LedgerStatus): Promise<boolean> {
+  async transitionLedgerStatus(id: string, from: LedgerStatus[], to: LedgerStatus, failureReason?: string): Promise<boolean> {
     const entry = this.ledger.find((e) => e.id === id);
     if (!entry || !from.includes(entry.status)) return false;
     entry.status = to;
+    if (failureReason !== undefined) entry.failureReason = failureReason;
     return true;
   }
 

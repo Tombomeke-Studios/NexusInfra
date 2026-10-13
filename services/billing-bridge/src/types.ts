@@ -44,6 +44,8 @@ export interface CreditLedgerEntry {
   reference: string;
   status: LedgerStatus;
   description: string;
+  /** Why a top-up failed, as FinVault put it (#351); null otherwise. */
+  failureReason: string | null;
   createdAt: string;
 }
 
@@ -106,9 +108,10 @@ export interface Repository {
   /**
    * Move an entry to `to` only if it is currently in one of `from` — true when
    * this call made the change. The guard against crediting one top-up twice when
-   * its confirmation is delivered twice at once (#298).
+   * its confirmation is delivered twice at once (#298). `failureReason` is
+   * recorded with the change when given.
    */
-  transitionLedgerStatus(id: string, from: LedgerStatus[], to: LedgerStatus): Promise<boolean>;
+  transitionLedgerStatus(id: string, from: LedgerStatus[], to: LedgerStatus, failureReason?: string): Promise<boolean>;
   /** Top-ups still pending that were requested before `createdBefore`. */
   listPendingTopUps(createdBefore: string): Promise<CreditLedgerEntry[]>;
   listLedger(userId: string): Promise<CreditLedgerEntry[]>;
