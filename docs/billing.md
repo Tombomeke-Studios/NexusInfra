@@ -129,6 +129,24 @@ Run against a checkout of FinVault's `main` on one RabbitMQ, with the hosted sta
 | Monthly cycle | ✅ Charge → short balance → `billing.server.suspend` → the server's container actually stopped |
 | NexusInfra → FinVault request | See "The whole top-up, live" below |
 
+### The whole top-up, live (#351)
+
+Run on 2026-10-14 with both platforms from source — FinVault's gateway and its account, wallet and
+invoice services; NexusInfra's Orchestrator and Billing Bridge in the hosted edition — on one RabbitMQ,
+with `FINVAULT_MESSAGE_KEY` set, so every payload was encrypted:
+
+| | |
+|---|---|
+| Request reaches FinVault | ✅ A top-up asked for in the panel became a payment request in the FinVault account with the same email, payable to the merchant account |
+| The payer is the signed-in account | ✅ An address put in the request body was ignored |
+| Paid in FinVault | ✅ The money left the customer's FinVault account and the NexusInfra balance rose by the same amount, seconds later |
+| Pay pressed twice at once | ✅ One transfer, one credit; the second call was told the request is no longer pending |
+| Declined in FinVault | ✅ The top-up turned **Failed** with FinVault's reason; the balance did not move |
+
+Not exercised live: the FinVault apps' Pay and Decline buttons themselves (the run called the same
+endpoints they call), and a confirmation that fails to publish and is retried a minute later (covered
+by FinVault's unit tests only).
+
 ## How it links to the app (FinVault)
 
 - **Identity.** The two platforms have separate accounts. What links a NexusInfra customer to a FinVault
