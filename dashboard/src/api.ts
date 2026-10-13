@@ -499,6 +499,8 @@ export interface LedgerEntry {
   /** `expired`: FinVault did not confirm it in time (#298) — not final; a late confirmation still credits. */
   status: 'pending' | 'confirmed' | 'failed' | 'expired';
   description: string;
+  /** Why a top-up failed, in FinVault's words (#351). */
+  failureReason?: string | null;
   createdAt: string;
 }
 
@@ -514,7 +516,8 @@ export function getLedger(): Promise<LedgerEntry[]> {
   return request('/billing/ledger');
 }
 
-export function topUp(amount: number): Promise<{ status: string; reference: string }> {
+/** `payerEmail` is the FinVault account that was asked to pay — where the customer goes to approve it (#351). */
+export function topUp(amount: number): Promise<{ status: string; reference: string; payerEmail?: string }> {
   return request('/billing/topup', { method: 'POST', body: JSON.stringify({ amount }) });
 }
 

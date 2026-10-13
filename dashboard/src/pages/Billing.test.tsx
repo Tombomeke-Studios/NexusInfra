@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { act } from '@testing-library/react';
-import { Billing, newlyConfirmed, refreshInterval, statusLabel, POLL_MS, PENDING_POLL_MS } from './Billing';
+import { Billing, approvalHint, newlyConfirmed, refreshInterval, sentence, statusLabel, POLL_MS, PENDING_POLL_MS } from './Billing';
 import type { LedgerEntry } from '../api';
 import { ToastProvider } from '../components/Toast';
 
@@ -89,6 +89,18 @@ describe('Billing page', () => {
     it('shows an expired top-up as not confirmed, and still notices a late confirmation', () => {
       expect(statusLabel('expired')).toBe('Not confirmed');
       expect(newlyConfirmed([entry({ id: 'x', status: 'expired' })], [entry({ id: 'x', status: 'confirmed' })]).map((e) => e.id)).toEqual(['x']);
+    });
+
+    // #351: asking is not paying — the next step is in another product.
+    it('says where a requested top-up has to be approved', () => {
+      expect(approvalHint('€20.00', 'me@example.com')).toContain('the FinVault account of me@example.com');
+      expect(approvalHint('€20.00')).toContain('your FinVault account');
+    });
+
+    it('shows a reason from FinVault as a sentence', () => {
+      expect(sentence('the customer declined the request')).toBe('The customer declined the request.');
+      expect(sentence('Already a sentence.')).toBe('Already a sentence.');
+      expect(sentence('  ')).toBe('');
     });
 
     it('explains an unconfirmed top-up above the ledger', async () => {
