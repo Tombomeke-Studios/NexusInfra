@@ -731,6 +731,14 @@ export function createApiRouter(deps: ApiDeps): Router {
     const updated = await repo.updateDeploymentConfig(req.params.id, patch);
     if (!updated) return res.status(404).json({ error: 'deployment not found' });
 
+    // Billing charges by size (#364); a resize it never hears about is charged at the old one.
+    if (patch.resourceLimits) {
+      await emit('infra.deployment.updated', {
+        type: 'deployment.updated',
+        payload: { deploymentId: req.params.id, userId: existing.userId, resourceLimits: patch.resourceLimits },
+      });
+    }
+
     await repo.appendDeploymentEvent(
       req.params.id,
       'config-updated',

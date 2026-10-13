@@ -330,7 +330,7 @@ is the migrations directory.
 | `src/cycle.ts` | Monthly cycle runner: pure `computeCycleCost`/period helpers + `runBillingCycle` (charge credit → `billing.server.suspend` on short balance → `invoice.generate`) + `startCycleRunner` (hourly poll, idempotent) |
 | `src/api.ts` | `createBillingRouter` — HTTP: wallet/usage/ledger/plan/quota + `POST /topup` |
 | `src/index.ts` | Entry: PrismaRepository + service; consumes deployment/runtime + `bank.payment.*`; HTTP `/health` (+ billing routes when hosted) on `:9300`; inert in community |
-| `prisma/schema.prisma` | Prisma + SQLite: `BillingPlan`, `UserPlan`, `ServerBilling`, `CreditWallet`, `CreditLedger`, `BillingCycle`. `prisma/migrations` is the source of truth |
+| `prisma/schema.prisma` | Prisma + SQLite: `BillingPlan`, `UserPlan`, `BillingDeployment` (owner + size, #364), `ServerBilling`, `CreditWallet`, `CreditLedger`, `BillingCycle`. `prisma/migrations` is the source of truth |
 | `Dockerfile` | Multi-stage build; runtime applies `prisma migrate deploy` then starts |
 
 ### services/gateway (API gateway — single entry point, #20)
@@ -425,6 +425,9 @@ is the migrations directory.
   a NexusInfra user id, so `payment.request` carries `customerEmail` — taken from the signed-in account
   in `billingProxy.ts`, never from the request body: the address decides whose FinVault inbox gets a
   payment request. FinVault's half is `services/invoice-service/src/external-requests.ts` in that repo.
+- **Anything billing needs after a restart is stored, not remembered (#364).** The bridge kept each
+  server's owner and size in a map; a restart emptied it and every server started afterwards ran
+  unbilled, silently. A start may also be reported twice — `handleServerStarted` keeps the open interval.
 - **A ledger status changes through `transitionLedgerStatus`, never read-then-write.** The broker delivers
   at least once; two deliveries of one confirmation used to both see "pending" and both credit (#298).
 - Consumers `nack` without requeue on error → message dead-letters to `finvault.events.dlq` (3-retry

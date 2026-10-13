@@ -26,6 +26,13 @@ export interface ServerBillingRecord {
   createdAt: string;
 }
 
+/** What billing knows about a deployment: its owner and its size (#364). */
+export interface BilledDeployment {
+  deploymentId: string;
+  userId: string;
+  limits: ResourceLimits;
+}
+
 /** A user's prepaid credit balance (credit_wallet). */
 export interface CreditWallet {
   userId: string;
@@ -92,8 +99,16 @@ export interface Repository {
   // Plans
   getUserPlan(userId: string): Promise<BillingPlan>;
 
+  // Deployments billing knows about (#364) — durable, so a restart forgets nothing.
+  saveDeployment(deployment: BilledDeployment): Promise<void>;
+  getDeployment(deploymentId: string): Promise<BilledDeployment | null>;
+
   // Runtime intervals (server_billing)
   openInterval(input: OpenIntervalInput): Promise<ServerBillingRecord>;
+  /** The interval still running for a deployment, if any. */
+  getOpenInterval(deploymentId: string): Promise<ServerBillingRecord | null>;
+  /** The most recent interval of a deployment, open or closed — how a server from before #364 is recognised. */
+  getLastInterval(deploymentId: string): Promise<ServerBillingRecord | null>;
   closeInterval(deploymentId: string, stoppedAt: string): Promise<ServerBillingRecord | null>;
   listIntervals(userId: string): Promise<ServerBillingRecord[]>;
 

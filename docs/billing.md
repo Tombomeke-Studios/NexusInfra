@@ -97,6 +97,9 @@ the panel is **not** the owner of the hardware (a hosting-provider scenario). So
 
 - `billing_plans` — `price_per_hour`, `resource_factor` inputs, `free_hours_per_month`, `max_servers`,
   `max_databases`, `server_type`.
+- `billing_deployment` — per deployment: its owner and its size. Written when a server is created or
+  resized, so what a server costs survives a restart of the bridge (#364) — it used to be remembered in
+  memory, and every server started after a restart ran unbilled.
 - `server_billing` — per (deployment, user): `started_at`/`stopped_at` intervals → `total_hours`,
   `total_cost`, `status`.
 - `credit_wallet` — per user: `balance`, `currency`.

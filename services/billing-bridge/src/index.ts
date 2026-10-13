@@ -57,6 +57,7 @@ async function start() {
       'nexusinfra.billing-bridge',
       [
         'infra.deployment.created',
+        'infra.deployment.updated',
         'infra.server.started',
         'infra.server.stopped',
         'infra.server.crashed',
@@ -72,6 +73,7 @@ async function start() {
         const payload = readPayload(envelope.event);
         switch (type) {
           case 'deployment.created':
+          case 'deployment.updated':
             await service.handleDeploymentCreated(payload as { deploymentId: string; userId: string });
             break;
           case 'server.started':

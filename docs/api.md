@@ -965,6 +965,7 @@ truth. Summary:
 | `heartbeat.service` / `heartbeat.node` | any → control-room | 1s pulse; node variant carries a resources block |
 | `server.start` / `server.stopped` / `server.started` / `server.crashed` | orchestrator ↔ node-agent | container lifecycle |
 | `deployment.created` / `deployment.failed` | orchestrator → bus | audit; `deployment.created` also carries `resourceLimits` for billing tracking |
+| `deployment.updated` | orchestrator → billing-bridge | a server was resized; carries the new `resourceLimits`, which later runtime is charged at (#364) |
 | `payment.request` | billing-bridge → FinVault | credit top-up charge; FinVault's `payment.request` shape plus `customerEmail`, which names the payer (#351) |
 | `payment.confirmed` / `payment.failed` | FinVault → billing-bridge | consumed to add / mark-failed a top-up's credit |
 | `billing.server.suspend` | billing-bridge → orchestrator | stop a user's servers when credit is exhausted (hosted; NexusInfra-only key) |

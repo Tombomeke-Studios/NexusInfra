@@ -3,7 +3,7 @@ import { buildEnvelope, publishRabbitEvent, type EventEnvelope, type NexusInfraE
 import { resourceFactor, roundCurrency, type BillingPlan } from './pricing.js';
 import { accruedHours } from './tracking.js';
 import { applyTopUp } from './wallet.js';
-import type { CreditLedgerEntry, CreditWallet, Repository, ServerBillingRecord } from './types.js';
+import type { BilledDeployment, CreditLedgerEntry, CreditWallet, Repository, ServerBillingRecord } from './types.js';
 
 // The Billing Bridge service (hosted edition). Turns bus events into runtime
 // intervals and credit movements, and drives the top-up flow to FinVault. All
@@ -16,13 +16,6 @@ export type PublishFn = (routingKey: string, envelope: EventEnvelope) => Promise
 // `bank.payment.#` namespace (see docs/architecture.md); the event `type` stays
 // `payment.request` for wire-compatibility.
 export const KEY_PAYMENT_REQUEST = 'bank.payment.request';
-
-/** What we remember about a deployment so an interval can be opened for it later. */
-interface DeploymentMeta {
-  userId: string;
-  planId: string;
-  limits: ResourceLimits;
-}
 
 export interface BillingServiceDeps {
   repo: Repository;
@@ -72,39 +65,45 @@ export function createBillingService(deps: BillingServiceDeps) {
   const billingWalletId = deps.billingWalletId ?? process.env.BILLING_WALLET_ID ?? 'nexusinfra';
   const log = deps.log ?? ((m: string) => console.warn(`[BillingBridge] ${m}`));
 
-  // deploymentId → owner/plan/limits, learned from deployment.created. Falls back
-  // to the latest stored interval if we missed the creation (e.g. after restart).
-  const meta = new Map<string, DeploymentMeta>();
-
   const emit = (routingKey: string, event: NexusInfraEvent) => publish(routingKey, buildEnvelope('billing-bridge', event));
 
-  async function resolveMeta(deploymentId: string, userId?: string): Promise<DeploymentMeta | null> {
-    const cached = meta.get(deploymentId);
-    if (cached) return cached;
-    if (userId) {
-      const intervals = await repo.listIntervals(userId);
-      const last = intervals.filter((i) => i.deploymentId === deploymentId).at(-1);
-      if (last) {
-        const m: DeploymentMeta = { userId: last.userId, planId: last.planId, limits: last.limits };
-        meta.set(deploymentId, m);
-        return m;
-      }
-    }
-    return null;
+  /**
+   * Who owns a deployment and how big it is. Stored, not remembered: this used
+   * to be a map in memory, so after any restart every server started later ran
+   * unbilled (#364). A server from before that is recognised by its last interval.
+   */
+  async function deploymentFor(deploymentId: string): Promise<BilledDeployment | null> {
+    const known = await repo.getDeployment(deploymentId);
+    if (known) return known;
+    const last = await repo.getLastInterval(deploymentId);
+    if (!last) return null;
+    const recovered: BilledDeployment = { deploymentId, userId: last.userId, limits: last.limits };
+    await repo.saveDeployment(recovered);
+    return recovered;
   }
 
   return {
-    /** Learn a deployment's owner + resource limits so future starts can be billed. */
+    /** Record a deployment's owner + resource limits so its runtime can be billed. Also handles a resize. */
     async handleDeploymentCreated(payload: { deploymentId: string; userId: string; resourceLimits?: ResourceLimits }): Promise<void> {
-      const plan = await repo.getUserPlan(payload.userId);
-      meta.set(payload.deploymentId, { userId: payload.userId, planId: plan.id, limits: payload.resourceLimits ?? {} });
+      await repo.saveDeployment({ deploymentId: payload.deploymentId, userId: payload.userId, limits: payload.resourceLimits ?? {} });
     },
 
-    /** Open a runtime interval for a server that just started. */
+    /**
+     * Open a runtime interval for a server that just started. A server that
+     * already has one running keeps it: a start reported twice (the broker
+     * delivers at least once, and an agent re-reports after its own restart) used
+     * to open a second interval that nothing would ever close.
+     */
     async handleServerStarted(payload: { deploymentId: string }): Promise<ServerBillingRecord | null> {
-      const m = await resolveMeta(payload.deploymentId);
-      if (!m) return null; // unknown deployment (never saw deployment.created) — skip
-      return repo.openInterval({ userId: m.userId, deploymentId: payload.deploymentId, planId: m.planId, limits: m.limits, startedAt: now() });
+      const deployment = await deploymentFor(payload.deploymentId);
+      if (!deployment) {
+        log(`server ${payload.deploymentId} started but billing has never heard of it; it is not being charged`);
+        return null;
+      }
+      const running = await repo.getOpenInterval(payload.deploymentId);
+      if (running) return running;
+      const plan = await repo.getUserPlan(deployment.userId);
+      return repo.openInterval({ userId: deployment.userId, deploymentId: payload.deploymentId, planId: plan.id, limits: deployment.limits, startedAt: now() });
     },
 
     /** Close the open interval for a server that stopped or crashed. */

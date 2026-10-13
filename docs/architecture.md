@@ -59,6 +59,7 @@ exposes `pendingEvents` / `droppedEvents`.
 | `infra.node.inventory` (#244) | node-agent, once at startup | orchestrator |
 | `infra.server.image-updated` / `infra.server.update-failed` (#239) | node-agent | orchestrator (audit trail) |
 | `infra.deployment.created` | orchestrator | billing-bridge (learns owner + limits for tracking, hosted) |
+| `infra.deployment.updated` | orchestrator | billing-bridge (a resize changes what the server is charged at, #364) |
 | `bank.payment.request` | billing-bridge | FinVault (credit top-up charge) |
 | `bank.payment.confirmed` / `bank.payment.failed` | FinVault | billing-bridge (add/mark-failed credit) |
 | `events.payment.confirmed` / `events.payment.failed` | FinVault's gateway (it routes every event as `events.<type>`) | billing-bridge — the same handlers; FinVault's own P2P confirmations share the key and are ignored by reference (#298) |

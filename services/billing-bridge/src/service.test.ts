@@ -43,6 +43,35 @@ describe('billing service', () => {
     expect(usage.cost).toBe(2);
   });
 
+  // #364: what a server costs used to live in a map that a restart emptied.
+  it('still bills a server started after the service restarted', async () => {
+    await svc.handleDeploymentCreated({ deploymentId: 'd1', userId: 'u1', resourceLimits: { cpuPercent: 100, ramPercent: 100 } });
+    const restarted = createBillingService({ repo, publish: async () => true, now: () => clock });
+    const opened = await restarted.handleServerStarted({ deploymentId: 'd1' });
+    expect(opened).toMatchObject({ userId: 'u1', limits: { cpuPercent: 100, ramPercent: 100 } });
+  });
+
+  it('recognises a server from before #364 by its last interval', async () => {
+    await repo.openInterval({ userId: 'u9', deploymentId: 'old', planId: DEFAULT_PLAN.id, limits: { cpuPercent: 50, ramPercent: 50 }, startedAt: '2026-06-01T00:00:00.000Z' });
+    await repo.closeInterval('old', '2026-06-01T01:00:00.000Z');
+    expect(await svc.handleServerStarted({ deploymentId: 'old' })).toMatchObject({ userId: 'u9', stoppedAt: null });
+  });
+
+  it('opens one interval when a start is reported twice', async () => {
+    await svc.handleDeploymentCreated({ deploymentId: 'd1', userId: 'u1' });
+    const first = await svc.handleServerStarted({ deploymentId: 'd1' });
+    const second = await svc.handleServerStarted({ deploymentId: 'd1' });
+    expect(second?.id).toBe(first?.id);
+    await svc.handleServerStopped({ deploymentId: 'd1' });
+    expect((await repo.listIntervals('u1')).filter((i) => i.stoppedAt === null)).toEqual([]);
+  });
+
+  it('charges a resized server at its new size from the next start', async () => {
+    await svc.handleDeploymentCreated({ deploymentId: 'd1', userId: 'u1', resourceLimits: { cpuPercent: 50, ramPercent: 50 } });
+    await svc.handleDeploymentCreated({ deploymentId: 'd1', userId: 'u1', resourceLimits: { cpuPercent: 100, ramPercent: 100 } });
+    expect((await svc.handleServerStarted({ deploymentId: 'd1' }))?.limits).toEqual({ cpuPercent: 100, ramPercent: 100 });
+  });
+
   it('skips billing for an unknown deployment (no deployment.created seen)', async () => {
     const opened = await svc.handleServerStarted({ deploymentId: 'ghost' });
     expect(opened).toBeNull();

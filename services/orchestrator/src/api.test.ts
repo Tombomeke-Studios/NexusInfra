@@ -334,6 +334,18 @@ describe('deployment API', () => {
       expect(config?.resourceLimits).toEqual({ cpuPercent: 25 });
     });
 
+    // Billing charges by size (#364): a resize it never hears about is charged at the old one.
+    it('tells billing when a server is resized, and only then', async () => {
+      const id = await makeServer();
+      published.length = 0;
+      await request(app).patch(`/deployments/${id}`).send({ name: 'renamed' });
+      expect(published.filter((p) => p.key === 'infra.deployment.updated')).toEqual([]);
+
+      await request(app).patch(`/deployments/${id}`).send({ resourceLimits: { cpuPercent: 25 } });
+      const [event] = published.filter((p) => p.key === 'infra.deployment.updated');
+      expect(readPayload(event.envelope.event)).toMatchObject({ deploymentId: id, resourceLimits: { cpuPercent: 25 } });
+    });
+
     it('leaves omitted fields alone', async () => {
       const id = await makeServer();
       await request(app).patch(`/deployments/${id}`).send({ name: 'renamed' });
