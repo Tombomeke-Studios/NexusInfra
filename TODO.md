@@ -307,7 +307,8 @@ it". Every item carries the `edition:hosted` label on GitHub.
 ### Phase 5 — Production hardening (`feature/production`)
 
 - [x] Multi-node: agent calls route to the owning node (#171); **verified live** with two agents on two separate Docker daemons — exec, files, backups and restore reach the right node, and a server moved between them (#234) (#21)
-- [~] Node Agent: offline event queue / replay on reconnect (#167 — **done**, in-memory outbox for lifecycle reports) + auto-restart on crash (still to do)
+- [x] Node Agent: offline event queue / replay on reconnect (#167 — in-memory outbox for lifecycle reports) + restart on crash — both bundles restart it, and the documented `docker run` for a second node now does too (#357)
+- [x] Backups in the release bundles were lost when the node agent's container was recreated (#357) 🐛 — the image keeps them on a declared volume; every compose file and the second-node example mount it
 - [x] Control Room: uptime % / history (#165), DLQ monitoring (#243), and alerting — node offline/recovered and crashes are notified by webhook or email (#236)
 - [ ] Metrics: InfluxDB + Grafana dashboards
 - [x] Prometheus `/metrics` on every service — the cheap half of the above (#246)
