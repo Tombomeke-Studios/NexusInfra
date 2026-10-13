@@ -847,7 +847,7 @@ owner-level permission on it and membership of the target team.
 The dashboard's Billing page (#149) talks only to the Orchestrator, which proxies to the Billing Bridge
 and **injects the caller's authenticated userId** from the JWT (the client never sends a user id):
 
-- `GET /billing/wallet` · `GET /billing/usage` · `GET /billing/ledger` · `GET /billing/plan`
+- `GET /billing/wallet` · `GET /billing/usage` · `GET /billing/standing` · `GET /billing/ledger` · `GET /billing/plan`
 - `POST /billing/topup` — body `{ amount }`. The Orchestrator adds the signed-in account's own email
   address as the payer; an address in the body is ignored (#351). `409` if the account has none.
 
@@ -881,9 +881,17 @@ The user's prepaid credit balance: `{ userId, balance, currency }` (a zero walle
 
 ### `GET /billing/:userId/usage`
 
-Accrued runtime and projected cost this cycle: `{ hours, cost, plan }`. The plan's monthly free-hour
-grant is spent across the user's runtime intervals; billable hours are charged at each server's
-resource factor (derived from its CPU/RAM limits).
+Runtime and cost for the calendar month in progress, up to now: `{ hours, cost, plan }` — computed
+with the function the cycle runner charges with (#366). The plan's monthly free-hour grant is spent
+across the user's runtime intervals; billable hours are charged at each server's resource factor
+(derived from its CPU/RAM limits).
+
+### `GET /billing/:userId/standing`
+
+What the account has left and whether it may run servers (#365): `{ balance, accrued, available,
+freeHoursLeft, canRun, currency }`. `accrued` is usage not yet charged to the balance; `available` is
+`balance - accrued`. The Orchestrator asks before creating or starting a server and answers `402` when
+`canRun` is false.
 
 ### `GET /billing/:userId/ledger`
 

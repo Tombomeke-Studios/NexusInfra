@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { buildEnvelope, publishRabbitEvent, type EventEnvelope, type NexusInfraEvent, type ResourceLimits } from 'shared';
-import { resourceFactor, roundCurrency, type BillingPlan } from './pricing.js';
-import { accruedHours } from './tracking.js';
+import { resourceFactor, type BillingPlan } from './pricing.js';
+import { computeStanding, currentPeriod, usageIn, type Standing } from './standing.js';
 import { applyTopUp } from './wallet.js';
 import type { BilledDeployment, CreditLedgerEntry, CreditWallet, Repository, ServerBillingRecord } from './types.js';
 
@@ -16,6 +16,10 @@ export type PublishFn = (routingKey: string, envelope: EventEnvelope) => Promise
 // `bank.payment.#` namespace (see docs/architecture.md); the event `type` stays
 // `payment.request` for wire-compatibility.
 export const KEY_PAYMENT_REQUEST = 'bank.payment.request';
+const KEY_SUSPEND = 'billing.server.suspend';
+
+/** How often running accounts are checked against their balance (#365). */
+export const DEFAULT_SETTLE_INTERVAL_MS = 5 * 60 * 1000;
 
 export interface BillingServiceDeps {
   repo: Repository;
@@ -213,26 +217,40 @@ export function createBillingService(deps: BillingServiceDeps) {
     },
 
     /**
-     * Current usage summary for a user: accrued hours and projected cost. The
-     * plan's monthly free-hour grant is a single pool spent across intervals
-     * (cheapest-correct: consumed in interval order); each interval's billable
-     * hours are then charged at its own resource factor.
+     * This cycle's usage so far: hours run and what they will cost. Computed with
+     * the function the cycle runner charges with, over the month in progress — it
+     * used to sum every interval an account ever had, so the figure only grew and
+     * stopped matching the bill after the first month (#366).
      */
     async getUsage(userId: string): Promise<{ hours: number; cost: number; plan: BillingPlan }> {
       const [plan, intervals] = await Promise.all([repo.getUserPlan(userId), repo.listIntervals(userId)]);
-      const at = now();
-      let remainingFree = plan.freeHoursPerMonth;
-      let cost = 0;
-      let hours = 0;
-      for (const i of intervals) {
-        const h = accruedHours([{ startedAt: i.startedAt, stoppedAt: i.stoppedAt }], at);
-        hours += h;
-        const freeApplied = Math.min(remainingFree, h);
-        remainingFree -= freeApplied;
-        const billable = h - freeApplied;
-        cost += billable * plan.pricePerHour * resourceFactor(i.limits);
+      return { ...usageIn(intervals, plan, currentPeriod(now())), plan };
+    },
+
+    /** What the account has left to spend, and whether it may run servers (#365). */
+    async getStanding(userId: string): Promise<Standing> {
+      const [plan, intervals, wallet, cycles] = await Promise.all([repo.getUserPlan(userId), repo.listIntervals(userId), repo.getWallet(userId), repo.listCycles(userId)]);
+      return computeStanding({ balance: wallet.balance, currency: wallet.currency, intervals, cycles, plan, now: now() });
+    },
+
+    /**
+     * Stop the servers of every account that has used up what it had (#365).
+     * Nothing is charged here — the monthly cycle still does that — this only
+     * stops usage from running past the balance while the month is open. Safe to
+     * repeat: once the servers stop there is nothing running to suspend.
+     */
+    async settle(): Promise<Array<{ userId: string; deploymentIds: string[] }>> {
+      const suspended: Array<{ userId: string; deploymentIds: string[] }> = [];
+      for (const userId of await repo.listBillableUserIds()) {
+        const running = [...new Set((await repo.listIntervals(userId)).filter((i) => i.stoppedAt === null).map((i) => i.deploymentId))];
+        if (running.length === 0) continue;
+        const standing = await this.getStanding(userId);
+        if (standing.canRun) continue;
+        await emit(KEY_SUSPEND, { type: 'billing.server.suspend', payload: { userId, deploymentIds: running, reason: 'credit exhausted' } });
+        suspended.push({ userId, deploymentIds: running });
       }
-      return { hours: Math.round(hours * 1000) / 1000, cost: roundCurrency(cost), plan };
+      if (suspended.length > 0) log(`suspended the servers of ${suspended.length} account(s) that ran out of credit`);
+      return suspended;
     },
 
     /** Expose the resource factor for a set of limits (handy for UIs/quotes). */

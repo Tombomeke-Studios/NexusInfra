@@ -25,6 +25,12 @@ export function createBillingRouter({ repo, service }: BillingApiDeps): Router {
     res.json(await service.getUsage(req.params.userId));
   });
 
+  // What is left to spend and whether the account may run servers (#365). The
+  // Orchestrator asks before a start; the Billing page shows it.
+  router.get('/billing/:userId/standing', async (req: Request, res: Response) => {
+    res.json(await service.getStanding(req.params.userId));
+  });
+
   router.get('/billing/:userId/ledger', async (req: Request, res: Response) => {
     res.json(await repo.listLedger(req.params.userId));
   });

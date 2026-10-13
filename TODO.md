@@ -293,8 +293,8 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [x] The top bar overflowed between 900px and ~1300px for a hosted administrator — it now folds when it does not fit, measured (#352) 🐛
 - [x] FinVault never acts on NexusInfra's `payment.request`, so a top-up cannot complete (#351) 🐛 — the request now names the payer by the account's email; FinVault (its #89, #90) turns it into a payment request the customer pays or declines in the FinVault apps and answers with our reference. A failed top-up says why; one the broker never took fails at once
 - [x] The Billing Bridge forgot who owned a server when it restarted, and stopped billing it (#364) 🐛 — owner and size are stored; a start reported twice opens one interval; a resize reaches billing
-- [ ] Prepaid credit is not enforced — an account with no credit runs servers for a month, and can restart a suspended one (#365) 🐛
-- [ ] The Billing page's cycle usage counts every hour a server ever ran, not this cycle's (#366) 🐛
+- [x] Prepaid credit was not enforced — an account with no credit ran servers for a month, and could restart a suspended one (#365) 🐛 — creating and starting need credit (402, owner's standing); running servers are suspended within five minutes of the credit running out; the Billing page shows what is left to spend. Servers are not restarted automatically after a top-up, on purpose
+- [x] The Billing page's cycle usage counted every hour a server ever ran, not this cycle's (#366) 🐛
 - [ ] Verify a customer's email address at signup in the hosted edition (#367)
 - [ ] Plans a customer can choose between, and a provider's view of their customers (#369)
 - [x] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)

@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, getEdition, isHosted, readPayload, startHeartbeat, type EventEnvelope, MetricsRegistry, registerBuildInfo, httpMetrics, metricsHandler } from 'shared';
 import { PrismaRepository } from './db.js';
-import { createBillingService, DEFAULT_TOPUP_TIMEOUT_MS } from './service.js';
+import { createBillingService, DEFAULT_SETTLE_INTERVAL_MS, DEFAULT_TOPUP_TIMEOUT_MS } from './service.js';
 import { createBillingRouter } from './api.js';
 import { startCycleRunner } from './cycle.js';
 
@@ -105,6 +105,11 @@ async function start() {
     // instead of pending forever (#298).
     const topUpTimeoutMs = Number(process.env.TOPUP_TIMEOUT_MS) || DEFAULT_TOPUP_TIMEOUT_MS;
     setInterval(() => void service.expireStaleTopUps(topUpTimeoutMs).catch((err) => console.error('[BillingBridge] top-up expiry failed:', err)), 60_000).unref();
+
+    // Usage is held against the balance while servers run, not only when the
+    // month closes (#365).
+    const settleMs = Number(process.env.SETTLE_INTERVAL_MS) || DEFAULT_SETTLE_INTERVAL_MS;
+    setInterval(() => void service.settle().catch((err) => console.error('[BillingBridge] settling accounts failed:', err)), settleMs).unref();
 
     startHeartbeat('billing-bridge', 1000);
     console.log('[BillingBridge] Publishing heartbeat on monitoring.heartbeat.service.billing-bridge');

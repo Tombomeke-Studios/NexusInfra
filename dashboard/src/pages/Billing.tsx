@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getWallet, getUsage, getLedger, topUp, getEntitlements, type CreditWallet, type BillingUsage, type LedgerEntry, type ChargingModel } from '../api';
+import { getWallet, getUsage, getLedger, getStanding, topUp, getEntitlements, type CreditWallet, type BillingUsage, type CreditStanding, type LedgerEntry, type ChargingModel } from '../api';
 import { chargingSentence } from '../plan';
 import { useToast } from '../components/Toast';
 import { formatRelative } from '../format';
@@ -49,6 +49,13 @@ export function approvalHint(amount: string, payerEmail?: string): string {
   return `A payment request for ${amount} is waiting in ${where}. Approve it there and the credit is added here.`;
 }
 
+/** The line under "Left to spend": where the figure comes from. */
+export function leftToSpendNote(standing: CreditStanding): string {
+  const parts = [`balance less ${money(standing.accrued, standing.currency)} used this cycle`];
+  if (standing.freeHoursLeft > 0) parts.push(`${standing.freeHoursLeft.toFixed(1)} free hours left`);
+  return parts.join(' · ');
+}
+
 /** A reason from another system, shown as a sentence. */
 export function sentence(reason: string): string {
   const text = reason.trim();
@@ -67,6 +74,9 @@ export function Billing() {
   const { toast } = useToast();
   const [wallet, setWallet] = useState<CreditWallet | null>(null);
   const [usage, setUsage] = useState<BillingUsage | null>(null);
+  // What is left once this cycle's usage so far is taken off (#365). The balance
+  // alone overstates it: usage is only charged to it when the month closes.
+  const [standing, setStanding] = useState<CreditStanding | null>(null);
   // How the plan charges (#297), said in words: "nothing was charged when I
   // created a server" reads as a bug unless the page says that is the model.
   const [charging, setCharging] = useState<ChargingModel | null>(null);
@@ -93,7 +103,8 @@ export function Billing() {
 
   const load = useCallback(async () => {
     try {
-      const [w, u, l] = await Promise.all([getWallet(), getUsage(), getLedger()]);
+      const [w, u, l, s] = await Promise.all([getWallet(), getUsage(), getLedger(), getStanding().catch(() => null)]);
+      setStanding(s && typeof s.canRun === 'boolean' ? s : null);
       const landed = ledgerRef.current ? newlyConfirmed(ledgerRef.current, l) : [];
       ledgerRef.current = l;
       setWallet(w);
@@ -171,7 +182,8 @@ export function Billing() {
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '24px 24px 48px', animation: 'rise 300ms var(--ease-out) both' }}>
       <h1 style={{ marginBottom: 6 }}>Billing</h1>
       <p className="subtle" style={{ marginTop: 0, marginBottom: 12 }}>
-        Prepaid credit funds your usage. Top up via FinVault; usage is charged at the end of each monthly cycle.
+        Prepaid credit funds your usage. Top up via FinVault; usage is charged at the end of each monthly cycle, and
+        servers stop when the credit runs out before then.
       </p>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, fontSize: '.82rem' }}>
         <span className="subtle" aria-live="polite">
@@ -196,6 +208,17 @@ export function Billing() {
           </div>
         </div>
 
+        {/* What is left */}
+        {standing && (
+          <div className="card" style={{ padding: '20px 22px' }}>
+            <strong style={{ display: 'block', fontSize: '.82rem', color: 'var(--color-text-soft)', marginBottom: 4 }}>Left to spend</strong>
+            <div style={{ fontSize: '1.9rem', fontWeight: 700, color: standing.available < 0 ? 'var(--color-danger)' : 'inherit' }}>
+              {money(standing.available, standing.currency)}
+            </div>
+            <div className="subtle" style={{ fontSize: '.82rem' }}>{leftToSpendNote(standing)}</div>
+          </div>
+        )}
+
         {/* This cycle */}
         <div className="card" style={{ padding: '20px 22px' }}>
           <strong style={{ display: 'block', fontSize: '.82rem', color: 'var(--color-text-soft)', marginBottom: 4 }}>This cycle</strong>
@@ -214,6 +237,15 @@ export function Billing() {
           )}
         </div>
       </div>
+
+      {standing && !standing.canRun && (
+        <p role="alert" className="alert alert--error" style={{ marginTop: 0, marginBottom: 22 }}>
+          {standing.available < 0
+            ? `You owe ${money(-standing.available, standing.currency)} for what your servers have already used.`
+            : 'You have no credit left.'}{' '}
+          Servers cannot be started, and running ones are stopped, until you top up.
+        </p>
+      )}
 
       {charging && (
         <p className="subtle" style={{ fontSize: '.84rem', margin: '-8px 0 22px' }}>

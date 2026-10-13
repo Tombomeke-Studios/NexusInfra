@@ -89,9 +89,27 @@ the panel is **not** the owner of the hardware (a hosting-provider scenario). So
     money moved, and is still credited.
 - **Monthly cycle + free hours.** Billing runs on a monthly cycle; each plan grants **free hours/month**
   before charging begins.
-- **Suspend on empty balance.** At cycle close (or when the balance can't cover accrued usage), the
-  Billing Bridge emits `billing.server.suspend {deploymentIds}`; the Orchestrator stops those servers.
-  They resume after a successful top-up.
+- **Prepaid is enforced while servers run (#365).** An account's *standing* is its balance less what it
+  has used and not yet been charged for — this month so far, plus a closed month the cycle has not
+  billed yet. It used to be looked at once a month, so an account with no credit ran servers until the
+  month closed, and could start a suspended server again straight away.
+  - **Starting needs credit.** Creating or starting a server is refused with `402` when nothing is left,
+    with a message that points at the Billing page. Measured against the server's **owner**, whoever
+    presses Start. Stopping, deleting and reading are never blocked.
+  - **Running servers are stopped when the credit runs out.** Every five minutes (`SETTLE_INTERVAL_MS`)
+    the bridge compares each running account's usage with its balance and emits
+    `billing.server.suspend {deploymentIds}` for those that have none left; the Orchestrator stops the
+    servers and notifies the people on them. Nothing is *charged* by this — the monthly cycle still does
+    that — so the ledger keeps one charge per month.
+  - **Free hours count.** An account that owes nothing and still has free hours this month may run, which
+    is how a plan with a free allowance lets a new customer start before paying. A provider who wants
+    payment first sets the plan's free hours to zero.
+  - **Servers do not restart on their own after a top-up.** The customer starts them; a stopped game
+    server coming back unasked, at an hour nobody chose, is its own kind of surprise.
+  - **If the bridge cannot be asked, nothing is blocked** (and it is logged), as with quotas.
+- **This cycle's usage is this cycle's (#366).** The Billing page's hours and cost are computed for the
+  month in progress with the same function the cycle runner charges with. They used to sum every
+  interval the account ever had, so the figure only grew and stopped matching the bill.
 
 ## Data model (Billing Bridge, own store)
 
