@@ -35,6 +35,8 @@ const BILLING_MARKERS = [
   'Credit held',
   // How long the credit lasts, on the Billing page (#379).
   'at the rate your servers are using it',
+  // A server billing suspended (#380).
+  'ran out of credit',
 ];
 
 /** Present in every build, so a bundle with none of these was not read properly. */

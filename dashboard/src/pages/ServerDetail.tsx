@@ -71,6 +71,7 @@ import {
 } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
 import { PlayerStatus } from '../components/PlayerStatus';
+import { isSuspended, suspensionNote } from '../suspension';
 import { useToast } from '../components/Toast';
 import { useDialog } from '../components/Dialog';
 import { InfoHint } from '../components/InfoHint';
@@ -194,11 +195,16 @@ export function ServerDetail() {
         <div style={{ minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <h1 style={{ fontSize: '1.5rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.name}</h1>
-            <StatusBadge status={d.status} />
+            <StatusBadge status={d.status} suspended={isSuspended(d)} />
           </div>
           <div className="mono" style={{ marginTop: 5, fontSize: '.85rem', color: 'var(--color-text-subtle)' }}>
             {isGame ? 'game server' : 'application'} · {d.dockerImage}
           </div>
+          {suspensionNote(d) && (
+            <p role="status" className="alert alert--warning" style={{ margin: '10px 0 0', fontSize: '.84rem' }}>
+              {suspensionNote(d)}
+            </p>
+          )}
           {/* Who is on, and whether the game answers at all (#382). */}
           {isGame && <PlayerStatus deploymentId={d.id} running={running} />}
           {d.migrating && (

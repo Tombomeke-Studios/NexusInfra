@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useFocusTrap } from '../focusTrap';
 import { getDeployment, type DeploymentDetail } from '../api';
 import { StatusBadge } from './StatusBadge';
+import { isSuspended, suspensionNote } from '../suspension';
 import { formatRelative } from '../format';
 
 // Right-side detail drawer for a deployment: metadata + the full event/audit
@@ -64,7 +65,7 @@ export function DeploymentDrawer({ deploymentId, onClose }: { deploymentId: stri
           ) : detail ? (
             <>
               <div style={{ marginBottom: 'var(--space-4)' }}>
-                <StatusBadge status={detail.status} />
+                <StatusBadge status={detail.status} suspended={isSuspended(detail)} title={suspensionNote(detail) ?? undefined} />
               </div>
               <dl className="meta">
                 <dt>Image</dt>
