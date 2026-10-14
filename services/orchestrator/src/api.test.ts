@@ -1452,6 +1452,28 @@ describe('prepaid credit (#365)', () => {
     expect((await request(app).post(`/deployments/${id}/start`)).status).toBe(202);
   });
 
+  // #380: a suspended server says so until it is started again — and only a start that passes the credit check counts.
+  it('shows a billing suspension on the server until a start is accepted', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    await seedUser(repo);
+    let standing = FUNDED;
+    const app = buildApp(repo, async () => standing);
+    const id = (await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' })).body.id as string;
+    await repo.updateDeploymentStatus(id, { status: 'stopped', containerId: null, suspendedAt: '2026-10-15T00:00:00.000Z', suspendedReason: 'credit exhausted' });
+
+    expect((await request(app).get('/deployments')).body.items[0]).toMatchObject({ id, status: 'stopped', suspendedReason: 'credit exhausted' });
+    expect((await request(app).get(`/deployments/${id}`)).body).toMatchObject({ suspendedAt: '2026-10-15T00:00:00.000Z', suspendedReason: 'credit exhausted' });
+
+    standing = BROKE;
+    expect((await request(app).post(`/deployments/${id}/start`)).status).toBe(402);
+    expect((await repo.getDeployment(id))?.suspendedReason).toBe('credit exhausted');
+
+    standing = FUNDED;
+    expect((await request(app).post(`/deployments/${id}/start`)).status).toBe(202);
+    expect(await repo.getDeployment(id)).toMatchObject({ suspendedAt: null, suspendedReason: null });
+  });
+
   it('never blocks stopping a server, whatever the balance', async () => {
     const repo = new InMemoryRepository();
     await seedNode(repo);

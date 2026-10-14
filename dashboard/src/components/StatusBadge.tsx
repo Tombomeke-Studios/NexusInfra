@@ -15,12 +15,17 @@ const VARIANT: Record<Status, string> = {
   offline: 'danger',
 };
 
-export function StatusBadge({ status }: { status: Status }) {
-  const variant = VARIANT[status] ?? 'neutral';
+/**
+ * `suspended` is a server billing stopped for lack of credit (#380) — still
+ * stopped as far as the runtime goes, but not stopped by anyone who meant to.
+ * `title` says why, for the hover.
+ */
+export function StatusBadge({ status, suspended = false, title }: { status: Status; suspended?: boolean; title?: string }) {
+  const variant = suspended ? 'warning' : (VARIANT[status] ?? 'neutral');
   return (
-    <span className={`badge badge--${variant}`}>
+    <span className={`badge badge--${variant}`} title={title}>
       <span className="badge__dot" />
-      {status}
+      {suspended ? 'suspended' : status}
     </span>
   );
 }

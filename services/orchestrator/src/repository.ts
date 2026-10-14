@@ -399,6 +399,8 @@ export class InMemoryRepository implements Repository {
       startedAt: null,
       stoppedAt: null,
       createdAt: new Date().toISOString(),
+      suspendedAt: null,
+      suspendedReason: null,
     };
     this.deployments.set(deployment.id, deployment);
     return deployment;
@@ -414,6 +416,8 @@ export class InMemoryRepository implements Repository {
       containerId: patch.containerId !== undefined ? patch.containerId : current.containerId,
       startedAt: patch.startedAt !== undefined ? patch.startedAt : current.startedAt,
       stoppedAt: patch.stoppedAt !== undefined ? patch.stoppedAt : current.stoppedAt,
+      suspendedAt: patch.suspendedAt !== undefined ? patch.suspendedAt : current.suspendedAt,
+      suspendedReason: patch.suspendedReason !== undefined ? patch.suspendedReason : current.suspendedReason,
     };
     this.deployments.set(id, updated);
     return updated;

@@ -57,6 +57,18 @@ describe('Servers', () => {
     expect(screen.getByText('app')).toBeInTheDocument();
   });
 
+  // #380: indistinguishable from a server its owner stopped, before.
+  it('says which servers billing suspended', async () => {
+    const list = [deployments[0], { ...deployments[1], suspendedAt: '2026-10-15T00:00:00.000Z', suspendedReason: 'credit exhausted' }];
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve({ ok: true, status: 200, json: async () => (url.includes('/me') ? ME : { items: list, total: list.length, limit: 25, offset: 0 }) } as Response)
+    );
+    renderServers();
+    const badge = await screen.findByText('suspended');
+    expect(badge.closest('[title]')).toHaveAttribute('title', expect.stringContaining('ran out of credit'));
+    expect(screen.getByRole('button', { name: 'Start idle' })).toBeInTheDocument();
+  });
+
   it('lists deployments with status and container id', async () => {
     renderServers();
     expect(await screen.findByText('my-nginx')).toBeInTheDocument();

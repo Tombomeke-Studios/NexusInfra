@@ -36,6 +36,9 @@ export function createLifecycle(repo: Repository, hooks: LifecycleHooks = {}): L
           containerId,
           nodeId: payload.nodeId ? String(payload.nodeId) : undefined,
           startedAt: new Date().toISOString(),
+          // Running again, however it got there: no longer suspended by billing (#380).
+          suspendedAt: null,
+          suspendedReason: null,
         });
         if (updated) await repo.appendDeploymentEvent(deploymentId, 'started', `container ${containerId} started`);
         return;

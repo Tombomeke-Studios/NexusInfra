@@ -877,6 +877,9 @@ export function createApiRouter(deps: ApiDeps): Router {
         containerId: null,
         startedAt: null,
         stoppedAt: null,
+        // A start that got past the credit check ends a billing suspension (#380).
+        suspendedAt: null,
+        suspendedReason: null,
       });
       await repo.appendDeploymentEvent(detail.id, 'start-requested', home ? `starting on node ${node.id}` : `placed on node ${node.id}`);
       await emit(KEY_START, { type: 'server.start', payload: startCommandFor(config, detail.id, node.id) });

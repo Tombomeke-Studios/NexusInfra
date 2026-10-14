@@ -14,6 +14,7 @@ import {
 } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
 import { PlayerCount } from '../components/PlayerStatus';
+import { isSuspended, suspensionNote } from '../suspension';
 import { IconStop, IconRestart, IconPlay } from '../components/Icons';
 import { useToast } from '../components/Toast';
 import { formatLimits, formatRelative, isGameServer, shortId } from '../format';
@@ -454,7 +455,7 @@ function ServerTable({
                 <td className="mono wide-only">{d.dockerImage}</td>
                 <td className="wide-only">{d.nodeId ?? '—'}</td>
                 <td>
-                  <StatusBadge status={d.status} />
+                  <StatusBadge status={d.status} suspended={isSuspended(d)} title={suspensionNote(d) ?? undefined} />
                   {/* Players, as the game reports them (#382). */}
                   {isGameServer(d) && <PlayerCount deploymentId={d.id} running={d.status === 'running'} />}
                 </td>

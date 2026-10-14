@@ -38,6 +38,22 @@ describe('billing.server.suspend handler', () => {
     expect(detail?.events.some((e) => e.event === 'suspended')).toBe(true);
   });
 
+  // #380: a suspended server must not look like one its owner stopped.
+  it('records the suspension with the server, not only in the audit trail', async () => {
+    const a = await runningDeployment('a');
+    await handleSuspend({ userId: 'u1', deploymentIds: [a], reason: 'credit exhausted' });
+    const detail = await repo.getDeployment(a);
+    expect(detail?.suspendedReason).toBe('credit exhausted');
+    expect(detail?.suspendedAt).toEqual(expect.any(String));
+  });
+
+  it('does not mark a server it did not stop', async () => {
+    const config = await repo.createServerConfig({ userId: 'u1', name: 'idle', dockerImage: 'nginx' });
+    const dep = await repo.createDeployment(config.id, 'node-1');
+    await handleSuspend({ userId: 'u1', deploymentIds: [dep.id], reason: 'credit exhausted' });
+    expect((await repo.getDeployment(dep.id))?.suspendedAt).toBeNull();
+  });
+
   it('skips deployments that are not running or unknown', async () => {
     const config = await repo.createServerConfig({ userId: 'u1', name: 'stopped', dockerImage: 'nginx' });
     const dep = await repo.createDeployment(config.id, 'node-1'); // pending, no container

@@ -35,6 +35,10 @@ export default defineConfig({
             { find: fromHere('./src/pages/Customers.tsx'), replacement: fromHere('./src/pages/Customers.stub.tsx') },
             // The plan panel in New Deployment (#297).
             { find: fromHere('./src/components/PlanPanel.tsx'), replacement: fromHere('./src/components/PlanPanel.stub.tsx') },
+            // A server billing suspended for lack of credit (#380).
+            // Matched on the import as written ('../suspension'): an alias sees the
+            // specifier before it is resolved, so an absolute path never matches it.
+            { find: /^(?:\.{1,2}\/)+suspension$/, replacement: fromHere('./src/suspension.stub.ts') },
           ],
   },
   server: {

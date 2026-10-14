@@ -304,6 +304,8 @@ function toDeploymentRecord(d: PrismaDeployment): DeploymentRecord {
     startedAt: iso(d.startedAt),
     stoppedAt: iso(d.stoppedAt),
     createdAt: d.createdAt.toISOString(),
+    suspendedAt: iso(d.suspendedAt),
+    suspendedReason: d.suspendedReason,
   };
 }
 
@@ -669,6 +671,8 @@ export class PrismaRepository implements Repository {
         ...(patch.containerId !== undefined ? { containerId: patch.containerId } : {}),
         ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt ? new Date(patch.startedAt) : null } : {}),
         ...(patch.stoppedAt !== undefined ? { stoppedAt: patch.stoppedAt ? new Date(patch.stoppedAt) : null } : {}),
+        ...(patch.suspendedAt !== undefined ? { suspendedAt: patch.suspendedAt ? new Date(patch.suspendedAt) : null } : {}),
+        ...(patch.suspendedReason !== undefined ? { suspendedReason: patch.suspendedReason } : {}),
       },
     });
     return toDeploymentRecord(deployment);

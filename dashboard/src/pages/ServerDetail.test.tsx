@@ -67,6 +67,14 @@ describe('ServerDetail access gating', () => {
     expect(screen.queryByText(/Your role:/)).not.toBeInTheDocument();
   });
 
+  // #380: the page says why it stopped, until it is started again.
+  it('says a server was suspended by billing, and still offers Start', async () => {
+    renderDetail('owner', { status: 'stopped', containerId: null, suspendedAt: '2026-10-15T00:00:00.000Z', suspendedReason: 'credit exhausted' });
+    expect(await screen.findByText('suspended')).toBeInTheDocument();
+    expect(screen.getByText(/Stopped by billing because your account ran out of credit/)).toHaveAttribute('role', 'status');
+    expect(screen.getByRole('button', { name: 'Start' })).toBeInTheDocument();
+  });
+
   it('lets an operator run the server without managing it', async () => {
     renderDetail('operator');
     expect(await screen.findByRole('button', { name: 'Stop' })).toBeInTheDocument();

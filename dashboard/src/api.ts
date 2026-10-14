@@ -72,6 +72,9 @@ export interface DeploymentView {
   startedAt: string | null;
   stoppedAt: string | null;
   createdAt: string;
+  /** When billing stopped it for lack of credit, and why (#380); cleared when it next starts. */
+  suspendedAt?: string | null;
+  suspendedReason?: string | null;
 }
 
 export interface DeploymentEvent {

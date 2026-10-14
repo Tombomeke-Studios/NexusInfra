@@ -312,7 +312,7 @@ is the migrations directory.
 | `src/reconcile.ts` | Pure `reconcileNode` (records vs what a node actually runs) + the `infra.node.inventory` handler (#244). The outbox (#167) protects reports from a *broker* outage; nothing protected them from the agent process dying, after which a stopped server kept showing green — and nobody investigates a green light |
 | `src/lifecycle.ts` | Consumes `infra.server.started/stopped/crashed`, updates deployment status + audit |
 | `src/credit.ts` | Prepaid, enforced where servers start (#365): pure `creditProblem` + `fetchStanding` (fail-open, logged). Create and start answer `402` when the **owner** has nothing left; stopping is never blocked. `creditLowSummary` words the `credit.low` notification (#379) |
-| `src/suspend.ts` | `createSuspendHandler` — consumes `billing.server.suspend` (hosted), stops each named running deployment + audits it |
+| `src/suspend.ts` | `createSuspendHandler` — consumes `billing.server.suspend` (hosted), stops each named running deployment, records `suspendedAt`/`suspendedReason` on it (#380 — cleared by a start that passes the credit check, or a started report) + audits it |
 | `src/bridge.ts` | `bridgeFetch` — the one way to call the Billing Bridge: base URL + the internal token (#372) |
 | `src/billingPlans.ts` | Plans and the provider's view (#369, hosted only): `/billing/plans` + `PUT /billing/plan` for an account about itself, `/billing/admin/…` for platform administrators (catalogue, every account, manual credit). Pure `planFitProblem` — a switch is refused when the account holds more than the plan allows. Who adjusted credit comes from the session, never the body |
 | `src/billingProxy.ts` | `createBillingProxyRouter` — authenticated `/billing/*` proxy → Billing Bridge, injecting the JWT user id (dashboard never sends a user id) and, on a top-up, the account's own email as the payer (#351). No user, no answer: 401 |
@@ -373,6 +373,7 @@ is the migrations directory.
 | `src/pages/NodeDetail.tsx` | Per-node view (`/nodes/:id`): live CPU/RAM meters + session sparkline, hosted deployments, deregister |
 | `src/routes.tsx` · `src/App.tsx` | Route table (public `/login`; the rest behind `RequireAuth` + `Layout`) wrapped in the router |
 | `src/components/{Layout,RequireAuth}.tsx` | Nav shell + auth-guard route wrapper. When the bar does not fit, the nav and its actions fold behind a Menu button (`aria-expanded`, closes on Escape and on navigation); on a wide screen the wrapper is `display: contents`, so nothing moves (#247). **Fit is measured, not a breakpoint** (#352, `src/navFit.ts`): the link count depends on edition and role, and a fixed 900px let a hosted admin's bar overflow up to ~1300px. Labels never wrap and controls never shrink, so not fitting shows up as overflow |
+| `src/suspension.ts` | A server billing suspended (#380): pure `isSuspended`/`suspensionNote` for the `suspended` badge (`StatusBadge`'s `suspended` prop) and the note on the server's page. **Hosted-only** — aliased to `suspension.stub.ts` in a community build and marked in `verify-edition.mjs` |
 | `src/components/Dialog.tsx` | `DialogProvider` + `useDialog()` → promise-shaped `confirm`/`prompt` (#299), replacing 16 `window.confirm`/`prompt` calls. Native dialogs announce the origin, give a deletion the same weight as a rename, and **freeze the page thread**, so no automated run ever reached the other side of one. Destructive confirmations look destructive and focus **Cancel**, so a reflexive Enter does not delete; prompts validate as you type. Without a provider every dialog resolves *no* — these guard deletions |
 | `src/focusTrap.ts` | `useFocusTrap` + pure `nextFocus` (#247): Tab stays inside a modal and focus returns to what opened it. Used by `Dialog`, `DeploymentDrawer` and `IntroTour`. Remembers the last focus *outside* any modal, because an `autoFocus` inside one takes focus before an effect can read the opener |
 | `src/components/ResourcesEditor.tsx` · `src/limits.ts` · `src/components/LimitField.tsx` | Resize a server after creation (#381): the Settings tab's Resources card (CPU + RAM, MB/cores or %). `limits.ts` is the pure half — `withSizeLimits` sends **only the chosen unit** and carries swap/IO/restart/OOM through, because the PATCH replaces `resourceLimits` whole. Shows the Java heap the new limit gives and **never sends one** — its absence is what makes the API re-derive it (#308). `LimitField` is shared with New Deployment |
@@ -481,7 +482,9 @@ is the migrations directory.
   the fix is to pull the other tag, not to set the variable harder.
 - **Anything hosted-only added to the dashboard must be excluded from the community build** — alias
   it in `vite.config.ts` and add a marker to `verify-edition.mjs`, or the community bundle silently
-  starts shipping code it cannot run.
+  starts shipping code it cannot run. **An alias matches the import as written** (`'../suspension'`),
+  before it is resolved, so a `find` that is an absolute path matches nothing — use a RegExp on the
+  specifier, and let the marker prove it (#380, #393).
 - **Every schema change is made three times (#241).** Edit `prisma/schema.prisma` (SQLite, the
   source), run `npm run db:sync-postgres` to regenerate `prisma/postgres/schema.prisma`, and add a
   migration for **each** database. `schemas.test.ts` fails when the PostgreSQL schema is stale or the
