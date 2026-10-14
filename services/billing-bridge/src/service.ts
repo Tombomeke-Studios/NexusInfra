@@ -1,6 +1,8 @@
 import { randomUUID } from 'crypto';
 import { buildEnvelope, publishRabbitEvent, type EventEnvelope, type NexusInfraEvent, type ResourceLimits } from 'shared';
-import { resourceFactor, type BillingPlan } from './pricing.js';
+import { DEFAULT_PLAN, resourceFactor, roundCurrency, type BillingPlan } from './pricing.js';
+import { parsePlanInput, planIdFrom, retireProblem, switchProblem } from './plans.js';
+import { ratesOf } from './cycle.js';
 import { computeStanding, currentPeriod, usageIn, type Standing } from './standing.js';
 import { applyTopUp } from './wallet.js';
 import type { BilledDeployment, CreditLedgerEntry, CreditWallet, Repository, ServerBillingRecord } from './types.js';
@@ -45,11 +47,33 @@ export const DEFAULT_TOPUP_TIMEOUT_MS = 30 * 60 * 1000;
  */
 export const MAX_PENDING_TOPUPS = 3;
 
-/** A top-up that was refused before anything was sent; `status` is the HTTP answer. */
-export class TopUpError extends Error {
+/** A request this service refuses; `status` is the HTTP answer. */
+export class BillingError extends Error {
   constructor(message: string, readonly status: number) {
     super(message);
   }
+}
+
+/** A top-up that was refused before anything was sent. */
+export const TopUpError = BillingError;
+
+/** The most an administrator may add or remove by hand in one go (#369) — a typo guard, not a policy. */
+export const MAX_ADJUSTMENT = 10_000;
+
+/** One account as the provider sees it (#369). */
+export interface AccountSummary {
+  userId: string;
+  planId: string;
+  planName: string;
+  balance: number;
+  /** Balance less usage not yet charged. */
+  available: number;
+  canRun: boolean;
+  currency: string;
+  /** This cycle so far. */
+  hours: number;
+  cost: number;
+  runningServers: number;
 }
 
 const REASON_MAX = 300;
@@ -223,14 +247,20 @@ export function createBillingService(deps: BillingServiceDeps) {
      * stopped matching the bill after the first month (#366).
      */
     async getUsage(userId: string): Promise<{ hours: number; cost: number; plan: BillingPlan }> {
-      const [plan, intervals] = await Promise.all([repo.getUserPlan(userId), repo.listIntervals(userId)]);
-      return { ...usageIn(intervals, plan, currentPeriod(now())), plan };
+      const [plan, intervals, plans] = await Promise.all([repo.getUserPlan(userId), repo.listIntervals(userId), repo.listPlans()]);
+      return { ...usageIn(intervals, plan, currentPeriod(now()), ratesOf(plans)), plan };
     },
 
     /** What the account has left to spend, and whether it may run servers (#365). */
     async getStanding(userId: string): Promise<Standing> {
-      const [plan, intervals, wallet, cycles] = await Promise.all([repo.getUserPlan(userId), repo.listIntervals(userId), repo.getWallet(userId), repo.listCycles(userId)]);
-      return computeStanding({ balance: wallet.balance, currency: wallet.currency, intervals, cycles, plan, now: now() });
+      const [plan, intervals, wallet, cycles, plans] = await Promise.all([
+        repo.getUserPlan(userId),
+        repo.listIntervals(userId),
+        repo.getWallet(userId),
+        repo.listCycles(userId),
+        repo.listPlans(),
+      ]);
+      return computeStanding({ balance: wallet.balance, currency: wallet.currency, intervals, cycles, plan, now: now(), rateOf: ratesOf(plans) });
     },
 
     /**
@@ -251,6 +281,108 @@ export function createBillingService(deps: BillingServiceDeps) {
       }
       if (suspended.length > 0) log(`suspended the servers of ${suspended.length} account(s) that ran out of credit`);
       return suspended;
+    },
+
+    // ── Plans (#369) ─────────────────────────────────────────────────────────
+
+    /** Add a plan to the catalogue. Its id is made from its name and never changes. */
+    async createPlan(body: unknown): Promise<BillingPlan> {
+      const parsed = parsePlanInput(body);
+      if (!parsed.ok) throw new BillingError(parsed.error, 400);
+      const id = planIdFrom(parsed.plan.name);
+      if (!id) throw new BillingError('the name needs at least one letter or digit', 400);
+      if (await repo.getPlan(id)) throw new BillingError(`there is already a plan called "${id}" — edit that one, or pick another name`, 409);
+      return repo.savePlan({ id, currency: DEFAULT_PLAN.currency, ...parsed.plan });
+    },
+
+    /**
+     * Change a plan. Prices and ceilings apply to everyone on it, from now and
+     * for the month in progress — the charge is computed when the month closes.
+     */
+    async updatePlan(id: string, body: unknown): Promise<BillingPlan> {
+      const existing = await repo.getPlan(id);
+      if (!existing) throw new BillingError('no such plan', 404);
+      const parsed = parsePlanInput(body, existing);
+      if (!parsed.ok) throw new BillingError(parsed.error, 400);
+      if (!parsed.plan.active) {
+        const problem = retireProblem(existing);
+        if (problem) throw new BillingError(problem, 409);
+      }
+      return repo.savePlan({ id, currency: existing.currency, ...parsed.plan });
+    },
+
+    /**
+     * Move an account to another plan. Servers that are running are re-opened
+     * under the new plan from this moment, so what ran before the switch is
+     * charged at the old rate and what runs after it at the new one.
+     */
+    async changePlan(userId: string, planId: string): Promise<BillingPlan> {
+      const [target, current] = await Promise.all([repo.getPlan(planId), repo.getUserPlan(userId)]);
+      const problem = switchProblem(target, current.id);
+      if (problem || !target) throw new BillingError(problem ?? 'no such plan', target ? 409 : 404);
+      if (target.id === current.id) return target;
+      await repo.setUserPlan(userId, target.id);
+      const at = now();
+      const running = (await repo.listIntervals(userId)).filter((i) => i.stoppedAt === null);
+      for (const interval of running) {
+        await repo.closeInterval(interval.deploymentId, at);
+        await repo.openInterval({ userId, deploymentId: interval.deploymentId, planId: target.id, limits: interval.limits, startedAt: at });
+      }
+      return target;
+    },
+
+    // ── The provider's view (#369) ───────────────────────────────────────────
+
+    /** Every account billing knows about, with what it has, what it used and whether it may run. */
+    async listAccounts(): Promise<AccountSummary[]> {
+      const rateOf = ratesOf(await repo.listPlans());
+      const accounts: AccountSummary[] = [];
+      for (const userId of await repo.listBillableUserIds()) {
+        const [plan, intervals, wallet, cycles] = await Promise.all([repo.getUserPlan(userId), repo.listIntervals(userId), repo.getWallet(userId), repo.listCycles(userId)]);
+        const at = now();
+        const standing = computeStanding({ balance: wallet.balance, currency: wallet.currency, intervals, cycles, plan, now: at, rateOf });
+        const usage = usageIn(intervals, plan, currentPeriod(at), rateOf);
+        accounts.push({
+          userId,
+          planId: plan.id,
+          planName: plan.name,
+          balance: wallet.balance,
+          available: standing.available,
+          canRun: standing.canRun,
+          currency: wallet.currency,
+          hours: usage.hours,
+          cost: usage.cost,
+          runningServers: new Set(intervals.filter((i) => i.stoppedAt === null).map((i) => i.deploymentId)).size,
+        });
+      }
+      return accounts;
+    },
+
+    /**
+     * Add or remove credit by hand — a refund, a goodwill credit, a correction.
+     * It goes on the ledger like any other movement, naming who did it and why:
+     * money that appears with no record is indistinguishable from a bug.
+     */
+    async adjustCredit(userId: string, amount: number, reason: string, by: string): Promise<{ wallet: CreditWallet; entry: CreditLedgerEntry }> {
+      if (typeof amount !== 'number' || !Number.isFinite(amount) || amount === 0) throw new BillingError('the amount must be a number other than zero', 400);
+      if (Math.abs(amount) > MAX_ADJUSTMENT) throw new BillingError(`one adjustment may be at most ${MAX_ADJUSTMENT} — make several if that is really meant`, 400);
+      const why = typeof reason === 'string' ? reason.trim().slice(0, 200) : '';
+      if (!why) throw new BillingError('say why — the reason is shown to the customer in their payment history', 400);
+      const rounded = roundCurrency(Math.abs(amount));
+      if (rounded === 0) throw new BillingError('the amount is less than one cent', 400);
+
+      const wallet = await repo.getWallet(userId);
+      const entry = await repo.createLedgerEntry({
+        userId,
+        type: amount > 0 ? 'topup' : 'charge',
+        amount: rounded,
+        currency: wallet.currency,
+        reference: `adjust-${randomUUID()}`,
+        status: 'confirmed',
+        description: `${amount > 0 ? 'Credit added' : 'Credit removed'} by ${by || 'an administrator'}: ${why}`,
+      });
+      const updated = await repo.setBalance(userId, roundCurrency(wallet.balance + (amount > 0 ? rounded : -rounded)));
+      return { wallet: updated, entry };
     },
 
     /** Expose the resource factor for a set of limits (handy for UIs/quotes). */

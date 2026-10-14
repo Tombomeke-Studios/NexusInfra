@@ -29,6 +29,8 @@ model BillingPlan {
   // Null means no ceiling (#297).
   maxRamMb            Int?
   maxBackupsPerServer Int?
+  // A retired plan keeps the accounts it has; nobody new may choose it (#369).
+  active            Boolean  @default(true)
   createdAt         DateTime @default(now())
 }
 

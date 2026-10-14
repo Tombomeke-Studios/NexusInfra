@@ -853,6 +853,27 @@ and **injects the caller's authenticated userId** from the JWT (the client never
 
 Without an authenticated user these routes answer `401`.
 
+**Plans (#369, hosted only)** — about the caller's own account:
+
+- `GET /billing/plans` → `{ currentPlanId, plans }`: the plans on offer, plus the caller's own if it
+  has been retired. Each carries `problem` — why the caller's servers do not fit it, or `null`.
+- `PUT /billing/plan` — body `{ planId }`. `409` with the reason when the account holds more than the
+  plan allows (servers, databases, memory); `404` for an unknown plan.
+
+**The provider's view (#369, hosted only)** — platform administrators; `403` for anyone else:
+
+- `GET /billing/admin/plans` — every plan, retired ones included.
+- `POST /billing/admin/plans` — body `{ name, pricePerHour, freeHoursPerMonth?, maxServers,
+  maxDatabases, maxRamMb?, maxBackupsPerServer? }`. The id is made from the name and never changes;
+  `409` if it is taken.
+- `PUT /billing/admin/plans/:id` — any of the same fields, plus `active`. `active: false` retires a
+  plan: accounts on it stay on it, nobody new may choose it. The default plan cannot be retired (`409`).
+- `GET /billing/admin/accounts` — every account in the panel with its plan, balance, what is left to
+  spend, this cycle's usage, and servers (total and running).
+- `PUT /billing/admin/accounts/:userId/plan` — body `{ planId }`.
+- `POST /billing/admin/accounts/:userId/credit` — body `{ amount, reason }`; a negative amount removes
+  credit. Written to the customer's payment history with the administrator's address and the reason.
+
 Each forwards to the matching Billing Bridge route below for the authenticated user. `502` if the
 Billing Bridge is unreachable. These are inert in the community edition (no Billing Bridge running).
 
@@ -916,6 +937,12 @@ measures usage against it; see [billing.md](billing.md).
 
 Quota check used by the Orchestrator (#148): `{ allowed, limit }` — whether creating one more of
 `resource` stays within the plan given the user already has `current`. `400` on a bad resource/count.
+
+### Plans and accounts (#369)
+
+`GET /plans` · `POST /plans` · `PUT /plans/:id` · `GET /accounts` · `PUT /billing/:userId/plan` ·
+`POST /billing/:userId/adjust` — the bridge's side of the routes above. Who may call them is decided
+by the Orchestrator; the bridge only checks the internal token (#372).
 
 ### `POST /billing/:userId/topup`
 

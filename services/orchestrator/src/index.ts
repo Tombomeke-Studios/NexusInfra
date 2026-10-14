@@ -2,7 +2,7 @@ import { createServer } from 'http';
 import express from 'express';
 import cors from 'cors';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
-import { assertEditionIsRunnable, buildEnvelope, buildInfo, consumeRabbitQueue, getInternalToken, INTERNAL_TOKEN_HEADER, publishRabbitEvent, readPayload, startHeartbeat, type EventEnvelope, MetricsRegistry, registerBuildInfo, httpMetrics, metricsHandler } from 'shared';
+import { assertEditionIsRunnable, buildEnvelope, buildInfo, consumeRabbitQueue, getInternalToken, isHosted, INTERNAL_TOKEN_HEADER, publishRabbitEvent, readPayload, startHeartbeat, type EventEnvelope, MetricsRegistry, registerBuildInfo, httpMetrics, metricsHandler } from 'shared';
 import { PrismaRepository } from './db.js';
 import { agentFetch, createApiRouter, resolveContainerTarget } from './api.js';
 import { catchAsync, errorHandler, installProcessGuards } from './errorBoundary.js';
@@ -11,6 +11,7 @@ import { verifyToken } from './auth.js';
 import { can, resolveRole } from './access.js';
 import { pipeSockets, toWsUrl, type DuplexSocket } from './wsProxy.js';
 import { createBillingProxyRouter } from './billingProxy.js';
+import { createBillingPlansRouter } from './billingPlans.js';
 import { createMonitoringRouter } from './monitoring.js';
 import { createConfigRouter } from './config.js';
 import { createSftpServer, parseSftpPort } from './sftp.js';
@@ -229,6 +230,9 @@ app.use(catchAsync(createTeamRouter({ repo })));
 app.use(catchAsync(createApiRouter({ repo, scheduleActions, publish: countedPublish })));
 // Authenticated billing proxy → Billing Bridge (hosted edition; injects the JWT user id).
 app.use(catchAsync(createBillingProxyRouter({ emailOf: async (userId) => (await repo.getUser(userId))?.email ?? null })));
+// Plans a customer picks from, and the provider's view of accounts (#369). Hosted only:
+// in community there is no bridge to ask, and no reason for the routes to exist.
+if (isHosted()) app.use(catchAsync(createBillingPlansRouter({ repo })));
 // Surfaces the Control Room's live service/node monitoring to the dashboard (#157).
 app.use(catchAsync(createMonitoringRouter()));
 // Last: turns anything the routes threw into a 500 for that caller only (#294).

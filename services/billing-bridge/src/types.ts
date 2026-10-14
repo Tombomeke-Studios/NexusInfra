@@ -98,6 +98,12 @@ export interface CreateCycleInput {
 export interface Repository {
   // Plans
   getUserPlan(userId: string): Promise<BillingPlan>;
+  /** Every plan, retired ones included (#369). */
+  listPlans(): Promise<BillingPlan[]>;
+  getPlan(id: string): Promise<BillingPlan | null>;
+  /** Create the plan, or replace the one with this id. */
+  savePlan(plan: BillingPlan): Promise<BillingPlan>;
+  setUserPlan(userId: string, planId: string): Promise<void>;
 
   // Deployments billing knows about (#364) — durable, so a restart forgets nothing.
   saveDeployment(deployment: BilledDeployment): Promise<void>;

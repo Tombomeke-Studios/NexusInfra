@@ -144,6 +144,81 @@ describe('billing service', () => {
     });
   });
 
+  describe('plans (#369)', () => {
+    const PRO = { name: 'Pro', pricePerHour: 3, freeHoursPerMonth: 0, maxServers: 10, maxDatabases: 10, maxRamMb: null, maxBackupsPerServer: null };
+
+    it('adds a plan to the catalogue under an id made from its name', async () => {
+      const plan = await svc.createPlan({ ...PRO, name: 'Pro Plus' });
+      expect(plan).toMatchObject({ id: 'pro-plus', name: 'Pro Plus', active: true, currency: DEFAULT_PLAN.currency });
+      await expect(svc.createPlan({ ...PRO, name: 'pro plus' })).rejects.toMatchObject({ status: 409 });
+      await expect(svc.createPlan({ ...PRO, pricePerHour: -1 })).rejects.toMatchObject({ status: 400 });
+    });
+
+    it('edits a plan, and refuses to retire the one new accounts start on', async () => {
+      await svc.createPlan(PRO);
+      expect(await svc.updatePlan('pro', { pricePerHour: 4 })).toMatchObject({ name: 'Pro', pricePerHour: 4, maxServers: 10 });
+      expect(await svc.updatePlan('pro', { active: false })).toMatchObject({ active: false });
+      await expect(svc.updatePlan(DEFAULT_PLAN.id, { active: false })).rejects.toMatchObject({ status: 409 });
+      await expect(svc.updatePlan('nope', { pricePerHour: 1 })).rejects.toMatchObject({ status: 404 });
+    });
+
+    it('moves an account to a plan on offer, and to no other', async () => {
+      await svc.createPlan(PRO);
+      expect((await svc.changePlan('u1', 'pro')).id).toBe('pro');
+      expect((await repo.getUserPlan('u1')).id).toBe('pro');
+      await expect(svc.changePlan('u1', 'nope')).rejects.toMatchObject({ status: 404 });
+
+      await svc.updatePlan('pro', { active: false });
+      await expect(svc.changePlan('u2', 'pro')).rejects.toMatchObject({ status: 409 });
+      // An account already on a retired plan stays on it.
+      expect((await repo.getUserPlan('u1')).id).toBe('pro');
+    });
+
+    // Otherwise: run on the expensive plan all month, switch to the cheap one on the 30th.
+    it('charges what ran before a switch at the old rate and what runs after at the new one', async () => {
+      await svc.createPlan(PRO); // €3/h; the default here is €1/h
+      await svc.handleDeploymentCreated({ deploymentId: 'd1', userId: 'u1', resourceLimits: { cpuPercent: 50, ramPercent: 50 } });
+      await svc.handleServerStarted({ deploymentId: 'd1' });
+      clock = '2026-07-01T02:00:00.000Z';
+      await svc.changePlan('u1', 'pro');
+      clock = '2026-07-01T03:00:00.000Z';
+      // 2h × €1 + 1h × €3
+      expect(await svc.getUsage('u1')).toMatchObject({ hours: 3, cost: 5 });
+      expect((await repo.listIntervals('u1')).filter((i) => i.stoppedAt === null)).toHaveLength(1);
+    });
+  });
+
+  describe('the provider’s view (#369)', () => {
+    it('lists every account with its plan, balance, usage and what is running', async () => {
+      await repo.setBalance('u1', 10);
+      await svc.handleDeploymentCreated({ deploymentId: 'd1', userId: 'u1', resourceLimits: { cpuPercent: 50, ramPercent: 50 } });
+      await svc.handleServerStarted({ deploymentId: 'd1' });
+      await svc.handleDeploymentCreated({ deploymentId: 'd2', userId: 'u2' }); // never started, never paid
+      clock = '2026-07-01T04:00:00.000Z';
+
+      const accounts = await svc.listAccounts();
+      expect(accounts.find((a) => a.userId === 'u1')).toMatchObject({ planId: DEFAULT_PLAN.id, balance: 10, available: 6, canRun: true, hours: 4, cost: 4, runningServers: 1 });
+      expect(accounts.find((a) => a.userId === 'u2')).toMatchObject({ balance: 0, runningServers: 0, canRun: false });
+    });
+
+    it('adds and removes credit by hand, on the ledger, saying who and why', async () => {
+      const added = await svc.adjustCredit('u1', 25, 'goodwill after the outage', 'owner@host.example');
+      expect(added.wallet.balance).toBe(25);
+      expect(added.entry).toMatchObject({ type: 'topup', amount: 25, status: 'confirmed', description: 'Credit added by owner@host.example: goodwill after the outage' });
+
+      const removed = await svc.adjustCredit('u1', -5.5, 'charged back', 'owner@host.example');
+      expect(removed.wallet.balance).toBe(19.5);
+      expect(removed.entry).toMatchObject({ type: 'charge', amount: 5.5, description: expect.stringContaining('Credit removed') });
+    });
+
+    it('refuses an adjustment with no amount, no reason, or one that looks like a typo', async () => {
+      await expect(svc.adjustCredit('u1', 0, 'x', 'a')).rejects.toMatchObject({ status: 400 });
+      await expect(svc.adjustCredit('u1', 5, '  ', 'a')).rejects.toMatchObject({ status: 400 });
+      await expect(svc.adjustCredit('u1', 1_000_000, 'oops', 'a')).rejects.toMatchObject({ status: 400 });
+      expect((await repo.getWallet('u1')).balance).toBe(0);
+    });
+  });
+
   describe('top-up flow', () => {
     it('emits payment.request and holds a pending ledger entry', async () => {
       const { reference, entry } = await svc.requestTopUp('u1', 20);

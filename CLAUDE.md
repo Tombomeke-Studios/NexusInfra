@@ -310,6 +310,7 @@ is the migrations directory.
 | `src/credit.ts` | Prepaid, enforced where servers start (#365): pure `creditProblem` + `fetchStanding` (fail-open, logged). Create and start answer `402` when the **owner** has nothing left; stopping is never blocked |
 | `src/suspend.ts` | `createSuspendHandler` — consumes `billing.server.suspend` (hosted), stops each named running deployment + audits it |
 | `src/bridge.ts` | `bridgeFetch` — the one way to call the Billing Bridge: base URL + the internal token (#372) |
+| `src/billingPlans.ts` | Plans and the provider's view (#369, hosted only): `/billing/plans` + `PUT /billing/plan` for an account about itself, `/billing/admin/…` for platform administrators (catalogue, every account, manual credit). Pure `planFitProblem` — a switch is refused when the account holds more than the plan allows. Who adjusted credit comes from the session, never the body |
 | `src/billingProxy.ts` | `createBillingProxyRouter` — authenticated `/billing/*` proxy → Billing Bridge, injecting the JWT user id (dashboard never sends a user id) and, on a top-up, the account's own email as the payer (#351). No user, no answer: 401 |
 | `src/monitoring.ts` | `createMonitoringRouter` — `GET /monitoring` proxies the Control Room's `/status` to the dashboard (`reachable:false` if it's down) |
 | `src/wsProxy.ts` | Pure `pipeSockets` + `toWsUrl` — the terminal WS proxy plumbing; `index.ts` authenticates the JWT, resolves the container, and pipes the client WS ↔ the Node Agent's `/terminal` WS (#71) |
@@ -321,6 +322,7 @@ is the migrations directory.
 | Path | Contents |
 |---|---|
 | `src/pricing.ts` | Pure pricing: `BillingPlan` (incl. the #297 entitlements `maxRamMb`/`maxBackupsPerServer`, null = no ceiling) + `resourceFactor` (CPU/RAM → multiplier) + `billableHours`/`computeCharge` + `roundCurrency` + `chargingModel` (the model as data, so the panel states what the charge does) |
+| `src/plans.ts` | The plan catalogue, pure (#369): `parsePlanInput` (an edit may send only what changed), `planIdFrom`, `retireProblem` (never the default plan), `switchProblem` (a retired plan keeps its accounts, takes no new ones) |
 | `src/quotas.ts` | Pure plan quota checks (`quotaLimit`, `withinQuota`) for servers/databases |
 | `src/tracking.ts` | Pure runtime math: `hoursBetween` + `accruedHours` (open interval counts up to now) |
 | `src/wallet.ts` | Pure credit-wallet math: `applyTopUp`/`applyCharge`/`canCover` |
@@ -435,6 +437,9 @@ is the migrations directory.
 - **Starting a server costs money in hosted, so every path that starts one asks `getStanding` first (#365).**
   The start control and the create route do; a new feature that brings a stopped server up must too, or
   it is a way to run without credit. Recreating one that is already running (restart, image update) does not.
+- **Runtime is charged at the rate of the plan it ran under (#369).** `computeCycleCost` takes a `rateOf`
+  lookup; pass it (`ratesOf(await repo.listPlans())`) wherever a cost is computed, or an account that
+  changed plans is repriced for the whole month at the plan it ended on.
 - **A ledger status changes through `transitionLedgerStatus`, never read-then-write.** The broker delivers
   at least once; two deliveries of one confirmation used to both see "pending" and both credit (#298).
 - Consumers `nack` without requeue on error → message dead-letters to `finvault.events.dlq` (3-retry

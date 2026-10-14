@@ -32,6 +32,24 @@ the panel is **not** the owner of the hardware (a hosting-provider scenario). So
 - **Usage-based, resource-scaled pricing.** Cost per server = runtime hours × a base hourly rate ×
   a resource factor derived from the server's chosen CPU/RAM limits. Rates live in `billing_plans` so
   they're tunable without a code change.
+- **A catalogue of plans (#369).** The provider defines plans in the panel — price per hour, free hours,
+  ceilings — and a customer picks one on the Billing page. There used to be a single plan, seeded at
+  first start, that every account got and nobody could change.
+  - **Switching is refused when the account does not fit** the new plan (more servers, databases or
+    memory than it allows), with what has to go first. The page shows that beside each plan rather than
+    offering a button that fails.
+  - **What ran before a switch is charged at the old rate.** Running servers are re-opened under the new
+    plan at the moment of the switch, and each stretch of runtime is charged at the rate of the plan it
+    ran under. Otherwise the cheapest strategy would be the big plan all month and the small one on
+    the 30th.
+  - **Editing a plan's price reprices the month in progress** for everyone on it: the charge is computed
+    when the month closes. Change prices at a month boundary, or add a new plan and retire the old one.
+  - **Retiring** a plan keeps the accounts it has and stops anyone new choosing it. The default plan
+    cannot be retired — every new account starts on it.
+- **The provider's view (#369).** Platform administrators get a page listing every account with its
+  plan, balance, what is left to spend, this cycle's usage and running servers, and can move an account
+  to another plan or add and remove credit by hand. A manual adjustment goes on the ledger like any
+  other movement, with who did it and why — the customer sees it in their payment history.
 - **Quotas per plan.** A plan also caps **how many servers and databases** a user may have. Enforced at
   create-time in the Orchestrator (409 when over quota) — only in hosted edition.
 - **Entitlements (#297).** Beyond the counts, a plan sets:

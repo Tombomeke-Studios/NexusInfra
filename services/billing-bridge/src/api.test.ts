@@ -64,6 +64,29 @@ describe('billing API', () => {
     expect(res.body).toMatchObject({ balance: 0, accrued: 0, available: 0, canRun: expect.any(Boolean), currency: DEFAULT_PLAN.currency });
   });
 
+  it('serves the plan catalogue and lets a plan be added and edited (#369)', async () => {
+    const created = await request(app).post('/plans').send({ name: 'Pro', pricePerHour: 0.05, maxServers: 10, maxDatabases: 10 });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ id: 'pro', active: true });
+    expect((await request(app).post('/plans').send({ name: 'Pro', pricePerHour: 0.05, maxServers: 10, maxDatabases: 10 })).status).toBe(409);
+    expect((await request(app).put('/plans/pro').send({ pricePerHour: 0.08 })).body.pricePerHour).toBe(0.08);
+    expect((await request(app).put('/plans/nope').send({})).status).toBe(404);
+    expect((await request(app).get('/plans')).body.map((p: { id: string }) => p.id).sort()).toEqual(['pro', DEFAULT_PLAN.id].sort());
+  });
+
+  it('moves an account to another plan, and adjusts its credit (#369)', async () => {
+    await request(app).post('/plans').send({ name: 'Pro', pricePerHour: 0.05, maxServers: 10, maxDatabases: 10 });
+    expect((await request(app).put('/billing/u1/plan').send({ planId: 'pro' })).status).toBe(200);
+    expect((await request(app).get('/billing/u1/plan')).body.id).toBe('pro');
+    expect((await request(app).put('/billing/u1/plan').send({})).status).toBe(400);
+
+    const adjusted = await request(app).post('/billing/u1/adjust').send({ amount: 12, reason: 'refund', by: 'admin@host.example' });
+    expect(adjusted.status).toBe(200);
+    expect(adjusted.body.wallet.balance).toBe(12);
+    expect((await request(app).post('/billing/u1/adjust').send({ amount: 12 })).status).toBe(400);
+    expect((await request(app).get('/accounts')).body).toEqual([expect.objectContaining({ userId: 'u1', planId: 'pro', balance: 12 })]);
+  });
+
   it('answers a server quota check', async () => {
     const ok = await request(app).get('/billing/u1/quota?resource=servers&current=2');
     expect(ok.body).toEqual({ allowed: true, limit: 3 });
