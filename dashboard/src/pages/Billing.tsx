@@ -58,6 +58,26 @@ export function leftToSpendNote(standing: CreditStanding): string {
   return parts.join(' · ');
 }
 
+/** "about 21 hours", "about 3 days" — mirrors `runwayText` in the orchestrator's credit.ts (#379). */
+function runwayText(hours: number): string {
+  if (hours < 1) return 'less than an hour';
+  if (hours < 48) {
+    const h = Math.round(hours);
+    return `about ${h} hour${h === 1 ? '' : 's'}`;
+  }
+  return `about ${Math.round(hours / 24)} days`;
+}
+
+/**
+ * What "left to spend" means in time (#379), or null when the bridge does not
+ * say. Nothing running means nothing is being spent — not that it lasts forever.
+ */
+export function runwayNote(standing: CreditStanding): string | null {
+  if (standing.hoursLeft === undefined) return null;
+  if (standing.hoursLeft === null) return 'No server is running, so nothing is being spent';
+  return `Lasts ${runwayText(standing.hoursLeft)} at the current rate`;
+}
+
 /** A reason from another system, shown as a sentence. */
 export function sentence(reason: string): string {
   const text = reason.trim();
@@ -253,6 +273,9 @@ export function Billing() {
               {money(standing.available, standing.currency)}
             </div>
             <div className="subtle" style={{ fontSize: '.82rem' }}>{leftToSpendNote(standing)}</div>
+            {runwayNote(standing) && (
+              <div style={{ fontSize: '.82rem', marginTop: 4, fontWeight: standing.runsLow ? 600 : 400 }}>{runwayNote(standing)}</div>
+            )}
           </div>
         )}
 
@@ -274,6 +297,14 @@ export function Billing() {
           )}
         </div>
       </div>
+
+      {/* #379: said before it happens, not only once the servers have stopped. */}
+      {standing?.canRun && standing.runsLow && typeof standing.hoursLeft === 'number' && (
+        <p role="status" className="alert alert--warning" style={{ marginTop: 0, marginBottom: 22 }}>
+          Your credit runs out in {runwayText(standing.hoursLeft)} at the rate your servers are using it. Top up below, or your running servers will be stopped
+          when it does.
+        </p>
+      )}
 
       {standing && !standing.canRun && (
         <p role="alert" className="alert alert--error" style={{ marginTop: 0, marginBottom: 22 }}>

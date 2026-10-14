@@ -33,6 +33,8 @@ const BILLING_MARKERS = [
   '/billing/admin/',
   'per server-hour',
   'Credit held',
+  // How long the credit lasts, on the Billing page (#379).
+  'at the rate your servers are using it',
 ];
 
 /** Present in every build, so a bundle with none of these was not read properly. */

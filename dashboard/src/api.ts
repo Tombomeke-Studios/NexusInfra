@@ -614,6 +614,10 @@ export interface CreditStanding {
   freeHoursLeft: number;
   canRun: boolean;
   currency: string;
+  /** Hours what is left lasts at the running servers' rate (#379); null when nothing is running. Absent from an older bridge. */
+  hoursLeft?: number | null;
+  /** Whether that is under the installation's warning threshold. */
+  runsLow?: boolean;
 }
 
 export function getStanding(): Promise<CreditStanding> {
@@ -1267,11 +1271,13 @@ export function setServerTeam(deploymentId: string, teamId: string | null): Prom
 }
 
 // ── Notifications (#236) ──────────────────────────────────────────────────────
-export type NotificationEventName = 'server.crashed' | 'server.suspended' | 'node.offline' | 'node.recovered';
+export type NotificationEventName = 'server.crashed' | 'server.suspended' | 'credit.low' | 'node.offline' | 'node.recovered';
 
 export const NOTIFICATION_EVENT_LABELS: Record<NotificationEventName, string> = {
   'server.crashed': 'A server crashes',
   'server.suspended': 'A server is suspended for billing',
+  // Offered by the server in the hosted edition only (#379).
+  'credit.low': 'Your credit is about to run out',
   'node.offline': 'A node goes offline',
   'node.recovered': 'A node comes back',
 };
