@@ -42,6 +42,7 @@ export function createBillingProxyRouter(deps: BillingProxyDeps = {}): Router {
 
   router.get('/billing/wallet', (req, res) => forward(req, res, '/wallet'));
   router.get('/billing/usage', (req, res) => forward(req, res, '/usage'));
+  router.get('/billing/standing', (req, res) => forward(req, res, '/standing'));
   router.get('/billing/ledger', (req, res) => forward(req, res, '/ledger'));
   router.get('/billing/plan', (req, res) => forward(req, res, '/plan'));
   router.post('/billing/topup', async (req, res) => {

@@ -46,6 +46,8 @@ export type NexusInfraEvent =
   | { type: 'server.image-updated'; payload: { deploymentId: string; image: string; digest: string | null; recreated: boolean } }
   | { type: 'server.update-failed'; payload: { deploymentId: string; image: string; reason: string } }
   | { type: 'deployment.created'; payload: { deploymentId: string; userId: string; resourceLimits?: ResourceLimits } }
+  // A server's size changed (#364) — billing charges by size, so it has to hear.
+  | { type: 'deployment.updated'; payload: { deploymentId: string; userId: string; resourceLimits?: ResourceLimits } }
   | { type: 'deployment.failed'; payload: { deploymentId: string; reason: string } }
   // ── Billing bridge → FinVault (payload shapes match FinVault's events.ts) ──
   // `customerEmail` names who should pay in a way FinVault can resolve (#351): a

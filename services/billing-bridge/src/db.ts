@@ -4,6 +4,7 @@ import { createRequire } from 'module';
 import { isPostgresUrl } from 'shared';
 import { DEFAULT_PLAN, type BillingPlan } from './pricing.js';
 import type {
+  BilledDeployment,
   BillingCycleRecord,
   CreateCycleInput,
   CreateLedgerInput,
@@ -125,6 +126,30 @@ export class PrismaRepository implements Repository {
     const planId = assignment?.planId ?? DEFAULT_PLAN.id;
     const plan = await this.client.billingPlan.findUnique({ where: { id: planId } });
     return plan ? toPlan(plan) : DEFAULT_PLAN;
+  }
+
+  async saveDeployment(deployment: BilledDeployment): Promise<void> {
+    const data = { userId: deployment.userId, limits: JSON.stringify(deployment.limits ?? {}) };
+    await this.client.billingDeployment.upsert({
+      where: { deploymentId: deployment.deploymentId },
+      create: { deploymentId: deployment.deploymentId, ...data },
+      update: data,
+    });
+  }
+
+  async getDeployment(deploymentId: string): Promise<BilledDeployment | null> {
+    const row = await this.client.billingDeployment.findUnique({ where: { deploymentId } });
+    return row ? { deploymentId: row.deploymentId, userId: row.userId, limits: JSON.parse(row.limits || '{}') } : null;
+  }
+
+  async getOpenInterval(deploymentId: string): Promise<ServerBillingRecord | null> {
+    const row = await this.client.serverBilling.findFirst({ where: { deploymentId, stoppedAt: null }, orderBy: { startedAt: 'desc' } });
+    return row ? toInterval(row) : null;
+  }
+
+  async getLastInterval(deploymentId: string): Promise<ServerBillingRecord | null> {
+    const row = await this.client.serverBilling.findFirst({ where: { deploymentId }, orderBy: { startedAt: 'desc' } });
+    return row ? toInterval(row) : null;
   }
 
   async openInterval(input: OpenIntervalInput): Promise<ServerBillingRecord> {

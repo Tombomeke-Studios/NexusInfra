@@ -512,6 +512,21 @@ export function getUsage(): Promise<BillingUsage> {
   return request('/billing/usage');
 }
 
+/** What an account has left to spend, and whether it may run servers (#365). */
+export interface CreditStanding {
+  balance: number;
+  /** Used this cycle and not yet charged to the balance. */
+  accrued: number;
+  available: number;
+  freeHoursLeft: number;
+  canRun: boolean;
+  currency: string;
+}
+
+export function getStanding(): Promise<CreditStanding> {
+  return request('/billing/standing');
+}
+
 export function getLedger(): Promise<LedgerEntry[]> {
   return request('/billing/ledger');
 }

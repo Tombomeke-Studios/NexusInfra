@@ -24,6 +24,7 @@ import { planTransfer } from './transfer.js';
 import { pageOf, parseFilter, parsePage } from './deploymentQuery.js';
 import { getMinecraftVersions } from './minecraftVersions.js';
 import { fetchEntitlements, ramChangeProblem, ramProblem, usageFor, type Entitlements } from './entitlements.js';
+import { creditProblem, fetchStanding, type Standing } from './credit.js';
 import { committedRamMb } from './capacity.js';
 import type { DeploymentDetail, NodeRecord, Repository, ServerConfigRecord, UpdateServerConfigInput } from './types.js';
 import type { ResourceLimits } from 'shared';
@@ -190,6 +191,8 @@ export interface ApiDeps {
   checkQuota?: CheckQuotaFn;
   /** The owner's plan entitlements (#297); null where none apply (community, or the bridge is down). */
   getEntitlements?: (userId: string) => Promise<Entitlements | null>;
+  /** The owner's credit standing (#365); null where none applies (community, or the bridge is down). */
+  getStanding?: (userId: string) => Promise<Standing | null>;
   purgeDeploymentData?: PurgeDeploymentDataFn;
   imageStatus?: ImageStatusFn;
   diskUsage?: DiskUsageFn;
@@ -354,6 +357,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   const scheduleActions = deps.scheduleActions ?? noopScheduleActions;
   const checkQuota = deps.checkQuota ?? defaultCheckQuota;
   const getEntitlements = deps.getEntitlements ?? ((userId: string) => fetchEntitlements(BILLING_BRIDGE_URL, userId));
+  const getStanding = deps.getStanding ?? ((userId: string) => fetchStanding(BILLING_BRIDGE_URL, userId));
   const purgeDeploymentData = deps.purgeDeploymentData ?? defaultPurgeDeploymentData;
   const imageStatus = deps.imageStatus ?? defaultImageStatus;
   const diskUsage = deps.diskUsage ?? defaultDiskUsage;
@@ -435,6 +439,10 @@ export function createApiRouter(deps: ApiDeps): Router {
     if (!serverQuota.allowed) {
       return res.status(409).json({ error: `server quota reached for your plan (max ${serverQuota.limit})` });
     }
+
+    // Creating a server starts it, and starting needs credit (#365).
+    const noCredit = creditProblem(await getStanding(userId));
+    if (noCredit) return res.status(402).json({ error: noCredit });
 
     // Placement: a pinned node is honoured, anything else is least-loaded (#254).
     // Pinning is a deliberate choice — an unknown or unhealthy target is refused
@@ -731,6 +739,14 @@ export function createApiRouter(deps: ApiDeps): Router {
     const updated = await repo.updateDeploymentConfig(req.params.id, patch);
     if (!updated) return res.status(404).json({ error: 'deployment not found' });
 
+    // Billing charges by size (#364); a resize it never hears about is charged at the old one.
+    if (patch.resourceLimits) {
+      await emit('infra.deployment.updated', {
+        type: 'deployment.updated',
+        payload: { deploymentId: req.params.id, userId: existing.userId, resourceLimits: patch.resourceLimits },
+      });
+    }
+
     await repo.appendDeploymentEvent(
       req.params.id,
       'config-updated',
@@ -797,6 +813,11 @@ export function createApiRouter(deps: ApiDeps): Router {
       }
       const config = await repo.getDeploymentConfig(detail.id);
       if (!config) return { status: 404, body: { error: 'server config not found' } };
+
+      // Prepaid means paid before (#365): a server the billing cycle stopped could
+      // simply be started again. The owner's credit, whoever is asking.
+      const noCredit = creditProblem(await getStanding(config.userId));
+      if (noCredit) return { status: 402, body: { error: noCredit } };
 
       // A server that has run before starts where its data is (#329): its volumes
       // (#324) — or its imported directory (#268) — exist on that node and no

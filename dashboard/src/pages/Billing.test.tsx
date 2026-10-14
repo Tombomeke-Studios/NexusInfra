@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { act } from '@testing-library/react';
-import { Billing, approvalHint, newlyConfirmed, refreshInterval, sentence, statusLabel, POLL_MS, PENDING_POLL_MS } from './Billing';
+import { Billing, approvalHint, leftToSpendNote, newlyConfirmed, refreshInterval, sentence, statusLabel, POLL_MS, PENDING_POLL_MS } from './Billing';
 import type { LedgerEntry } from '../api';
 import { ToastProvider } from '../components/Toast';
 
@@ -52,6 +52,20 @@ describe('Billing page', () => {
     expect(screen.getByText(/first 100 hours each month are free, shared across all your servers/)).toBeInTheDocument();
   });
 
+  it('tells an account that has run out that its servers will not run (#365)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        String(url).endsWith('/billing/standing')
+          ? Promise.resolve(jsonResponse({ balance: 1, accrued: 3, available: -2, freeHoursLeft: 0, canRun: false, currency: 'EUR' }))
+          : routeFetch(String(url))
+      )
+    );
+    renderBilling();
+    expect(await screen.findByText(/You owe .*2[.,]00/)).toBeInTheDocument();
+    expect(screen.getByText(/Servers cannot be started/)).toBeInTheDocument();
+  });
+
   it('shows the credit balance and plan', async () => {
     renderBilling();
     // Currency formatting is locale-dependent (e.g. "€12.50" or "€ 12,50"); match the digits.
@@ -95,6 +109,13 @@ describe('Billing page', () => {
     it('says where a requested top-up has to be approved', () => {
       expect(approvalHint('€20.00', 'me@example.com')).toContain('the FinVault account of me@example.com');
       expect(approvalHint('€20.00')).toContain('your FinVault account');
+    });
+
+    // #365: the balance overstates what is left — usage is charged to it later.
+    it('says where "left to spend" comes from', () => {
+      const standing = { balance: 10, accrued: 4, available: 6, freeHoursLeft: 0, canRun: true, currency: 'EUR' };
+      expect(leftToSpendNote(standing)).toMatch(/balance less .*4[.,]00 used this cycle/);
+      expect(leftToSpendNote({ ...standing, freeHoursLeft: 12.5 })).toContain('12.5 free hours left');
     });
 
     it('shows a reason from FinVault as a sentence', () => {

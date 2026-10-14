@@ -307,6 +307,7 @@ is the migrations directory.
 | `src/api.ts` | Express deployment API: create/list/get deployments, stop/start/restart/**delete**, node health; enforces plan quotas via the Billing Bridge (hosted). Control actions live in one `controls` table shared by the single routes and `POST /deployments/bulk` (#238), which is mounted **before** the per-server guard — anything under `/deployments/<word>` that is not an id must be, or the guard claims it as a server id and answers 404 |
 | `src/reconcile.ts` | Pure `reconcileNode` (records vs what a node actually runs) + the `infra.node.inventory` handler (#244). The outbox (#167) protects reports from a *broker* outage; nothing protected them from the agent process dying, after which a stopped server kept showing green — and nobody investigates a green light |
 | `src/lifecycle.ts` | Consumes `infra.server.started/stopped/crashed`, updates deployment status + audit |
+| `src/credit.ts` | Prepaid, enforced where servers start (#365): pure `creditProblem` + `fetchStanding` (fail-open, logged). Create and start answer `402` when the **owner** has nothing left; stopping is never blocked |
 | `src/suspend.ts` | `createSuspendHandler` — consumes `billing.server.suspend` (hosted), stops each named running deployment + audits it |
 | `src/billingProxy.ts` | `createBillingProxyRouter` — authenticated `/billing/*` proxy → Billing Bridge, injecting the JWT user id (dashboard never sends a user id) and, on a top-up, the account's own email as the payer (#351). No user, no answer: 401 |
 | `src/monitoring.ts` | `createMonitoringRouter` — `GET /monitoring` proxies the Control Room's `/status` to the dashboard (`reachable:false` if it's down) |
@@ -322,6 +323,7 @@ is the migrations directory.
 | `src/quotas.ts` | Pure plan quota checks (`quotaLimit`, `withinQuota`) for servers/databases |
 | `src/tracking.ts` | Pure runtime math: `hoursBetween` + `accruedHours` (open interval counts up to now) |
 | `src/wallet.ts` | Pure credit-wallet math: `applyTopUp`/`applyCharge`/`canCover` |
+| `src/standing.ts` | Pure standing (#365): `computeStanding` (balance less usage not yet charged → `available`, `canRun`), `usageIn`, `currentPeriod`. Credit used to be looked at once a month, so "prepaid" meant a month of servers for nothing. Uses the cycle runner's own cost function, so what the page shows, what gates a start and what is charged cannot disagree (#366) |
 | `src/types.ts` | Domain records + the `Repository` interface (plans, intervals, wallet, ledger, cycles) |
 | `src/repository.ts` | `InMemoryRepository` — backs unit tests and a DB-less mode |
 | `src/db.ts` | `getPrisma()` + `PrismaRepository` (SQLite) + `ensureDefaultPlan` seed |
@@ -330,7 +332,7 @@ is the migrations directory.
 | `src/cycle.ts` | Monthly cycle runner: pure `computeCycleCost`/period helpers + `runBillingCycle` (charge credit → `billing.server.suspend` on short balance → `invoice.generate`) + `startCycleRunner` (hourly poll, idempotent) |
 | `src/api.ts` | `createBillingRouter` — HTTP: wallet/usage/ledger/plan/quota + `POST /topup` |
 | `src/index.ts` | Entry: PrismaRepository + service; consumes deployment/runtime + `bank.payment.*`; HTTP `/health` (+ billing routes when hosted) on `:9300`; inert in community |
-| `prisma/schema.prisma` | Prisma + SQLite: `BillingPlan`, `UserPlan`, `ServerBilling`, `CreditWallet`, `CreditLedger`, `BillingCycle`. `prisma/migrations` is the source of truth |
+| `prisma/schema.prisma` | Prisma + SQLite: `BillingPlan`, `UserPlan`, `BillingDeployment` (owner + size, #364), `ServerBilling`, `CreditWallet`, `CreditLedger`, `BillingCycle`. `prisma/migrations` is the source of truth |
 | `Dockerfile` | Multi-stage build; runtime applies `prisma migrate deploy` then starts |
 
 ### services/gateway (API gateway — single entry point, #20)
@@ -426,6 +428,12 @@ is the migrations directory.
   a NexusInfra user id, so `payment.request` carries `customerEmail` — taken from the signed-in account
   in `billingProxy.ts`, never from the request body: the address decides whose FinVault inbox gets a
   payment request. FinVault's half is `services/invoice-service/src/external-requests.ts` in that repo.
+- **Anything billing needs after a restart is stored, not remembered (#364).** The bridge kept each
+  server's owner and size in a map; a restart emptied it and every server started afterwards ran
+  unbilled, silently. A start may also be reported twice — `handleServerStarted` keeps the open interval.
+- **Starting a server costs money in hosted, so every path that starts one asks `getStanding` first (#365).**
+  The start control and the create route do; a new feature that brings a stopped server up must too, or
+  it is a way to run without credit. Recreating one that is already running (restart, image update) does not.
 - **A ledger status changes through `transitionLedgerStatus`, never read-then-write.** The broker delivers
   at least once; two deliveries of one confirmation used to both see "pending" and both credit (#298).
 - Consumers `nack` without requeue on error → message dead-letters to `finvault.events.dlq` (3-retry

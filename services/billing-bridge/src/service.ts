@@ -1,9 +1,9 @@
 import { randomUUID } from 'crypto';
 import { buildEnvelope, publishRabbitEvent, type EventEnvelope, type NexusInfraEvent, type ResourceLimits } from 'shared';
-import { resourceFactor, roundCurrency, type BillingPlan } from './pricing.js';
-import { accruedHours } from './tracking.js';
+import { resourceFactor, type BillingPlan } from './pricing.js';
+import { computeStanding, currentPeriod, usageIn, type Standing } from './standing.js';
 import { applyTopUp } from './wallet.js';
-import type { CreditLedgerEntry, CreditWallet, Repository, ServerBillingRecord } from './types.js';
+import type { BilledDeployment, CreditLedgerEntry, CreditWallet, Repository, ServerBillingRecord } from './types.js';
 
 // The Billing Bridge service (hosted edition). Turns bus events into runtime
 // intervals and credit movements, and drives the top-up flow to FinVault. All
@@ -16,13 +16,10 @@ export type PublishFn = (routingKey: string, envelope: EventEnvelope) => Promise
 // `bank.payment.#` namespace (see docs/architecture.md); the event `type` stays
 // `payment.request` for wire-compatibility.
 export const KEY_PAYMENT_REQUEST = 'bank.payment.request';
+const KEY_SUSPEND = 'billing.server.suspend';
 
-/** What we remember about a deployment so an interval can be opened for it later. */
-interface DeploymentMeta {
-  userId: string;
-  planId: string;
-  limits: ResourceLimits;
-}
+/** How often running accounts are checked against their balance (#365). */
+export const DEFAULT_SETTLE_INTERVAL_MS = 5 * 60 * 1000;
 
 export interface BillingServiceDeps {
   repo: Repository;
@@ -72,39 +69,45 @@ export function createBillingService(deps: BillingServiceDeps) {
   const billingWalletId = deps.billingWalletId ?? process.env.BILLING_WALLET_ID ?? 'nexusinfra';
   const log = deps.log ?? ((m: string) => console.warn(`[BillingBridge] ${m}`));
 
-  // deploymentId → owner/plan/limits, learned from deployment.created. Falls back
-  // to the latest stored interval if we missed the creation (e.g. after restart).
-  const meta = new Map<string, DeploymentMeta>();
-
   const emit = (routingKey: string, event: NexusInfraEvent) => publish(routingKey, buildEnvelope('billing-bridge', event));
 
-  async function resolveMeta(deploymentId: string, userId?: string): Promise<DeploymentMeta | null> {
-    const cached = meta.get(deploymentId);
-    if (cached) return cached;
-    if (userId) {
-      const intervals = await repo.listIntervals(userId);
-      const last = intervals.filter((i) => i.deploymentId === deploymentId).at(-1);
-      if (last) {
-        const m: DeploymentMeta = { userId: last.userId, planId: last.planId, limits: last.limits };
-        meta.set(deploymentId, m);
-        return m;
-      }
-    }
-    return null;
+  /**
+   * Who owns a deployment and how big it is. Stored, not remembered: this used
+   * to be a map in memory, so after any restart every server started later ran
+   * unbilled (#364). A server from before that is recognised by its last interval.
+   */
+  async function deploymentFor(deploymentId: string): Promise<BilledDeployment | null> {
+    const known = await repo.getDeployment(deploymentId);
+    if (known) return known;
+    const last = await repo.getLastInterval(deploymentId);
+    if (!last) return null;
+    const recovered: BilledDeployment = { deploymentId, userId: last.userId, limits: last.limits };
+    await repo.saveDeployment(recovered);
+    return recovered;
   }
 
   return {
-    /** Learn a deployment's owner + resource limits so future starts can be billed. */
+    /** Record a deployment's owner + resource limits so its runtime can be billed. Also handles a resize. */
     async handleDeploymentCreated(payload: { deploymentId: string; userId: string; resourceLimits?: ResourceLimits }): Promise<void> {
-      const plan = await repo.getUserPlan(payload.userId);
-      meta.set(payload.deploymentId, { userId: payload.userId, planId: plan.id, limits: payload.resourceLimits ?? {} });
+      await repo.saveDeployment({ deploymentId: payload.deploymentId, userId: payload.userId, limits: payload.resourceLimits ?? {} });
     },
 
-    /** Open a runtime interval for a server that just started. */
+    /**
+     * Open a runtime interval for a server that just started. A server that
+     * already has one running keeps it: a start reported twice (the broker
+     * delivers at least once, and an agent re-reports after its own restart) used
+     * to open a second interval that nothing would ever close.
+     */
     async handleServerStarted(payload: { deploymentId: string }): Promise<ServerBillingRecord | null> {
-      const m = await resolveMeta(payload.deploymentId);
-      if (!m) return null; // unknown deployment (never saw deployment.created) — skip
-      return repo.openInterval({ userId: m.userId, deploymentId: payload.deploymentId, planId: m.planId, limits: m.limits, startedAt: now() });
+      const deployment = await deploymentFor(payload.deploymentId);
+      if (!deployment) {
+        log(`server ${payload.deploymentId} started but billing has never heard of it; it is not being charged`);
+        return null;
+      }
+      const running = await repo.getOpenInterval(payload.deploymentId);
+      if (running) return running;
+      const plan = await repo.getUserPlan(deployment.userId);
+      return repo.openInterval({ userId: deployment.userId, deploymentId: payload.deploymentId, planId: plan.id, limits: deployment.limits, startedAt: now() });
     },
 
     /** Close the open interval for a server that stopped or crashed. */
@@ -214,26 +217,40 @@ export function createBillingService(deps: BillingServiceDeps) {
     },
 
     /**
-     * Current usage summary for a user: accrued hours and projected cost. The
-     * plan's monthly free-hour grant is a single pool spent across intervals
-     * (cheapest-correct: consumed in interval order); each interval's billable
-     * hours are then charged at its own resource factor.
+     * This cycle's usage so far: hours run and what they will cost. Computed with
+     * the function the cycle runner charges with, over the month in progress — it
+     * used to sum every interval an account ever had, so the figure only grew and
+     * stopped matching the bill after the first month (#366).
      */
     async getUsage(userId: string): Promise<{ hours: number; cost: number; plan: BillingPlan }> {
       const [plan, intervals] = await Promise.all([repo.getUserPlan(userId), repo.listIntervals(userId)]);
-      const at = now();
-      let remainingFree = plan.freeHoursPerMonth;
-      let cost = 0;
-      let hours = 0;
-      for (const i of intervals) {
-        const h = accruedHours([{ startedAt: i.startedAt, stoppedAt: i.stoppedAt }], at);
-        hours += h;
-        const freeApplied = Math.min(remainingFree, h);
-        remainingFree -= freeApplied;
-        const billable = h - freeApplied;
-        cost += billable * plan.pricePerHour * resourceFactor(i.limits);
+      return { ...usageIn(intervals, plan, currentPeriod(now())), plan };
+    },
+
+    /** What the account has left to spend, and whether it may run servers (#365). */
+    async getStanding(userId: string): Promise<Standing> {
+      const [plan, intervals, wallet, cycles] = await Promise.all([repo.getUserPlan(userId), repo.listIntervals(userId), repo.getWallet(userId), repo.listCycles(userId)]);
+      return computeStanding({ balance: wallet.balance, currency: wallet.currency, intervals, cycles, plan, now: now() });
+    },
+
+    /**
+     * Stop the servers of every account that has used up what it had (#365).
+     * Nothing is charged here — the monthly cycle still does that — this only
+     * stops usage from running past the balance while the month is open. Safe to
+     * repeat: once the servers stop there is nothing running to suspend.
+     */
+    async settle(): Promise<Array<{ userId: string; deploymentIds: string[] }>> {
+      const suspended: Array<{ userId: string; deploymentIds: string[] }> = [];
+      for (const userId of await repo.listBillableUserIds()) {
+        const running = [...new Set((await repo.listIntervals(userId)).filter((i) => i.stoppedAt === null).map((i) => i.deploymentId))];
+        if (running.length === 0) continue;
+        const standing = await this.getStanding(userId);
+        if (standing.canRun) continue;
+        await emit(KEY_SUSPEND, { type: 'billing.server.suspend', payload: { userId, deploymentIds: running, reason: 'credit exhausted' } });
+        suspended.push({ userId, deploymentIds: running });
       }
-      return { hours: Math.round(hours * 1000) / 1000, cost: roundCurrency(cost), plan };
+      if (suspended.length > 0) log(`suspended the servers of ${suspended.length} account(s) that ran out of credit`);
+      return suspended;
     },
 
     /** Expose the resource factor for a set of limits (handy for UIs/quotes). */

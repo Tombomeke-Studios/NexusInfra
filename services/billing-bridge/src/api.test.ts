@@ -58,6 +58,12 @@ describe('billing API', () => {
     expect(res.status).toBe(400);
   });
 
+  it('reports an account’s standing (#365)', async () => {
+    const res = await request(app).get('/billing/u1/standing');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ balance: 0, accrued: 0, available: 0, canRun: expect.any(Boolean), currency: DEFAULT_PLAN.currency });
+  });
+
   it('answers a server quota check', async () => {
     const ok = await request(app).get('/billing/u1/quota?resource=servers&current=2');
     expect(ok.body).toEqual({ allowed: true, limit: 3 });

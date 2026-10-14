@@ -58,6 +58,18 @@ model ServerBilling {
   @@index([deploymentId])
 }
 
+// What billing needs to know about a deployment to charge for it: who owns it
+// and how big it is. Written on deployment.created/updated, so a server started
+// after a restart of this service is still billed (#364).
+model BillingDeployment {
+  deploymentId String   @id
+  userId       String
+  limits       String   @default("{}")
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+}
+
 // A user's prepaid credit balance held in NexusInfra.
 model CreditWallet {
   userId   String @id

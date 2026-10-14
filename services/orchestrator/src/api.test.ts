@@ -18,6 +18,7 @@ import { FALLBACK_VERSIONS, offeredVersions } from './minecraftVersions.js';
 const allowQuota: Parameters<typeof createApiRouter>[0]['checkQuota'] = async () => ({ allowed: true, limit: Infinity });
 // The same for plan entitlements (#297): no plan unless a suite brings one.
 const noPlan: Parameters<typeof createApiRouter>[0]['getEntitlements'] = async () => null;
+const noStanding: Parameters<typeof createApiRouter>[0]['getStanding'] = async () => null;
 
 // Every route is now behind authentication and per-server authorization (#175),
 // so these suites run as a real account. `asPrincipal` stands in for requireAuth,
@@ -50,7 +51,7 @@ function buildApp(
   app.use(
     createApiRouter({
       repo,
-      checkQuota: allowQuota, getEntitlements: noPlan,
+      checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
       publish: async (key, envelope) => {
         published.push({ key, envelope });
         return true;
@@ -332,6 +333,18 @@ describe('deployment API', () => {
       expect(config?.env).toEqual({ A: '2', B: 'new' });
       expect(config?.autoRestart).toBe(true);
       expect(config?.resourceLimits).toEqual({ cpuPercent: 25 });
+    });
+
+    // Billing charges by size (#364): a resize it never hears about is charged at the old one.
+    it('tells billing when a server is resized, and only then', async () => {
+      const id = await makeServer();
+      published.length = 0;
+      await request(app).patch(`/deployments/${id}`).send({ name: 'renamed' });
+      expect(published.filter((p) => p.key === 'infra.deployment.updated')).toEqual([]);
+
+      await request(app).patch(`/deployments/${id}`).send({ resourceLimits: { cpuPercent: 25 } });
+      const [event] = published.filter((p) => p.key === 'infra.deployment.updated');
+      expect(readPayload(event.envelope.event)).toMatchObject({ deploymentId: id, resourceLimits: { cpuPercent: 25 } });
     });
 
     it('leaves omitted fields alone', async () => {
@@ -885,7 +898,7 @@ describe('deployment API', () => {
     dbApp.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota, getEntitlements: noPlan,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
         publish: async (key, envelope) => (published.push({ key, envelope }), true),
         provisionDatabase: async (req) => {
           provisioned.push({ engine: req.engine, name: req.name });
@@ -938,7 +951,7 @@ describe('deployment API', () => {
     bkApp.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota, getEntitlements: noPlan,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
         publish: async (key, envelope) => (published.push({ key, envelope }), true),
         snapshotBackup: async (req) => (snapshots.push(req.containerId), { ref: 'bk_x', sizeBytes: 4096, path: '/data' }),
         restoreBackup: async (req) => void restores.push(req.ref),
@@ -975,7 +988,7 @@ describe('deployment API', () => {
     bkApp.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota, getEntitlements: noPlan,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
         publish: async () => true,
         snapshotBackup: async () => ({ ref: 'bk_x', sizeBytes: 1, path: '/data' }),
         restoreBackup: async () => {
@@ -1059,7 +1072,7 @@ describe('deployment API', () => {
     schedApp.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota, getEntitlements: noPlan,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
         publish: async (key, envelope) => (published.push({ key, envelope }), true),
         scheduleActions: { restart: async (id) => void ran.push(`restart:${id}`), backup: async (id) => void ran.push(`backup:${id}`) },
       })
@@ -1101,7 +1114,7 @@ describe('disk usage (#347)', () => {
         repo,
         publish: async () => true,
         checkQuota: allowQuota,
-        getEntitlements: noPlan,
+        getEntitlements: noPlan, getStanding: noStanding,
         diskUsage: async (_agentUrl, deploymentId) => {
           asked.push(deploymentId);
           if (deploymentId) return { measuredAt: 't', deploymentId, volumesBytes: 2048, writableBytes: 10, volumes: [] };
@@ -1159,7 +1172,7 @@ describe('disk usage (#347)', () => {
     const repo = new InMemoryRepository() as InMemoryRepository & { lastCreatedId?: string };
     const id = await seed(repo);
     const app = express().use(express.json()).use(asPrincipal()).use(
-      createApiRouter({ repo, publish: async () => true, checkQuota: allowQuota, getEntitlements: noPlan, diskUsage: async () => { throw new Error('Docker could not measure disk use: timeout'); } })
+      createApiRouter({ repo, publish: async () => true, checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding, diskUsage: async () => { throw new Error('Docker could not measure disk use: timeout'); } })
     );
     const res = await request(app).get(`/deployments/${id}/disk`);
     expect(res.status).toBe(502);
@@ -1295,6 +1308,67 @@ describe('plan entitlements (#297)', () => {
   });
 });
 
+describe('prepaid credit (#365)', () => {
+  const BROKE = { balance: 0, accrued: 0, available: 0, freeHoursLeft: 0, canRun: false, currency: 'EUR' };
+  const FUNDED = { ...BROKE, balance: 10, available: 10, canRun: true };
+
+  function buildApp(repo: InMemoryRepository, getStanding: NonNullable<Parameters<typeof createApiRouter>[0]['getStanding']>) {
+    const app = express();
+    app.use(express.json());
+    app.use(asPrincipal());
+    app.use(createApiRouter({ repo, publish: async () => true, checkQuota: allowQuota, getEntitlements: noPlan, getStanding }));
+    return app;
+  }
+
+  async function seedNode(repo: InMemoryRepository) {
+    await repo.upsertNode({ id: 'node-local', name: 'node-local', lastHeartbeat: new Date().toISOString(), cpuPercent: 5, ramUsedMb: 500, ramTotalMb: 8000 });
+  }
+
+  it('refuses to create a server for an account with no credit, and says where to get some', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const res = await request(buildApp(repo, async () => BROKE)).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    expect(res.status).toBe(402);
+    expect(res.body.error).toMatch(/Billing page/);
+    expect(await repo.listDeployments()).toEqual([]);
+  });
+
+  it('refuses to start a stopped server once the credit is gone, and allows it again after a top-up', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    let standing = FUNDED;
+    const asked: string[] = [];
+    const app = buildApp(repo, async (userId) => {
+      asked.push(userId);
+      return standing;
+    });
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    expect(created.status).toBe(201);
+    const id = created.body.id as string;
+    await repo.updateDeploymentStatus(id, { status: 'stopped', containerId: null });
+
+    standing = BROKE;
+    const refused = await request(app).post(`/deployments/${id}/start`);
+    expect(refused.status).toBe(402);
+    // The owner's credit is what counts.
+    expect(asked.at(-1)).toBe((await repo.getDeploymentConfig(id))?.userId);
+
+    standing = FUNDED;
+    expect((await request(app).post(`/deployments/${id}/start`)).status).toBe(202);
+  });
+
+  it('never blocks stopping a server, whatever the balance', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    let standing = FUNDED;
+    const app = buildApp(repo, async () => standing);
+    const id = (await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' })).body.id as string;
+    await repo.updateDeploymentStatus(id, { status: 'running', containerId: 'c1' });
+    standing = BROKE;
+    expect((await request(app).post(`/deployments/${id}/stop`)).status).toBe(202);
+  });
+});
+
 describe('plan quota enforcement (#148)', () => {
   // A denying checkQuota stands in for the Billing Bridge in the hosted edition.
   function buildApp(repo: InMemoryRepository, checkQuota: Parameters<typeof createApiRouter>[0]['checkQuota']) {
@@ -1302,7 +1376,7 @@ describe('plan quota enforcement (#148)', () => {
     app.use(express.json());
 
     app.use(asPrincipal());
-    app.use(createApiRouter({ repo, publish: async () => true, checkQuota, getEntitlements: noPlan, provisionDatabase: async () => ({ containerId: 'db-c', port: 5432 }) }));
+    app.use(createApiRouter({ repo, publish: async () => true, checkQuota, getEntitlements: noPlan, getStanding: noStanding, provisionDatabase: async () => ({ containerId: 'db-c', port: 5432 }) }));
     return app;
   }
 
@@ -1358,7 +1432,7 @@ describe('multi-node agent routing (#171)', () => {
     app.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota, getEntitlements: noPlan,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
         publish: async () => true,
         provisionDatabase: async (req) => (calls.push(req.agentUrl), { containerId: 'db-1', port: 5432 }),
         snapshotBackup: async (req) => (calls.push(req.agentUrl), { ref: 'bk', sizeBytes: 1, path: '/data' }),
@@ -1953,7 +2027,7 @@ describe('the egg catalogue fills in the version list (#311)', () => {
     const app = express();
     app.use(express.json());
     app.use(asPrincipal());
-    app.use(createApiRouter({ repo, checkQuota: allowQuota, getEntitlements: noPlan, publish: async () => true, minecraftVersions: versions }));
+    app.use(createApiRouter({ repo, checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding, publish: async () => true, minecraftVersions: versions }));
     return app;
   }
 
@@ -2192,7 +2266,7 @@ describe('a server keeps its data across restarts (#324)', () => {
     failing.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota, getEntitlements: noPlan,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
         publish: async () => true,
         purgeDeploymentData: async () => {
           throw new Error('node agent unreachable');
@@ -2264,7 +2338,7 @@ describe('updating a server image (#239)', () => {
     statusApp.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota, getEntitlements: noPlan,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
         publish: async () => true,
         imageStatus: async (q) => {
           asked.push(q);
@@ -2285,7 +2359,7 @@ describe('updating a server image (#239)', () => {
     statusApp.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota, getEntitlements: noPlan,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
         publish: async () => true,
         imageStatus: async () => {
           throw new Error('node agent unreachable');
@@ -2317,7 +2391,7 @@ describe('backup retention and download (#232)', () => {
     app.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota, getEntitlements: noPlan,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
         publish: async () => true,
         snapshotBackup: async ({ path }) => ({ ref: `bk_${++n}`, sizeBytes: 3, path: path ?? '/data', offsite: null }),
         removeBackup: async (_url, ref) => void removedRefs.push(ref),
@@ -2460,7 +2534,7 @@ describe('POST /deployments/:id/migrate (#234)', () => {
     app.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota, getEntitlements: noPlan,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
         publish: async () => true,
         purgeDeploymentData: async () => undefined,
         migrationTransport: {

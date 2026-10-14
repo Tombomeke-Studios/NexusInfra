@@ -43,6 +43,35 @@ describe('billing service', () => {
     expect(usage.cost).toBe(2);
   });
 
+  // #364: what a server costs used to live in a map that a restart emptied.
+  it('still bills a server started after the service restarted', async () => {
+    await svc.handleDeploymentCreated({ deploymentId: 'd1', userId: 'u1', resourceLimits: { cpuPercent: 100, ramPercent: 100 } });
+    const restarted = createBillingService({ repo, publish: async () => true, now: () => clock });
+    const opened = await restarted.handleServerStarted({ deploymentId: 'd1' });
+    expect(opened).toMatchObject({ userId: 'u1', limits: { cpuPercent: 100, ramPercent: 100 } });
+  });
+
+  it('recognises a server from before #364 by its last interval', async () => {
+    await repo.openInterval({ userId: 'u9', deploymentId: 'old', planId: DEFAULT_PLAN.id, limits: { cpuPercent: 50, ramPercent: 50 }, startedAt: '2026-06-01T00:00:00.000Z' });
+    await repo.closeInterval('old', '2026-06-01T01:00:00.000Z');
+    expect(await svc.handleServerStarted({ deploymentId: 'old' })).toMatchObject({ userId: 'u9', stoppedAt: null });
+  });
+
+  it('opens one interval when a start is reported twice', async () => {
+    await svc.handleDeploymentCreated({ deploymentId: 'd1', userId: 'u1' });
+    const first = await svc.handleServerStarted({ deploymentId: 'd1' });
+    const second = await svc.handleServerStarted({ deploymentId: 'd1' });
+    expect(second?.id).toBe(first?.id);
+    await svc.handleServerStopped({ deploymentId: 'd1' });
+    expect((await repo.listIntervals('u1')).filter((i) => i.stoppedAt === null)).toEqual([]);
+  });
+
+  it('charges a resized server at its new size from the next start', async () => {
+    await svc.handleDeploymentCreated({ deploymentId: 'd1', userId: 'u1', resourceLimits: { cpuPercent: 50, ramPercent: 50 } });
+    await svc.handleDeploymentCreated({ deploymentId: 'd1', userId: 'u1', resourceLimits: { cpuPercent: 100, ramPercent: 100 } });
+    expect((await svc.handleServerStarted({ deploymentId: 'd1' }))?.limits).toEqual({ cpuPercent: 100, ramPercent: 100 });
+  });
+
   it('skips billing for an unknown deployment (no deployment.created seen)', async () => {
     const opened = await svc.handleServerStarted({ deploymentId: 'ghost' });
     expect(opened).toBeNull();
@@ -58,6 +87,61 @@ describe('billing service', () => {
     const usage = await svc.getUsage('u2');
     // 1h × €1 × factor 2.0 → €2.00
     expect(usage.cost).toBe(2);
+  });
+
+  // #366: this used to sum every interval the account ever had.
+  it('reports this cycle’s usage, not everything a server ever ran', async () => {
+    await svc.handleDeploymentCreated({ deploymentId: 'd1', userId: 'u1', resourceLimits: { cpuPercent: 50, ramPercent: 50 } });
+    clock = '2026-06-10T00:00:00.000Z';
+    await svc.handleServerStarted({ deploymentId: 'd1' });
+    clock = '2026-06-10T10:00:00.000Z';
+    await svc.handleServerStopped({ deploymentId: 'd1' });
+    clock = '2026-07-05T00:00:00.000Z';
+    await svc.handleServerStarted({ deploymentId: 'd1' });
+    clock = '2026-07-05T03:00:00.000Z';
+    expect(await svc.getUsage('u1')).toMatchObject({ hours: 3, cost: 3 });
+  });
+
+  describe('prepaid credit (#365)', () => {
+    const run = async (deploymentId: string, userId: string) => {
+      await svc.handleDeploymentCreated({ deploymentId, userId, resourceLimits: { cpuPercent: 50, ramPercent: 50 } });
+      await svc.handleServerStarted({ deploymentId });
+    };
+
+    it('says an account with no credit may not run, and one with credit may', async () => {
+      expect((await svc.getStanding('u1')).canRun).toBe(false);
+      await repo.setBalance('u1', 5);
+      expect(await svc.getStanding('u1')).toMatchObject({ balance: 5, available: 5, canRun: true });
+    });
+
+    it('suspends an account’s servers once its usage reaches its balance', async () => {
+      await repo.setBalance('u1', 2);
+      await run('d1', 'u1');
+      clock = '2026-07-01T01:00:00.000Z';
+      expect(await svc.settle()).toEqual([]);
+
+      clock = '2026-07-01T02:00:00.000Z';
+      expect(await svc.settle()).toEqual([{ userId: 'u1', deploymentIds: ['d1'] }]);
+      const suspend = published.find((p) => p.key === 'billing.server.suspend');
+      expect(readPayload(suspend!.envelope.event)).toMatchObject({ userId: 'u1', deploymentIds: ['d1'], reason: 'credit exhausted' });
+    });
+
+    it('leaves accounts with credit, and accounts with nothing running, alone', async () => {
+      await repo.setBalance('u1', 100);
+      await run('d1', 'u1');
+      await repo.setBalance('u2', -5); // owes, but runs nothing
+      clock = '2026-07-01T05:00:00.000Z';
+      expect(await svc.settle()).toEqual([]);
+      expect(published.filter((p) => p.key === 'billing.server.suspend')).toEqual([]);
+    });
+
+    it('has nothing left to suspend once the servers have stopped', async () => {
+      await run('d1', 'u1');
+      clock = '2026-07-01T02:00:00.000Z';
+      expect(await svc.settle()).toHaveLength(1);
+      await svc.handleServerStopped({ deploymentId: 'd1' });
+      expect(await svc.settle()).toEqual([]);
+    });
   });
 
   describe('top-up flow', () => {

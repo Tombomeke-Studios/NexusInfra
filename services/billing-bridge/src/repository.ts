@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { DEFAULT_PLAN, type BillingPlan } from './pricing.js';
 import type {
+  BilledDeployment,
   BillingCycleRecord,
   CreateCycleInput,
   CreateLedgerInput,
@@ -18,6 +19,7 @@ import type {
 export class InMemoryRepository implements Repository {
   private plans = new Map<string, BillingPlan>();
   private userPlans = new Map<string, string>();
+  private deployments = new Map<string, BilledDeployment>();
   private intervals: ServerBillingRecord[] = [];
   private wallets = new Map<string, CreditWallet>();
   private ledger: CreditLedgerEntry[] = [];
@@ -35,6 +37,23 @@ export class InMemoryRepository implements Repository {
   async getUserPlan(userId: string): Promise<BillingPlan> {
     const planId = this.userPlans.get(userId);
     return (planId && this.plans.get(planId)) || this.plans.get(DEFAULT_PLAN.id) || DEFAULT_PLAN;
+  }
+
+  async saveDeployment(deployment: BilledDeployment): Promise<void> {
+    this.deployments.set(deployment.deploymentId, { ...deployment });
+  }
+
+  async getDeployment(deploymentId: string): Promise<BilledDeployment | null> {
+    const found = this.deployments.get(deploymentId);
+    return found ? { ...found } : null;
+  }
+
+  async getOpenInterval(deploymentId: string): Promise<ServerBillingRecord | null> {
+    return [...this.intervals].reverse().find((i) => i.deploymentId === deploymentId && i.stoppedAt === null) ?? null;
+  }
+
+  async getLastInterval(deploymentId: string): Promise<ServerBillingRecord | null> {
+    return [...this.intervals].reverse().find((i) => i.deploymentId === deploymentId) ?? null;
   }
 
   async openInterval(input: OpenIntervalInput): Promise<ServerBillingRecord> {
