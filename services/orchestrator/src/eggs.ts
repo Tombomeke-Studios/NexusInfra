@@ -409,8 +409,301 @@ const PALWORLD: Egg = {
   ],
 };
 
+// ── Added in #384 ─────────────────────────────────────────────────────────────
+// Each checked against the image's own README *and* entrypoint, because the two
+// disagree more often than they should: names below are the ones the scripts read.
+
+const TERRARIA: Egg = {
+  id: 'terraria',
+  name: 'Terraria',
+  description:
+    'A vanilla Terraria server (passivelemon/terraria-docker). It makes a world on first start; to bring your own, put the .wld file in Worlds/ and give its name below.',
+  dockerImage: 'passivelemon/terraria-docker:terraria-latest',
+  // Terraria is TCP only — the one game in the catalogue besides Java Minecraft.
+  ports: { '7777': '7777' },
+  dataPath: '/opt/terraria/config',
+  variables: [
+    {
+      key: 'WORLDNAME',
+      label: 'World name',
+      description: 'The world this server loads — the file Worlds/<name>.wld. If there is none yet, one is made with the settings below.',
+      kind: 'string',
+      default: 'NexusInfra',
+      maxLength: 64,
+      // It becomes a path: no slashes, no dots, so it stays inside Worlds/.
+      pattern: '[A-Za-z0-9][A-Za-z0-9 _-]*',
+      patternHint: 'use letters, digits, spaces, - and _ only',
+    },
+    {
+      key: 'AUTOCREATE',
+      label: 'New world size',
+      description:
+        'Only used when the world does not exist yet: 1 is small, 2 medium, 3 large. Keep it on the size the world was made with — a smaller value on an existing world shows it corrupted until it is set back.',
+      kind: 'choice',
+      default: '2',
+      options: ['1', '2', '3'],
+    },
+    {
+      key: 'DIFFICULTY',
+      label: 'New world difficulty',
+      description: 'Only used when the world is created: 0 is classic, 1 expert, 2 master, 3 journey.',
+      kind: 'choice',
+      default: '0',
+      options: ['0', '1', '2', '3'],
+    },
+    {
+      key: 'MAXPLAYERS',
+      label: 'Player slots',
+      description: 'How many people may be connected at once.',
+      kind: 'integer',
+      default: '8',
+      min: 1,
+      max: 255,
+    },
+    {
+      key: 'PASSWORD',
+      label: 'Password',
+      description: 'Asked of everyone who joins. Leave it empty for an open server — only on one nobody outside your network can reach.',
+      kind: 'string',
+      default: '',
+    },
+    {
+      key: 'MOTD',
+      label: 'Message of the day',
+      description: 'Shown to players when they join. Empty shows nothing.',
+      kind: 'string',
+      default: '',
+    },
+  ],
+};
+
+const FACTORIO: Egg = {
+  id: 'factorio',
+  name: 'Factorio',
+  description:
+    'A Factorio headless server (factoriotools/factorio, stable releases). A map is generated on first start. The server name, password and public listing live in config/server-settings.json — edit it in the Files tab and restart.',
+  // `latest` follows experimental releases; a save made there may not load on
+  // stable again, so the recipe takes the build factorio.com calls stable.
+  dockerImage: 'factoriotools/factorio:stable',
+  // UDP. RCON (27015/tcp) is left unpublished: its password is generated into
+  // config/rconpw, and an admin console nobody asked for is not a default.
+  ports: { '34197': '34197/udp' },
+  dataPath: '/factorio',
+  variables: [
+    {
+      key: 'DLC_SPACE_AGE',
+      label: 'Space Age expansion',
+      description:
+        'Turns on the Space Age, Quality and Elevated Rails mods. Everyone who joins then needs the expansion, and a save made with it will not load without it — decide before the first start.',
+      kind: 'boolean',
+      default: 'false',
+    },
+  ],
+};
+
+const SATISFACTORY: Egg = {
+  id: 'satisfactory',
+  name: 'Satisfactory',
+  description:
+    'A dedicated Satisfactory server (robtme/satisfactory-server). The first person to connect claims it: they name it and set its admin password from the in-game Server Manager. Wants 8 GB of memory or more once a factory grows.',
+  // The project's new name (#317 is what an old one turns into): wolveix renamed
+  // to robtme, and says wolveix/… keeps updating — for now.
+  dockerImage: 'robtme/satisfactory-server',
+  // 7777 carries the game on UDP *and* the server API on TCP; 8888 is the
+  // server's own messaging port, TCP.
+  ports: { '7777': '7777/tcp+udp', '8888': '8888/tcp' },
+  dataPath: '/config',
+  variables: [
+    {
+      key: 'MAXPLAYERS',
+      label: 'Player slots',
+      description: 'How many people may be connected at once. The game is built around four; more works, at a cost in memory and CPU.',
+      kind: 'integer',
+      default: '4',
+      min: 1,
+      max: 64,
+    },
+    {
+      key: 'AUTOSAVENUM',
+      label: 'Autosaves kept',
+      description: 'How many rotating autosaves the server keeps before overwriting the oldest.',
+      kind: 'integer',
+      default: '5',
+      min: 1,
+      max: 100,
+    },
+    {
+      key: 'DISABLESEASONALEVENTS',
+      label: 'Turn off seasonal events',
+      description: 'Stops the FICSMAS winter event from appearing in this world.',
+      kind: 'boolean',
+      default: 'false',
+    },
+    {
+      key: 'STEAMBETA',
+      label: 'Experimental branch',
+      description: 'Runs the experimental build instead of the release. Players need the same branch, and a save opened there may not go back.',
+      kind: 'boolean',
+      default: 'false',
+    },
+  ],
+};
+
+const PROJECT_ZOMBOID: Egg = {
+  id: 'project-zomboid',
+  name: 'Project Zomboid',
+  description:
+    'A Project Zomboid dedicated server (danixu86/project-zomboid-dedicated-server, Build 42). Player slots and most rules live in Server/<save name>.ini — edit it in the Files tab.',
+  dockerImage: 'danixu86/project-zomboid-dedicated-server',
+  // Both UDP: 16261 the game, 16262 direct connections. RCON stays off — the game
+  // disables it without a password, and this recipe does not set one.
+  ports: { '16261': '16261/udp', '16262': '16262/udp' },
+  dataPath: '/home/steam/Zomboid',
+  // The image passes MEMORY to both -Xms and -Xmx, like itzg's — so the JVM
+  // commits it, and it has to fit the memory limit (#271, #308).
+  memoryVariable: 'MEMORY',
+  variables: [
+    {
+      key: 'SERVERNAME',
+      label: 'Save name',
+      description: 'Which save this server runs, and the name of its settings files. Changing it starts a different save — the old one stays and comes back if you change it back.',
+      kind: 'string',
+      default: 'nexusinfra',
+      maxLength: 64,
+      // The image's own warning: a space or special character breaks the admin account.
+      pattern: '[A-Za-z0-9_-]+',
+      patternHint: 'use letters, digits, - and _ only — no spaces',
+    },
+    {
+      key: 'DISPLAYNAME',
+      label: 'Server name',
+      description: 'Shown in the in-game server browser.',
+      kind: 'string',
+      default: 'A NexusInfra server',
+    },
+    {
+      key: 'ADMINPASSWORD',
+      label: 'Admin password',
+      description:
+        'For the in-game account called admin. The server will not start the first time without one. The game prints it in its log on every start, so do not reuse a password you care about.',
+      kind: 'string',
+      default: 'changeme-admin',
+    },
+    {
+      key: 'PASSWORD',
+      label: 'Join password',
+      description: 'Asked of everyone who joins. Empty leaves whatever the settings file already has — open, on a new server.',
+      kind: 'string',
+      default: '',
+    },
+    {
+      key: 'PUBLIC',
+      label: 'List publicly',
+      description: 'Whether the server appears in the in-game public list.',
+      kind: 'boolean',
+      default: 'false',
+    },
+    {
+      key: 'SERVERPRESET',
+      label: 'Sandbox preset',
+      description:
+        'The rules a new save starts with — Apocalypse is the standard game, Builder and Beginner are gentler, Survivor is harder. Applied only when the save has no rules yet; after that, edit Server/<save name>_SandboxVars.lua.',
+      kind: 'choice',
+      default: 'Apocalypse',
+      options: ['Apocalypse', 'Beginner', 'Builder', 'FirstWeek', 'SixMonthsLater', 'Survival', 'Survivor'],
+    },
+    {
+      key: 'MEMORY',
+      label: 'Java heap size',
+      description:
+        'How much memory the server may actually use, e.g. 4G. Java claims all of this up front, and it has to fit inside the memory limit set below with room to spare for Java itself.',
+      kind: 'string',
+      default: '4G',
+    },
+  ],
+};
+
+const ENSHROUDED: Egg = {
+  id: 'enshrouded',
+  name: 'Enshrouded',
+  description:
+    'A dedicated Enshrouded server (mornedhels/enshrouded-server). Players join with one of two passwords: the admin one, or the friend one, which can build and open chests but not kick or ban. The game recommends 16 GB of memory.',
+  dockerImage: 'mornedhels/enshrouded-server',
+  // UDP. The game moved everything onto the query port; there is no separate
+  // game port to publish any more.
+  ports: { '15637': '15637/udp' },
+  dataPath: '/opt/enshrouded',
+  // Enshrouded dropped its server password for roles, and a role with an empty
+  // password lets anyone in with its rights. The recipe fixes the two roles and
+  // what each may do, so a caller cannot hand the friend role a ban hammer; only
+  // the passwords are questions.
+  fixedEnv: {
+    SERVER_ROLE_0_NAME: 'Admin',
+    SERVER_ROLE_0_CAN_KICK_BAN: 'true',
+    SERVER_ROLE_0_CAN_ACCESS_INVENTORIES: 'true',
+    SERVER_ROLE_0_CAN_EDIT_WORLD: 'true',
+    SERVER_ROLE_0_CAN_EDIT_BASE: 'true',
+    SERVER_ROLE_0_CAN_EXTEND_BASE: 'true',
+    SERVER_ROLE_1_NAME: 'Friend',
+    SERVER_ROLE_1_CAN_KICK_BAN: 'false',
+    SERVER_ROLE_1_CAN_ACCESS_INVENTORIES: 'true',
+    SERVER_ROLE_1_CAN_EDIT_WORLD: 'true',
+    SERVER_ROLE_1_CAN_EDIT_BASE: 'true',
+    SERVER_ROLE_1_CAN_EXTEND_BASE: 'true',
+  },
+  variables: [
+    { key: 'SERVER_NAME', label: 'Server name', description: 'Shown in the server browser.', kind: 'string', default: 'A NexusInfra server' },
+    {
+      key: 'SERVER_ROLE_0_PASSWORD',
+      label: 'Admin password',
+      description: 'Joining with this one makes you an admin: kick, ban and change anything. Make it different from the friend password — the game cannot tell two roles apart by the same one.',
+      kind: 'string',
+      default: 'changeme-admin',
+    },
+    {
+      key: 'SERVER_ROLE_1_PASSWORD',
+      label: 'Friend password',
+      description: 'The one to hand to players: they can build, extend bases and open chests, but not kick or ban.',
+      kind: 'string',
+      default: 'changeme',
+    },
+    {
+      key: 'SERVER_SLOT_COUNT',
+      label: 'Player slots',
+      description: 'How many people may be connected at once. Enshrouded allows up to 16.',
+      kind: 'integer',
+      default: '16',
+      min: 1,
+      max: 16,
+    },
+    { key: 'SERVER_ENABLE_TEXT_CHAT', label: 'Text chat', description: 'Whether players can type to each other in game.', kind: 'boolean', default: 'false' },
+    { key: 'SERVER_ENABLE_VOICE_CHAT', label: 'Voice chat', description: 'Whether players can talk to each other in game.', kind: 'boolean', default: 'false' },
+    {
+      key: 'SERVER_VOICE_CHAT_MODE',
+      label: 'Voice chat range',
+      description: 'Proximity lets you hear players near you; Global puts everyone on one channel.',
+      kind: 'choice',
+      default: 'Proximity',
+      options: ['Proximity', 'Global'],
+      showWhen: { key: 'SERVER_ENABLE_VOICE_CHAT', equals: ['true'] },
+    },
+  ],
+};
+
 /** Every egg the panel can create a server from, in the order it offers them. */
-export const EGGS: readonly Egg[] = [MINECRAFT, MINECRAFT_BEDROCK, PALWORLD, VALHEIM, RUST, CS2];
+export const EGGS: readonly Egg[] = [
+  MINECRAFT,
+  MINECRAFT_BEDROCK,
+  PALWORLD,
+  VALHEIM,
+  RUST,
+  CS2,
+  TERRARIA,
+  FACTORIO,
+  SATISFACTORY,
+  PROJECT_ZOMBOID,
+  ENSHROUDED,
+];
 
 export function getEgg(id: string): Egg | null {
   return EGGS.find((e) => e.id === id) ?? null;
