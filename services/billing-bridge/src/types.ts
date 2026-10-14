@@ -125,6 +125,9 @@ export interface Repository {
   setWalletEmail(userId: string, email: string): Promise<void>;
   /** That address, or null when the account has never topped up. */
   getWalletEmail(userId: string): Promise<string | null>;
+  /** When the account was last warned its credit is running low (#379), or null. */
+  getLowCreditWarnedAt(userId: string): Promise<string | null>;
+  setLowCreditWarnedAt(userId: string, at: string | null): Promise<void>;
 
   // Ledger
   createLedgerEntry(input: CreateLedgerInput): Promise<CreditLedgerEntry>;

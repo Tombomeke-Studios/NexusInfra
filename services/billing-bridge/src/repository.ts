@@ -23,6 +23,7 @@ export class InMemoryRepository implements Repository {
   private intervals: ServerBillingRecord[] = [];
   private wallets = new Map<string, CreditWallet>();
   private walletEmails = new Map<string, string>();
+  private lowCreditWarnings = new Map<string, string>();
   private ledger: CreditLedgerEntry[] = [];
   private cycles: BillingCycleRecord[] = [];
 
@@ -118,6 +119,16 @@ export class InMemoryRepository implements Repository {
 
   async getWalletEmail(userId: string): Promise<string | null> {
     return this.walletEmails.get(userId) ?? null;
+  }
+
+  async getLowCreditWarnedAt(userId: string): Promise<string | null> {
+    return this.lowCreditWarnings.get(userId) ?? null;
+  }
+
+  async setLowCreditWarnedAt(userId: string, at: string | null): Promise<void> {
+    await this.getWallet(userId);
+    if (at) this.lowCreditWarnings.set(userId, at);
+    else this.lowCreditWarnings.delete(userId);
   }
 
   async setBalance(userId: string, balance: number): Promise<CreditWallet> {

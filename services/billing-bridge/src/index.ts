@@ -112,6 +112,8 @@ async function start() {
     // month closes (#365).
     const settleMs = Number(process.env.SETTLE_INTERVAL_MS) || DEFAULT_SETTLE_INTERVAL_MS;
     setInterval(() => void service.settle().catch((err) => console.error('[BillingBridge] settling accounts failed:', err)), settleMs).unref();
+    // …and an account is warned before that happens, once per dip (#379).
+    setInterval(() => void service.warnLowCredit().catch((err) => console.error('[BillingBridge] low-credit warnings failed:', err)), settleMs).unref();
 
     startHeartbeat('billing-bridge', 1000);
     console.log('[BillingBridge] Publishing heartbeat on monitoring.heartbeat.service.billing-bridge');

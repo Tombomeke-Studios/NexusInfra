@@ -144,6 +144,83 @@ describe('billing service', () => {
     });
   });
 
+  describe('low-credit warning (#379)', () => {
+    const run = async (deploymentId: string, userId: string) => {
+      await svc.handleDeploymentCreated({ deploymentId, userId, resourceLimits: { cpuPercent: 50, ramPercent: 50 } });
+      await svc.handleServerStarted({ deploymentId });
+    };
+    const warnings = () => published.filter((p) => p.key === 'billing.credit.low');
+
+    it('reports how long the credit lasts with the standing', async () => {
+      await repo.setBalance('u1', 30);
+      await run('d1', 'u1');
+      expect(await svc.getStanding('u1')).toMatchObject({ hoursLeft: 30, runsLow: false });
+      clock = '2026-07-01T10:00:00.000Z';
+      expect(await svc.getStanding('u1')).toMatchObject({ hoursLeft: 20, runsLow: true });
+    });
+
+    it('warns once when the credit lasts less than the threshold', async () => {
+      await repo.setBalance('u1', 30);
+      await run('d1', 'u1');
+      expect(await svc.warnLowCredit()).toEqual([]);
+
+      clock = '2026-07-01T10:00:00.000Z';
+      expect(await svc.warnLowCredit()).toEqual(['u1']);
+      expect(readPayload(warnings()[0].envelope.event)).toEqual({ userId: 'u1', hoursLeft: 20, available: 20, currency: 'EUR' });
+
+      clock = '2026-07-01T11:00:00.000Z';
+      expect(await svc.warnLowCredit()).toEqual([]);
+      expect(warnings()).toHaveLength(1);
+    });
+
+    it('does not warn again after a restart of the bridge', async () => {
+      await repo.setBalance('u1', 10);
+      await run('d1', 'u1');
+      expect(await svc.warnLowCredit()).toEqual(['u1']);
+      const restarted = createBillingService({ repo, publish: async (key, envelope) => (published.push({ key, envelope }), true), now: () => clock });
+      expect(await restarted.warnLowCredit()).toEqual([]);
+    });
+
+    it('warns again only after the credit has recovered and dipped again', async () => {
+      await repo.setBalance('u1', 10);
+      await run('d1', 'u1');
+      await svc.warnLowCredit();
+      await repo.setBalance('u1', 100); // a top-up
+      expect(await svc.warnLowCredit()).toEqual([]);
+      clock = '2026-07-04T06:00:00.000Z'; // 78 hours in, 22 left
+      expect(await svc.warnLowCredit()).toEqual(['u1']);
+      expect(warnings()).toHaveLength(2);
+    });
+
+    it('says nothing to an account with nothing running', async () => {
+      await repo.setBalance('u1', 1);
+      expect(await svc.warnLowCredit()).toEqual([]);
+    });
+
+    it('leaves an account that has run out to the suspension, which says so itself', async () => {
+      await repo.setBalance('u1', 1);
+      await run('d1', 'u1');
+      clock = '2026-07-01T02:00:00.000Z';
+      expect(await svc.warnLowCredit()).toEqual([]);
+    });
+
+    it('tries again next time when the broker did not take the warning', async () => {
+      await repo.setBalance('u1', 10);
+      await run('d1', 'u1');
+      const offline = createBillingService({ repo, publish: async () => false, now: () => clock });
+      expect(await offline.warnLowCredit()).toEqual([]);
+      expect(await svc.warnLowCredit()).toEqual(['u1']);
+    });
+
+    it('takes its threshold from the service', async () => {
+      const short = createBillingService({ repo, publish: async (key, envelope) => (published.push({ key, envelope }), true), now: () => clock, lowCreditHours: 5 });
+      await repo.setBalance('u1', 10);
+      await run('d1', 'u1');
+      expect(await short.warnLowCredit()).toEqual([]);
+      expect(await short.getStanding('u1')).toMatchObject({ hoursLeft: 10, runsLow: false });
+    });
+  });
+
   describe('plans (#369)', () => {
     const PRO = { name: 'Pro', pricePerHour: 3, freeHoursPerMonth: 0, maxServers: 10, maxDatabases: 10, maxRamMb: null, maxBackupsPerServer: null };
 

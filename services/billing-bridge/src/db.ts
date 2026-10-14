@@ -223,6 +223,20 @@ export class PrismaRepository implements Repository {
     return (await this.client.creditWallet.findUnique({ where: { userId }, select: { email: true } }))?.email ?? null;
   }
 
+  async getLowCreditWarnedAt(userId: string): Promise<string | null> {
+    const row = await this.client.creditWallet.findUnique({ where: { userId }, select: { lowCreditWarnedAt: true } });
+    return row?.lowCreditWarnedAt ? row.lowCreditWarnedAt.toISOString() : null;
+  }
+
+  async setLowCreditWarnedAt(userId: string, at: string | null): Promise<void> {
+    const lowCreditWarnedAt = at ? new Date(at) : null;
+    await this.client.creditWallet.upsert({
+      where: { userId },
+      create: { userId, balance: 0, currency: DEFAULT_PLAN.currency, lowCreditWarnedAt },
+      update: { lowCreditWarnedAt },
+    });
+  }
+
   async setBalance(userId: string, balance: number): Promise<CreditWallet> {
     const wallet = await this.client.creditWallet.upsert({
       where: { userId },
