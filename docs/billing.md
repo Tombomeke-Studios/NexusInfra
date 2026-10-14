@@ -125,6 +125,11 @@ the panel is **not** the owner of the hardware (a hosting-provider scenario). So
     `billing.server.suspend {deploymentIds}` for those that have none left; the Orchestrator stops the
     servers and notifies the people on them. Nothing is *charged* by this — the monthly cycle still does
     that — so the ledger keeps one charge per month.
+  - **A suspended server says so (#380).** The Orchestrator records the suspension with the server —
+    when and why — rather than only in its audit trail, so the Servers list and the server's page show
+    it as *suspended* and say whose credit ran out, until it is started again. Starting it clears the
+    mark, and starting still needs credit (`402` otherwise). It used to look like any other stopped
+    server, and the customer learned why only by pressing Start.
   - **Free hours count.** An account that owes nothing and still has free hours this month may run, which
     is how a plan with a free allowance lets a new customer start before paying. A provider who wants
     payment first sets the plan's free hours to zero.

@@ -457,6 +457,12 @@ never shows one row twice and hides another.
 
 Filtering happens after the caller's visibility is resolved, so it can never widen what they see.
 
+Every row (and `GET /deployments/:id`) carries `suspendedAt` and `suspendedReason` (#380): set when
+billing stopped the server for lack of credit (hosted), `null` otherwise. They stay set while the
+server is stopped and are cleared when a start passes the credit check or the server reports
+started. The status stays `stopped` — the runtime state — so a filter on `status=stopped` still finds
+it; the panel shows it as *suspended*.
+
 ### `GET /deployments/:id`
 
 A single deployment with its full `events` audit trail **and the runtime configuration it was created
