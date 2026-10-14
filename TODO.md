@@ -322,6 +322,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 ### Small cleanups / follow-ups (open)
 
 - [x] `docs/billing.md` is missing from the documentation ownership table in CLAUDE.md (#248)
+- [x] The port backfill handed a clashing port to the newer server instead of the one holding it — it walked the list newest first; its test only passed when both servers shared a millisecond (#358) 🐛
 
 ---
 
