@@ -63,6 +63,24 @@ describe('service images', () => {
     .map((service) => join(ROOT, 'services', service, 'Dockerfile'))
     .concat(join(ROOT, 'dashboard', 'Dockerfile'), join(ROOT, 'allinone', 'Dockerfile'));
 
+  // #357: both bundles mounted a volume for the agent's backups and neither set
+  // BACKUP_DIR, so nothing was ever written to it — backups lived in the
+  // container and went with it on every upgrade. The image now names the
+  // directory; a compose file has to mount a named volume exactly there.
+  it.each(COMPOSE_FILES)('keeps the node agent’s backups on a named volume, where the image writes them: %s', (file) => {
+    const dockerfile = readFileSync(join(ROOT, 'services', 'node-agent', 'Dockerfile'), 'utf8');
+    const backupDir = dockerfile.match(/^ENV BACKUP_DIR=(\S+)/m)?.[1];
+    expect(backupDir, 'the node-agent image must set BACKUP_DIR').toBeTruthy();
+    expect(dockerfile).toContain(`VOLUME ["${backupDir}"]`);
+
+    const compose = readFileSync(file, 'utf8');
+    const mount = compose.match(new RegExp(`^\\s*-\\s*([a-z_]+):${backupDir}\\s*$`, 'm'));
+    expect(mount, `no named volume mounted at ${backupDir}`).toBeTruthy();
+    expect(compose).toMatch(new RegExp(`^  ${mount![1]}:`, 'm'));
+    // Overriding the directory in a compose file would point the agent away from the mount again.
+    expect(compose).not.toMatch(/BACKUP_DIR=/);
+  });
+
   it.each(dockerfiles)('stamps its edition instead of baking NEXUS_EDITION in: %s', (file) => {
     // #292: billing-bridge set `ENV NEXUS_EDITION=community` in its runtime
     // stage. In the hosted image that contradicted the stamp, so the guard in

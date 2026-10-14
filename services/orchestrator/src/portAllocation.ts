@@ -44,7 +44,12 @@ export async function allocatePorts(repo: Repository, deploymentId: string, node
  */
 export async function backfillPortAllocations(repo: Repository): Promise<number> {
   let added = 0;
-  for (const d of await repo.listDeployments()) {
+  // Oldest first, so a clash stays with whoever held the port first — the list
+  // itself is newest first, which handed it to the newcomer (#358).
+  const oldestFirst = (await repo.listDeployments()).sort(
+    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)
+  );
+  for (const d of oldestFirst) {
     if (!d.nodeId) continue;
     if ((await repo.listPortAllocations({ deploymentId: d.id })).length) continue;
     const config = await repo.getDeploymentConfig(d.id);
