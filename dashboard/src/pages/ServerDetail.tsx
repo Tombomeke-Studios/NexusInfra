@@ -77,6 +77,7 @@ import { VersionSelect } from '../components/VersionSelect';
 import { permissionsFor, ROLE_LABELS, type ServerPermission, type ServerRole } from '../permissions';
 import { Terminal } from '../components/Terminal';
 import { SftpDetails } from '../components/SftpDetails';
+import { ResourcesEditor } from '../components/ResourcesEditor';
 import { formatBytes, formatRelative, isGameServer, parsePathList } from '../format';
 
 // Server detail — ported from the redesign, and now backed end to end: header
@@ -1616,7 +1617,7 @@ function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; o
             The heap is not offered here (#308). It follows the memory limit, and
             on every write the API derives it again unless one is sent — so a
             field showing the stored value would look editable while quietly being
-            replaced. The limit is what to change, on the Settings tab.
+            replaced. The limit is what to change, in Resources below (#381).
           */}
           {egg.variables
             .filter((v) => v.key !== egg.memoryVariable)
@@ -1634,7 +1635,7 @@ function ConfigEditor({ deployment, onSaved }: { deployment: DeploymentDetail; o
           {egg.memoryVariable && (
             <p className="subtle" style={{ margin: '0 0 14px', fontSize: '.82rem' }}>
               Java heap: <strong className="mono">{deployment.env?.[egg.memoryVariable] ?? '—'}</strong>, derived from this
-              server&apos;s memory limit. Change the limit and the heap follows it.
+              server&apos;s memory limit. Change the limit under Resources and the heap follows it.
             </p>
           )}
         </>
@@ -1825,6 +1826,7 @@ function SettingsTab({
   return (
     <>
       {allows('server.edit') && <ConfigEditor deployment={deployment} onSaved={onSaved} />}
+      {allows('server.edit') && <ResourcesEditor deployment={deployment} onSaved={onSaved} />}
       <MigrateCard deployment={deployment} onMoved={onSaved} />
       <div className="card" style={{ padding: '20px 22px', marginBottom: 18 }}>
         <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 6 }}>

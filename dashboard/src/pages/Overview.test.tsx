@@ -68,6 +68,34 @@ describe('Overview', () => {
     expect(screen.getByText('cpu 40% · ram 30%')).toBeInTheDocument();
   });
 
+  // A cap set in MB or cores counted as nothing, so a node full of servers sized
+  // that way looked empty (#383). The orchestrator's committed figure counts both.
+  it('counts caps set in MB and cores, from the node’s own committed figure', async () => {
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () =>
+          String(url).includes('/nodes')
+            ? [
+                {
+                  id: 'node-local', name: 'node-local', health: 'healthy', cpuPercent: 12, cpuCores: 8, ramUsedMb: 2000, ramTotalMb: 8192, lastHeartbeat: '', diskUsedGb: null, diskTotalGb: null,
+                  capacity: { ramTotalMb: 8192, ramCommittedMb: 6144, ramUsedMb: 2000, ramAvailableMb: 2048, cpuCoresTotal: 8, cpuCoresCommitted: 2, cpuUsedPercent: 12, cpuCoresAvailable: 6, overCommitted: false },
+                },
+              ]
+            : {
+                items: [{ id: 'd1', name: 'a', dockerImage: 'nginx', nodeId: 'node-local', containerId: 'c', status: 'running', startedAt: '', stoppedAt: null, createdAt: '', resourceLimits: { cpuCores: 2, ramMb: 6144 } }],
+                total: 1,
+                limit: 200,
+                offset: 0,
+              },
+      } as Response)
+    );
+    render(<Overview />, { wrapper: MemoryRouter });
+
+    expect(await screen.findByText('cpu 25% · ram 75%')).toBeInTheDocument();
+  });
+
   it('shows no core count for a node that has not reported one', async () => {
     render(<Overview />, { wrapper: MemoryRouter });
     await screen.findByText('node-local');

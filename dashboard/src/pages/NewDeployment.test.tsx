@@ -229,6 +229,34 @@ describe('NewDeployment', () => {
     expect(screen.queryByRole('textbox', { name: /Java heap size/i })).not.toBeInTheDocument();
   });
 
+  // A percentage of a node that has not reported its memory is still a limit —
+  // it just cannot be turned into megabytes, so neither can a heap (#381).
+  it('says why no heap can be worked out from a percentage of an unknown node', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/placement')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: 'n1' }) } as Response);
+      if (path.includes('/nodes'))
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 'n1', name: 'fresh-box', health: 'healthy', cpuPercent: null, ramUsedMb: null, ramTotalMb: null, diskUsedGb: null, diskTotalGb: null, lastHeartbeat: new Date().toISOString() }],
+        } as Response);
+      if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [MINECRAFT_EGG] } as Response);
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
+    });
+    renderForm();
+
+    await userEvent.click(screen.getByRole('button', { name: /Game server/ }));
+    await screen.findByRole('button', { name: /Java Edition/ });
+
+    expect(await screen.findByText(/fresh-box has not reported its memory yet/)).toBeInTheDocument();
+    expect(screen.queryByText(/no memory limit to derive one from/)).not.toBeInTheDocument();
+
+    // In MB the cap needs no node, and the heap follows it.
+    await userEvent.click(screen.getByRole('button', { name: 'RAM limit in MB' }));
+    expect(await screen.findByText(/1536 MB/)).toBeInTheDocument();
+  });
+
   it('sends no heap, which is what asks the API to derive one', async () => {
     fetchMock.mockImplementation((url: string) => {
       const path = String(url);

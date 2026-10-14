@@ -213,8 +213,28 @@ export function Overview() {
           // Committed is now the sum of the caps those servers were actually given;
           // servers deployed without a cap contribute nothing, which is the truth —
           // they are uncapped, not free.
-          const committedCpu = Math.min(100, Math.round(here.reduce((a, d) => a + (d.resourceLimits?.cpuPercent ?? 0), 0)));
-          const committedRam = Math.min(100, Math.round(here.reduce((a, d) => a + (d.resourceLimits?.ramPercent ?? 0), 0)));
+          //
+          // The node's own committed figure comes first (#383): it counts caps set
+          // in MB and cores as well as percentages, where summing `ramPercent`
+          // here counted a server sized in MB as nothing. The sum stays only for
+          // a response without `capacity`.
+          const cap = n.capacity;
+          const committedCpu = Math.min(
+            100,
+            Math.round(
+              cap?.cpuCoresTotal
+                ? (cap.cpuCoresCommitted / cap.cpuCoresTotal) * 100
+                : here.reduce((a, d) => a + (d.resourceLimits?.cpuPercent ?? 0), 0)
+            )
+          );
+          const committedRam = Math.min(
+            100,
+            Math.round(
+              cap?.ramTotalMb
+                ? (cap.ramCommittedMb / cap.ramTotalMb) * 100
+                : here.reduce((a, d) => a + (d.resourceLimits?.ramPercent ?? 0), 0)
+            )
+          );
           return (
             <article key={n.id} className="card node-card spotlight" data-spotlight style={{ ['--i']: i } as CSSProperties}>
               <div style={{ padding: 20 }}>

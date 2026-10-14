@@ -4,6 +4,7 @@ import { createDeployment, listNodes, listEggs, getPlacement, variableApplies, t
 import { IconPlus } from '../components/Icons';
 import { useToast } from '../components/Toast';
 import { InfoHint } from '../components/InfoHint';
+import { LimitField } from '../components/LimitField';
 import { parsePathList } from '../format';
 import { VersionSelect } from '../components/VersionSelect';
 import { getDeploymentDefaults } from '../prefs';
@@ -511,6 +512,14 @@ export function NewDeployment() {
                     <strong className="mono">{derivedHeap} MB</strong>, from the {capMb} MB limit above. The remaining{' '}
                     {capMb != null ? capMb - derivedHeap : 0} MB is for Java itself — metaspace, threads and buffers.
                   </p>
+                ) : ramUnit === 'percent' ? (
+                  // A percentage of a node whose memory is not known yet is a cap
+                  // nobody can turn into megabytes — not "no limit". Saying the
+                  // latter hid the old fixed-2G collision behind a wrong reason.
+                  <p className="subtle" style={{ margin: '0 0 8px', fontSize: '.84rem' }}>
+                    {target ? `${target.name} has` : 'The node has'} not reported its memory yet, so no heap can be worked out
+                    from a percentage. Set the RAM limit in MB and the heap follows it.
+                  </p>
                 ) : (
                   <p className="subtle" style={{ margin: '0 0 8px', fontSize: '.84rem' }}>
                     Set by the image, because this server has no memory limit to derive one from.
@@ -680,91 +689,6 @@ function CapacityBar({
       <span className="subtle" style={{ display: 'block', marginTop: 4, fontSize: '.74rem' }}>
         {format(committed)} committed of {format(total)}
       </span>
-    </div>
-  );
-}
-
-/** A limit set either as an absolute amount or as a share of the node (#275). */
-function LimitField<U extends string>({
-  label,
-  unit,
-  onUnitChange,
-  units,
-  hint,
-  absoluteValue,
-  onAbsoluteChange,
-  absoluteStep,
-  absoluteMax,
-  percentValue,
-  onPercentChange,
-  note,
-}: {
-  label: string;
-  unit: U;
-  onUnitChange: (u: U) => void;
-  units: { value: U; label: string }[];
-  hint: string;
-  absoluteValue: number;
-  onAbsoluteChange: (v: number) => void;
-  absoluteStep: number;
-  absoluteMax?: number;
-  percentValue: number;
-  onPercentChange: (v: number) => void;
-  note?: string;
-}) {
-  const isPercent = unit === 'percent';
-  return (
-    <div style={{ marginBottom: 18 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 9, gap: 10 }}>
-        <span style={{ fontSize: '.86rem', fontWeight: 550 }}>
-          {label}
-          <InfoHint text={hint} label={`${label} help`} />
-        </span>
-        <div style={{ display: 'flex', gap: 4 }}>
-          {units.map((u) => (
-            <button
-              key={u.value}
-              type="button"
-              data-ripple
-              onClick={() => onUnitChange(u.value)}
-              className={`opt opt--sm${unit === u.value ? ' is-active' : ''}`}
-              aria-pressed={unit === u.value}
-              // Named per field: two of these say "%", and "%" on its own tells a
-              // screen reader nothing about which limit it switches.
-              aria-label={`${label} in ${u.label}`}
-            >
-              {u.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      {isPercent ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <input
-            type="range"
-            min={5}
-            max={100}
-            step={5}
-            value={percentValue}
-            onChange={(e) => onPercentChange(Number(e.target.value))}
-            aria-label={`${label} percent`}
-            style={{ flex: 1 }}
-          />
-          <span className="mono tnum" style={{ minWidth: 48, textAlign: 'right', fontSize: '.9rem', fontWeight: 600 }}>{percentValue}%</span>
-        </div>
-      ) : (
-        <input
-          className="input mono"
-          type="number"
-          min={0}
-          step={absoluteStep}
-          max={absoluteMax}
-          value={absoluteValue}
-          onChange={(e) => onAbsoluteChange(Number(e.target.value))}
-          aria-label={label}
-        />
-      )}
-      {note && <span className="subtle" style={{ display: 'block', marginTop: 6, fontSize: '.78rem' }}>{note}</span>}
     </div>
   );
 }
