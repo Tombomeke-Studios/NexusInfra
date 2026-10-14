@@ -59,6 +59,9 @@ export type NexusInfraEvent =
   // Envelope + encryption are unchanged; these are internal to NexusInfra.
   // Billing Bridge → Orchestrator: stop this user's servers when credit runs out.
   | { type: 'billing.server.suspend'; payload: { userId: string; deploymentIds: string[]; reason: string } }
+  // Billing Bridge → Orchestrator: an account's credit lasts less than the
+  // warning threshold at its running servers' rate (#379). Sent once per dip.
+  | { type: 'billing.credit.low'; payload: { userId: string; hoursLeft: number; available: number; currency: string } }
   // NexusInfra → FinVault: a monthly invoice record for a closed billing cycle.
   // `customerEmail` is how FinVault finds whose statement it is (#375).
   | { type: 'invoice.generate'; payload: { reference: string; userId: string; periodStart: string; periodEnd: string; amount: number; currency: string; customerEmail?: string } };
