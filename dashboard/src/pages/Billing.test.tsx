@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { act } from '@testing-library/react';
 import { Billing, approvalHint, leftToSpendNote, newlyConfirmed, refreshInterval, sentence, statusLabel, POLL_MS, PENDING_POLL_MS } from './Billing';
 import type { LedgerEntry } from '../api';
 import { ToastProvider } from '../components/Toast';
+import { DialogProvider } from '../components/Dialog';
 
 // Fetch is stubbed per-URL to stand in for the orchestrator billing proxy.
 const plan = { id: 'standard', name: 'Standard', pricePerHour: 0.02, currency: 'EUR', freeHoursPerMonth: 100, maxServers: 5, maxDatabases: 5 };
@@ -64,6 +65,37 @@ describe('Billing page', () => {
     renderBilling();
     expect(await screen.findByText(/You owe .*2[.,]00/)).toBeInTheDocument();
     expect(screen.getByText(/Servers cannot be started/)).toBeInTheDocument();
+  });
+
+  // #369: found by looking at the page — after a switch it went on quoting the old plan's rate.
+  it('re-reads how the plan charges after the plan is changed', async () => {
+    let onPro = false;
+    const charging = (pricePerHour: number) => ({ basis: 'runtime-hours', pricePerHour, currency: 'EUR', freeHoursPerMonth: 0, sizeFactor: { standardCpuPercent: 50, standardRamPercent: 50, minimum: 0.25 } });
+    const option = (id: string, name: string) => ({ id, name, pricePerHour: 0.02, currency: 'EUR', freeHoursPerMonth: 0, maxServers: 5, maxDatabases: 5, maxRamMb: null, maxBackupsPerServer: null, active: true, problem: null });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        const u = String(url);
+        if (u.endsWith('/billing/plans')) return Promise.resolve(jsonResponse({ currentPlanId: onPro ? 'pro' : 'standard', plans: [option('standard', 'Standard'), option('pro', 'Pro')] }));
+        if (u.endsWith('/billing/plan') && init?.method === 'PUT') {
+          onPro = true;
+          return Promise.resolve(jsonResponse(option('pro', 'Pro')));
+        }
+        if (u.endsWith('/me/entitlements')) return Promise.resolve(jsonResponse({ entitlements: { charging: charging(onPro ? 0.07 : 0.02) }, usage: {} }));
+        return routeFetch(u);
+      })
+    );
+    render(
+      <ToastProvider>
+        <DialogProvider>
+          <Billing />
+        </DialogProvider>
+      </ToastProvider>
+    );
+    expect(await screen.findByText(/0[.,]02 for each hour a server runs/)).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole('button', { name: 'Switch to Pro' }));
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Switch to Pro' }));
+    expect(await screen.findByText(/0[.,]07 for each hour a server runs/)).toBeInTheDocument();
   });
 
   it('shows the credit balance and plan', async () => {

@@ -13,6 +13,7 @@ import { Preferences } from './pages/Preferences';
 import { Account } from './pages/Account';
 import { Users } from './pages/Users';
 import { Billing } from './pages/Billing';
+import { Customers } from './pages/Customers';
 import { useEdition } from './edition';
 import { BILLING_INCLUDED } from './buildEdition';
 
@@ -44,6 +45,8 @@ export function AppRoutes() {
               all (#190) — BILLING_INCLUDED is a compile-time constant, so this whole
               branch disappears from the community bundle. */}
           {BILLING_INCLUDED && isHosted && <Route path="/billing" element={<Billing />} />}
+          {/* The provider's side of billing (#369). The API is the gate; this only keeps it out of a community build. */}
+          {BILLING_INCLUDED && isHosted && <Route path="/customers" element={<Customers />} />}
         </Route>
       </Route>
     </Routes>

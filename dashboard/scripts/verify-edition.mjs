@@ -28,6 +28,11 @@ const BILLING_MARKERS = [
   // The plan panel and its client (#297).
   '/me/entitlements',
   'for each hour a server runs',
+  // Plans and the provider's Customers page (#369).
+  '/billing/plans',
+  '/billing/admin/',
+  'per server-hour',
+  'Credit held',
 ];
 
 /** Present in every build, so a bundle with none of these was not read properly. */

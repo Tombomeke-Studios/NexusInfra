@@ -124,6 +124,12 @@ export function Layout() {
               Accounts
             </NavLink>
           )}
+          {/* The provider's view of accounts and plans (#369): hosted, administrators. */}
+          {BILLING_INCLUDED && isHosted && isPlatformAdmin && (
+            <NavLink to="/customers" className="navlink" data-ripple>
+              Customers
+            </NavLink>
+          )}
           {/* Not in a community build at all (#190), so the bundler drops it. */}
           {BILLING_INCLUDED && isHosted && (
             <NavLink to="/billing" className="navlink" data-ripple>

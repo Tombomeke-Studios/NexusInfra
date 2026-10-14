@@ -297,7 +297,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [x] The Billing page's cycle usage counted every hour a server ever ran, not this cycle's (#366) 🐛
 - [x] The Billing Bridge's HTTP API was unauthenticated — anyone who could reach its port could read any wallet or start a top-up for anyone (#372) 🐛 — internal token on every route but `/health` and `/metrics`, one `bridgeFetch` in the Orchestrator, CORS removed
 - [ ] Verify a customer's email address at signup in the hosted edition (#367)
-- [ ] Plans a customer can choose between, and a provider's view of their customers (#369)
+- [x] Plans a customer can choose between, and a provider's view of their customers (#369) — administrators define, edit and retire plans; a customer switches on the Billing page when their servers fit; runtime is charged at the rate of the plan it ran under; a Customers page lists every account with plan, usage and balance, and adjusts credit by hand with a reason the customer sees
 - [x] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)
 - [x] `docs/billing.md` is missing from the documentation ownership table (#248)
 

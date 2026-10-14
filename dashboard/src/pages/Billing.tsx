@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getWallet, getUsage, getLedger, getStanding, topUp, getEntitlements, type CreditWallet, type BillingUsage, type CreditStanding, type LedgerEntry, type ChargingModel } from '../api';
 import { chargingSentence } from '../plan';
 import { useToast } from '../components/Toast';
+import { PlanChooser } from '../components/PlanChooser';
 import { formatRelative } from '../format';
 
 // Billing page (#149) — hosted edition only (the route is gated in routes.tsx via
@@ -80,6 +81,9 @@ export function Billing() {
   // How the plan charges (#297), said in words: "nothing was charged when I
   // created a server" reads as a bug unless the page says that is the model.
   const [charging, setCharging] = useState<ChargingModel | null>(null);
+  // Bumped when the plan changes (#369): the sentence describes the plan, and one
+  // left describing the plan you just moved off is a wrong price stated plainly.
+  const [planVersion, setPlanVersion] = useState(0);
   useEffect(() => {
     let live = true;
     getEntitlements()
@@ -88,7 +92,7 @@ export function Billing() {
     return () => {
       live = false;
     };
-  }, []);
+  }, [planVersion]);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [amount, setAmount] = useState(10);
@@ -252,6 +256,14 @@ export function Billing() {
           <strong style={{ color: 'var(--color-text-soft)' }}>How you are charged.</strong> {chargingSentence(charging)}
         </p>
       )}
+
+      {/* A different plan changes the rate and the limits shown above. */}
+      <PlanChooser
+        onChanged={() => {
+          setPlanVersion((v) => v + 1);
+          void refresh();
+        }}
+      />
 
       {/* Top up */}
       <div className="card" style={{ padding: '20px 22px', marginBottom: 22 }}>

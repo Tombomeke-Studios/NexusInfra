@@ -376,6 +376,8 @@ is the migrations directory.
 | `src/components/IntroTour.tsx` | First-run intro walkthrough (skippable, re-openable from the nav Help button) |
 | `src/pages/{Login,Overview,NewDeployment,Servers}.tsx` | Login, node health/overview (+ Platform-services strip from Control Room monitoring, #157), deployment form, live server list + stop |
 | `src/components/PlanPanel.tsx` · `src/plan.ts` | The plan beside the size being chosen in New Deployment (#297): ceilings, what is spent, whether this server fits (with a one-click "use what is left"), and the charging model in words. **Hosted-only** — aliased to `PlanPanel.stub.tsx` in a community build and marked in `verify-edition.mjs` |
+| `src/pages/Customers.tsx` · `src/billingAdmin.ts` | The provider's page (#369, **hosted-only** — aliased to `Customers.stub.tsx` in a community build, marked in `verify-edition.mjs`): every account with plan, usage, balance and what is left; move an account to a plan; adjust credit with a reason; create, edit and retire plans. `billingAdmin.ts` is the pure half — the plan form (memory typed in GB, a comma accepted as a decimal point), `planLimits`, `hourly` (keeps the digits of a €0.005 rate) |
+| `src/components/PlanChooser.tsx` | The plans on the customer's Billing page (#369). A plan the account does not fit shows *why* and no button; a switch is confirmed first, since it changes the rate from that moment |
 | `src/pages/Billing.tsx` | Billing page (hosted only): credit balance, top-up via FinVault, cycle usage/cost, payment history — route + nav link gated on `useEdition().isHosted` |
 | `src/health.ts` | Status → colour helpers shared across pages |
 | `src/test/setup.ts` · `vitest.config.ts` | jsdom + Testing Library setup; in-memory localStorage |
@@ -481,6 +483,10 @@ is the migrations directory.
 - **Anything that runs inside a container needs LF line endings** — see `.gitattributes`. CRLF makes
   the kernel read the carriage return as part of the interpreter path (`bad interpreter`), and it
   only shows up on a fresh clone on Windows.
+- **Nothing absolutely positioned inside a scrolling card unless the card is `position: relative` (#369).**
+  A `.sr-only` label in a table header escaped its card's `overflow-x: auto` — the card was not its
+  containing block — and the whole Customers page scrolled sideways on a phone. No unit test sees that;
+  it was found by measuring `scrollWidth` in a real browser at 390px.
 - **Colour tokens are measured, not picked (#247).** Every text token clears WCAG AA on every surface
   it sits on, in both themes — checked with axe across the whole panel. `--color-primary` is for text,
   borders and marks; **`--color-primary-solid`** (and `--color-danger-solid`) is for a fill with white
