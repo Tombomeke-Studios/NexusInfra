@@ -1,0 +1,11 @@
+# Provisioned so the dashboard works on first start (#355). The uid is fixed
+# because the dashboard refers to it.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: nexusinfra-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

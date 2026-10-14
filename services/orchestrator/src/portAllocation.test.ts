@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { InMemoryRepository } from './repository.js';
 import { backfillPortAllocations } from './portAllocation.js';
 import { PortConflictError } from './portPool.js';
@@ -12,6 +12,10 @@ describe('port allocations in the repository (#233)', () => {
 
   beforeEach(() => {
     repo = new InMemoryRepository();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('refuses a port another server holds on the same node, and writes nothing', async () => {
@@ -34,8 +38,14 @@ describe('port allocations in the repository (#233)', () => {
 
   it('records what servers from before #233 hold, once, and leaves an existing clash to its owner', async () => {
     await repo.upsertNode({ id: 'node-a', lastHeartbeat: new Date().toISOString() });
+    // Distinct creation times: with a tie the list order is insertion order, which
+    // hid that the backfill used to walk newest first (#358).
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
     const first = await server('first', { '25565': '25565' });
+    vi.setSystemTime(new Date('2026-01-02T00:00:00Z'));
     const second = await server('second', { '25565': '25565', '25575': '25575' });
+    vi.useRealTimers();
 
     expect(await backfillPortAllocations(repo)).toBe(2);
     expect((await repo.listPortAllocations({ deploymentId: first })).map((x) => x.port)).toEqual([25565]);

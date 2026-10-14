@@ -1,0 +1,9 @@
+apiVersion: 1
+providers:
+  - name: NexusInfra
+    folder: NexusInfra
+    type: file
+    # Edits made in Grafana are not written back here; export the JSON to keep one.
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/dashboards

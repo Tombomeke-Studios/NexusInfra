@@ -88,6 +88,7 @@ publish nothing else.
 | gateway `9400` | Only if you use it as the entry point instead of the dashboard |
 | node-agent `9100` | **Never.** It starts containers and opens shells; see [images.md](images.md) |
 | control-room `9000`, billing-bridge `9300` | No |
+| grafana `3000` (the `monitoring` profile, #355) | Behind the proxy if at all — it holds a password of its own. Prometheus is never published |
 | RabbitMQ `5672` / `15672` | No. Management UI least of all — it ships with `guest/guest` |
 
 The compose files publish ports on the host so a local install works out of the box. For an exposed
@@ -163,6 +164,40 @@ orchestrator is reachable directly, a caller can set it themselves and choose wh
   service ports from another machine.
 - Community edition refuses self-registration, so the only accounts are the ones you create. Hosted
   does not — that is the point of it, but it means the registration form is public.
+
+## Monitoring (#355)
+
+Every service serves Prometheus metrics at `/metrics` (#246). The compose files — the dev one and both
+release bundles — carry a **`monitoring` profile** that runs Prometheus and Grafana against them, with
+the NexusInfra dashboard provisioned:
+
+```bash
+# in .env: GRAFANA_ADMIN_PASSWORD=<something real>   (Grafana will not start without it)
+docker compose --profile monitoring up -d
+```
+
+Grafana is on `GRAFANA_PORT` (default 3000); the dashboard is its home page. It answers:
+
+- **Is everything up** — a scrape status per service, servers running, healthy nodes, dead letters.
+- **Servers and nodes** — by status and health, and what each node's Docker actually holds.
+- **Traffic** — requests and 5xx per service and route pattern, the five slowest routes (p95), and
+  the gateway's outcomes, refusals included.
+- **Events and delivery** — publishes the broker never took, the agent's outbox, lifecycle reports,
+  containers that stopped or came back on their own, and notification outcomes.
+- **Processes** — memory per service, and which version each is running.
+
+Without the profile nothing changes: neither service exists, and nothing is required.
+
+**`METRICS_TOKEN`.** Set it in `.env` and every service's `/metrics` wants it, and Prometheus sends it.
+The token is written to a file inside the Prometheus container when it starts; it is never in a
+configuration file. Set it whenever the orchestrator or gateway port can be reached from outside — the
+dashboard's `/api` proxy reaches the orchestrator's `/metrics` too.
+
+The configuration lives in `deploy/monitoring/` and ships in the release archive beside both bundles.
+The billing bridge's scrape job is a separate file that only the hosted stack mounts, so a community
+dashboard never shows a service that is always down. `deploy/monitoring.test.ts` fails when a panel
+queries a metric no service registers: a renamed metric would otherwise just leave a panel saying *No
+data*, and people learn to ignore that.
 
 ## PostgreSQL
 
