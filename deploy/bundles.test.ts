@@ -116,3 +116,17 @@ describe('service images', () => {
     expect(stage).not.toMatch(/^ENV NEXUS_EDITION/m);
   });
 });
+
+describe('the panel’s nginx', () => {
+  const CONFIGS = [join(ROOT, 'dashboard', 'nginx.conf'), join(ROOT, 'allinone', 'nginx.conf')];
+
+  // #389: nginx's default request limit is 1 MB, and neither config set one, so
+  // every upload larger than that — a plugin JAR, a world zip — was refused by
+  // nginx before the orchestrator, whose own limit is MAX_UPLOAD_BYTES, saw it.
+  it.each(CONFIGS)('leaves the upload limit to the orchestrator: %s', (file) => {
+    const conf = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+    const api = conf.match(/location \/api\/ \{([\s\S]*?)\n {2}\}/)?.[1];
+    expect(api, 'could not read the /api/ location').toBeTruthy();
+    expect(api).toMatch(/^\s*client_max_body_size 0;/m);
+  });
+});
