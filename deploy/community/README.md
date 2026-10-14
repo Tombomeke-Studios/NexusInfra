@@ -17,6 +17,10 @@ The Files tab shows the user name to use; the password is your account password 
 
 Everything runs from published images — you do not need a checkout of the source to use this.
 
+**Optional settings** — email notifications and password reset (`SMTP_URL`, `PANEL_URL`), off-site
+backups (`BACKUP_S3_*`), mandatory 2FA (`REQUIRE_TOTP`) and reverse-proxy trust (`TRUST_PROXY`) — are
+all switched on from `.env`; `.env.example` lists them with what each does.
+
 ## What you get
 
 Deploy any Docker image (or a game preset) as a managed server, with CPU/RAM limits, a live console

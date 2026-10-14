@@ -47,6 +47,16 @@ services:
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:?must match FinVault, or the two cannot read each other's events}
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?set a strong random value in .env}
       - AGENT_URL=http://node-agent:9100
+      # Off-site backups (#232): every backup also copied to an S3-compatible
+      # bucket. Off unless the bucket and both keys are set.
+      - BACKUP_S3_BUCKET=${BACKUP_S3_BUCKET:-}
+      - BACKUP_S3_ACCESS_KEY_ID=${BACKUP_S3_ACCESS_KEY_ID:-}
+      - BACKUP_S3_SECRET_ACCESS_KEY=${BACKUP_S3_SECRET_ACCESS_KEY:-}
+      - BACKUP_S3_ENDPOINT=${BACKUP_S3_ENDPOINT:-}
+      - BACKUP_S3_REGION=${BACKUP_S3_REGION:-}
+      - BACKUP_S3_PREFIX=${BACKUP_S3_PREFIX:-nexusinfra-backups/}
+      - BACKUP_S3_PATH_STYLE=${BACKUP_S3_PATH_STYLE:-}
+      - MAX_UPLOAD_BYTES=${MAX_UPLOAD_BYTES:-64mb}
     # The agent drives the host's Docker daemon, so it needs the socket. Its port
     # is deliberately NOT published: it is an internal API the Orchestrator calls
     # over this network, and it can start containers.
@@ -83,6 +93,16 @@ services:
       - SFTP_PORT=2022
       - SFTP_PUBLIC_PORT=${SFTP_PUBLIC_PORT:-2022}
       - SFTP_HOST_KEY_PATH=/data/sftp_host_ed25519_key
+      # Mail (#236): notifications by email, and — with PANEL_URL — password
+      # reset (#344) and email verification (#367). Off while SMTP_URL is unset.
+      - SMTP_URL=${SMTP_URL:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - PANEL_URL=${PANEL_URL:-}
+      # Behind a reverse proxy you control (#245); see docs/deployment.md.
+      - TRUST_PROXY=${TRUST_PROXY:-}
+      # true = every account must enrol a second factor (#229).
+      - REQUIRE_TOTP=${REQUIRE_TOTP:-false}
+      - MAX_UPLOAD_BYTES=${MAX_UPLOAD_BYTES:-64mb}
     volumes:
       - orchestrator_data:/data
     depends_on: [rabbitmq]

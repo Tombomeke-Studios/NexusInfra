@@ -42,6 +42,27 @@ describe('the release bundles', () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
+  // #391: compose passes only what it lists. Every variable below was added
+  // after the bundles were written and documented in docs/images.md, and none
+  // reached its service — setting SMTP_URL in a bundle's .env did nothing.
+  const FORWARDED: Record<string, string[]> = {
+    orchestrator: ['SMTP_URL', 'SMTP_FROM', 'PANEL_URL', 'TRUST_PROXY', 'REQUIRE_TOTP', 'MAX_UPLOAD_BYTES'],
+    'node-agent': [
+      'BACKUP_S3_BUCKET', 'BACKUP_S3_ACCESS_KEY_ID', 'BACKUP_S3_SECRET_ACCESS_KEY', 'BACKUP_S3_ENDPOINT',
+      'BACKUP_S3_REGION', 'BACKUP_S3_PREFIX', 'BACKUP_S3_PATH_STYLE', 'MAX_UPLOAD_BYTES',
+    ],
+  };
+  it.each(COMPOSE_FILES)('forwards the optional settings from .env to the services that read them: %s', (file) => {
+    const compose = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+    for (const [service, vars] of Object.entries(FORWARDED)) {
+      const block = compose.match(new RegExp(`^ {2}${service}:\\n((?: {4}.*\\n|\\n)+)`, 'm'))?.[1];
+      expect(block, `could not read the ${service} service block`).toBeTruthy();
+      for (const name of vars) {
+        expect(block, `${service} does not receive ${name}`).toMatch(new RegExp(`^\\s*- ${name}=\\$\\{${name}:-`, 'm'));
+      }
+    }
+  });
+
   it('ships a billing-bridge in the hosted bundle and not in the community one', () => {
     const hosted = readFileSync(join(DEPLOY, 'hosted', 'docker-compose.yml'), 'utf8');
     const community = readFileSync(join(DEPLOY, 'community', 'docker-compose.yml'), 'utf8');

@@ -64,6 +64,12 @@ of the panel and the gateway, replace the default broker credentials, and read
 [docs/security.md](https://github.com/Tombomeke-Studios/NexusInfra/blob/main/docs/security.md) — the
 known gaps are listed there rather than left implicit.
 
+Set **`SMTP_URL`, `SMTP_FROM` and `PANEL_URL`** in `.env` before customers arrive. Without mail there
+is no password reset and no email verification, so a customer who forgets their password cannot get
+back in. Behind your reverse proxy, also set **`TRUST_PROXY=1`**, or every customer shares one
+rate-limit bucket. Off-site backups (`BACKUP_S3_*`) and mandatory 2FA (`REQUIRE_TOTP`) are switched on
+the same way — all of them are listed in `.env.example`.
+
 ## Billing model
 
 Pricing, quotas, the wallet and the monthly cycle are described in
