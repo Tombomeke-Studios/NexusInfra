@@ -60,7 +60,7 @@ export const queryMinecraft: Probe = (host, port, timeoutMs) =>
       sentAt = process.hrtime.bigint();
       socket.write(minecraftStatusRequest(host, port));
     });
-    socket.on('data', (chunk) => {
+    socket.on('data', (chunk: Buffer) => {
       received = Buffer.concat([received, chunk]);
       try {
         const json = readMinecraftStatusFrame(received);
