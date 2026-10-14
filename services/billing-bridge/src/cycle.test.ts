@@ -69,6 +69,8 @@ describe('runBillingCycle', () => {
     expect(outcome.cost).toBe(10);
     expect(outcome.status).toBe('paid');
     expect((await repo.getWallet('u1')).balance).toBe(90);
+    // Shown to the customer: a month's name, not two timestamps.
+    expect((await repo.listLedger('u1'))[0].description).toBe('Usage for July 2026');
     const invoice = published.find((p) => p.key === 'invoice.generate');
     expect(invoice).toBeTruthy();
     expect(readPayload(invoice!.envelope.event).amount).toBe(10);

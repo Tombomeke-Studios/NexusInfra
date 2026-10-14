@@ -73,6 +73,11 @@ export function computeCycleCost(intervals: ServerBillingRecord[], plan: Billing
   return roundCurrency(cost);
 }
 
+/** "September 2026" — how a billed month reads in a customer's payment history. */
+export function periodLabel(period: CyclePeriod): string {
+  return new Date(period.start).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+
 export type PublishFn = (routingKey: string, envelope: EventEnvelope) => Promise<boolean>;
 
 export interface CycleRunnerDeps {
@@ -122,7 +127,7 @@ export async function runBillingCycle(deps: CycleRunnerDeps, period: CyclePeriod
         currency: plan.currency,
         reference: `charge-${period.start}-${userId}`,
         status: 'confirmed',
-        description: `Usage ${period.start} – ${period.end}`,
+        description: `Usage for ${periodLabel(period)}`,
       });
       await repo.setBalance(userId, applyCharge(wallet.balance, cost));
 
