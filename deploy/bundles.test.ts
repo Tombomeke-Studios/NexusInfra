@@ -179,4 +179,14 @@ describe('the panel’s nginx', () => {
     const init = readFileSync(join(ROOT, 'allinone', 'root', 'usr', 'local', 'bin', 'nexusinfra-init'), 'utf8');
     expect(init).toMatch(/TRUST_PROXY=\$\{TRUST_PROXY:-1\}/);
   });
+
+  // #403: a host name in a plain proxy_pass is resolved once, at start. After
+  // `docker compose up -d` recreated the orchestrator on a new address, the
+  // whole panel answered 502 until the dashboard was restarted too.
+  it('resolves the orchestrator per request, through Docker’s DNS', () => {
+    const conf = readFileSync(join(ROOT, 'dashboard', 'nginx.conf'), 'utf8');
+    expect(conf).toMatch(/^\s*resolver 127\.0\.0\.11\b/m);
+    expect(conf).toMatch(/^\s*proxy_pass \$orchestrator;/m);
+    expect(conf).toMatch(/^\s*rewrite \^\/api\(\/\.\*\)\$ \$1 break;/m);
+  });
 });

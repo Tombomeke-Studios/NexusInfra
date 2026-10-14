@@ -186,7 +186,9 @@ Requires the Docker socket: `-v /var/run/docker.sock:/var/run/docker.sock`.
 ### `dashboard`
 
 No configuration. It is built per edition and served by nginx, which proxies `/api` to a host named
-`orchestrator` on the same network. If your orchestrator has a different name, put your own reverse
+`orchestrator` on the same network. The name is looked up through Docker's embedded DNS
+(`127.0.0.11`) on each request rather than once at start (#403), so recreating the orchestrator does
+not leave the panel answering 502 — which also means the network has to be a Docker one. If your orchestrator has a different name, put your own reverse
 proxy in front or supply your own nginx configuration.
 
 ---
