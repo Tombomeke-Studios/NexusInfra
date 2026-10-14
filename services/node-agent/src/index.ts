@@ -15,6 +15,7 @@ import { createDataRouter } from './volumes.js';
 import { createDiskUsageCache, createDiskUsageRouter } from './diskUsage.js';
 import { createImageRouter } from './images.js';
 import { createMigrationRouter } from './migrateRoutes.js';
+import { createQueryRouter, resolveQueryHost } from './queryRoutes.js';
 import { attachTerminal, type TerminalSocket } from './terminal.js';
 
 // ── Node Agent ────────────────────────────────────────────────────────────────
@@ -169,6 +170,13 @@ app.use(createImageRouter(runtime));
 
 // ── HTTP: moving a server between nodes (#234) — its volumes and backups ─────
 app.use(createMigrationRouter(runtime));
+
+// ── HTTP: ask a game server how it is doing (#382) — players, version, MOTD ───
+// The published port is on this host, so this is where it can be reached from.
+// The host is worked out once: see resolveQueryHost for why it is not loopback.
+const queryHost = resolveQueryHost();
+void queryHost.then((host) => console.log(`[Node Agent ${NODE_ID}] Game status queries go to ${host}`));
+app.use(createQueryRouter({ host: () => queryHost }));
 
 // ── WebSocket: interactive terminal (#71) ─────────────────────────────────────
 // Internal WS endpoint (reached only via the Orchestrator's WS proxy) that opens

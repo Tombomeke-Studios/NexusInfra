@@ -50,6 +50,11 @@ services:
     # The agent drives the host's Docker daemon, so it needs the socket. Its port
     # is deliberately NOT published: it is an internal API the Orchestrator calls
     # over this network, and it can start containers.
+    # Game status queries (#382) reach a server's published port on the host,
+    # which is not this container's loopback. On Docker Desktop the name exists
+    # already; on Linux this maps it to the host gateway.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - agent_backups:/var/lib/nexusinfra/backups

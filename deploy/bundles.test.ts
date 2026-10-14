@@ -94,6 +94,17 @@ describe('service images', () => {
     expect(compose).not.toMatch(/BACKUP_DIR=/);
   });
 
+  // #382: the agent asks game servers for their status on their published host
+  // port. Inside the agent's container 127.0.0.1 is the container itself, so on
+  // Linux every server would read "offline" without this mapping — and nothing
+  // else would fail to say why.
+  it.each(COMPOSE_FILES)('lets the node agent reach the host’s published ports: %s', (file) => {
+    const compose = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+    const service = compose.match(/^ {2}node-agent:\n((?: {4}.*\n|\n)+)/m)?.[1];
+    expect(service, 'could not read the node-agent service block').toBeTruthy();
+    expect(service).toContain('host.docker.internal:host-gateway');
+  });
+
   it.each(dockerfiles)('stamps its edition instead of baking NEXUS_EDITION in: %s', (file) => {
     // #292: billing-bridge set `ENV NEXUS_EDITION=community` in its runtime
     // stage. In the hosted image that contradicted the stamp, so the guard in

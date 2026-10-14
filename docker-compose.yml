@@ -54,6 +54,11 @@ services:
       # deployments to this agent (#171). Uses the compose service DNS name.
       - AGENT_URL=http://node-agent:9100
     # The agent drives the host Docker daemon, so it needs the socket mounted.
+    # Game status queries (#382) reach a server's published port on the host,
+    # which is not this container's loopback. On Docker Desktop the name exists
+    # already; on Linux this maps it to the host gateway.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       # Backups outlive the container (#357) — the image's BACKUP_DIR.
