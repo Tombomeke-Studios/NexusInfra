@@ -298,6 +298,14 @@ another variable — `NEOFORGE_VERSION` only to `TYPE=NEOFORGE`. A variable that
 asked for **and not sent to the container**: irrelevant environment is noise at best, and where two
 mod loaders read near-identical names it is a way to install the wrong one.
 
+A `string` variable may carry the rules its game imposes (#384): `minLength` / `maxLength` (Valheim
+will not start with a password under five characters) and `pattern` — a regular expression matched
+against the **whole** value — with `patternHint`, the words shown when it does not match (Project
+Zomboid's server name becomes a file name and may not contain a space). Every string also refuses line
+breaks and other control characters: several images write the value straight into a config file,
+where a newline is a way to add lines of your own. The rules apply to what was typed — a blank answer
+still means the default, which is how an optional password (default `""`) stays optional.
+
 ### `POST /deployments`
 
 Create and place a deployment.

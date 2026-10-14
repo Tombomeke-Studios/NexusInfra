@@ -270,3 +270,215 @@ describe('the eggs added in #315', () => {
     expect(getEgg('valheim')?.dockerImage).toBe('ghcr.io/community-valheim-tools/valheim-server');
   });
 });
+
+describe('string rules a game imposes (#384)', () => {
+  const base = getEgg('minecraft-java')!;
+  const egg = (overrides: Partial<Egg['variables'][number]>): Egg => ({
+    ...base,
+    variables: [{ key: 'NAME', label: 'Server name', description: 'The name the game files the save under.', kind: 'string', default: 'world', ...overrides }],
+  });
+
+  it('refuses a value shorter than the game accepts, naming the field', () => {
+    const e = egg({ minLength: 5 });
+    expect(() => buildEggDeployment(e, { NAME: 'abcd' })).toThrow(/Server name must be at least 5 characters/);
+    expect(buildEggDeployment(e, { NAME: 'abcde' }).env.NAME).toBe('abcde');
+  });
+
+  it('refuses a value longer than the game accepts', () => {
+    const e = egg({ maxLength: 8 });
+    expect(() => buildEggDeployment(e, { NAME: 'abcdefghi' })).toThrow(/at most 8 characters/);
+    expect(buildEggDeployment(e, { NAME: 'abcdefgh' }).env.NAME).toBe('abcdefgh');
+  });
+
+  it('refuses a value of the wrong shape with the hint a person can act on', () => {
+    const e = egg({ pattern: '^[A-Za-z0-9_-]+$', patternHint: 'letters, digits, - and _ only — no spaces' });
+    expect(() => buildEggDeployment(e, { NAME: 'my server' })).toThrow(/Server name: letters, digits, - and _ only/);
+    expect(buildEggDeployment(e, { NAME: 'my_server-1' }).env.NAME).toBe('my_server-1');
+  });
+
+  it('anchors the pattern to the whole value', () => {
+    // A pattern written without ^…$ must not pass a value that merely contains a match.
+    const e = egg({ pattern: '[a-z]+', patternHint: 'lower-case letters only' });
+    expect(() => buildEggDeployment(e, { NAME: 'abc def' })).toThrow(EggValidationError);
+    expect(buildEggDeployment(e, { NAME: 'abc' }).env.NAME).toBe('abc');
+  });
+
+  it('refuses control characters in any string', () => {
+    // Several images write the value straight into a config file — a newline
+    // there is a way to add lines of your own (another world path, a password).
+    const e = egg({});
+    for (const bad of ['a\nworld=/etc/passwd', 'tab\there', 'nul\u0000', 'bell\u0007', 'del\u007f']) {
+      expect(() => buildEggDeployment(e, { NAME: bad })).toThrow(/Server name cannot contain line breaks or control characters/);
+    }
+  });
+
+  it('still lets a blank answer mean "use the default", even for an optional field', () => {
+    // An optional password is a default of '' — the rules apply to what was typed.
+    const e = egg({ default: '', minLength: 5 });
+    expect(buildEggDeployment(e, { NAME: '' }).env.NAME).toBe('');
+    expect(buildEggDeployment(e, {}).env.NAME).toBe('');
+  });
+
+  it('holds Valheim to the 5 characters it needs to start', () => {
+    const valheim = getEgg('valheim')!;
+    expect(() => buildEggDeployment(valheim, { SERVER_PASS: 'abcd' })).toThrow(/Password must be at least 5 characters/);
+    expect(buildEggDeployment(valheim, { SERVER_PASS: 'abcde' }).env.SERVER_PASS).toBe('abcde');
+  });
+
+  it('gives every egg defaults that pass their own rules', () => {
+    // A default the egg itself would refuse is a form that starts out rejected.
+    for (const e of EGGS) {
+      for (const v of e.variables) {
+        if (v.kind !== 'string' || v.default === '') continue;
+        expect(() => buildEggDeployment(e, { [v.key]: v.default }), `${e.id}.${v.key}`).not.toThrow();
+      }
+    }
+  });
+});
+
+describe('the eggs added in #384', () => {
+  const NEW = ['terraria', 'factorio', 'satisfactory', 'project-zomboid', 'enshrouded'];
+
+  it('offers all five alongside the rest', () => {
+    expect(EGGS.map((e) => e.id)).toEqual(expect.arrayContaining(NEW));
+    expect(EGGS).toHaveLength(11);
+  });
+
+  it('takes each from the image its project publishes now', () => {
+    expect(getEgg('terraria')!.dockerImage).toBe('passivelemon/terraria-docker:terraria-latest');
+    // `latest` is Factorio's experimental build; `stable` is what factorio.com calls stable.
+    expect(getEgg('factorio')!.dockerImage).toBe('factoriotools/factorio:stable');
+    // wolveix renamed to robtme — the old name still updates, for now. #317 is
+    // what following an old name to its end looks like.
+    expect(getEgg('satisfactory')!.dockerImage).toBe('robtme/satisfactory-server');
+    expect(getEgg('project-zomboid')!.dockerImage).toBe('danixu86/project-zomboid-dedicated-server');
+    expect(getEgg('enshrouded')!.dockerImage).toBe('mornedhels/enshrouded-server');
+  });
+
+  it('publishes every port on the protocol the game uses (#313)', () => {
+    // Terraria is the one game here that is plain TCP.
+    expect(getEgg('terraria')!.ports).toEqual({ '7777': '7777' });
+    expect(getEgg('factorio')!.ports).toEqual({ '34197': '34197/udp' });
+    // 7777 carries the game on both protocols; 8888 is the server's TCP messaging.
+    expect(getEgg('satisfactory')!.ports).toEqual({ '7777': '7777/tcp+udp', '8888': '8888/tcp' });
+    expect(getEgg('project-zomboid')!.ports).toEqual({ '16261': '16261/udp', '16262': '16262/udp' });
+    expect(getEgg('enshrouded')!.ports).toEqual({ '15637': '15637/udp' });
+  });
+
+  it('keeps each server’s files where its image writes them', () => {
+    expect(getEgg('terraria')!.dataPath).toBe('/opt/terraria/config');
+    expect(getEgg('factorio')!.dataPath).toBe('/factorio');
+    expect(getEgg('satisfactory')!.dataPath).toBe('/config');
+    expect(getEgg('project-zomboid')!.dataPath).toBe('/home/steam/Zomboid');
+    expect(getEgg('enshrouded')!.dataPath).toBe('/opt/enshrouded');
+  });
+
+  describe('Terraria', () => {
+    const terraria = getEgg('terraria')!;
+
+    it('creates a world on first start instead of waiting at a prompt', () => {
+      // The image has no default for AUTOCREATE: without it a fresh server has no
+      // world to load and nothing to make one with.
+      const built = buildEggDeployment(terraria);
+      expect(built.env.AUTOCREATE).toBe('2');
+      expect(built.env.WORLDNAME).toBeTruthy();
+    });
+
+    it('takes the world size and difficulty as the numbers the server reads', () => {
+      expect(terraria.variables.find((v) => v.key === 'AUTOCREATE')!.options).toEqual(['1', '2', '3']);
+      expect(terraria.variables.find((v) => v.key === 'DIFFICULTY')!.options).toEqual(['0', '1', '2', '3']);
+      expect(() => buildEggDeployment(terraria, { AUTOCREATE: 'large' })).toThrow(EggValidationError);
+    });
+
+    it('leaves the password optional, because Terraria is open without one', () => {
+      expect(buildEggDeployment(terraria).env.PASSWORD).toBe('');
+      expect(buildEggDeployment(terraria, { PASSWORD: 'hunter22' }).env.PASSWORD).toBe('hunter22');
+    });
+
+    it('refuses a world name that would leave the Worlds folder', () => {
+      // It becomes /opt/terraria/config/Worlds/<name>.wld.
+      expect(() => buildEggDeployment(terraria, { WORLDNAME: '../escape' })).toThrow(EggValidationError);
+      expect(buildEggDeployment(terraria, { WORLDNAME: 'My World 2' }).env.WORLDNAME).toBe('My World 2');
+    });
+
+    it('caps player slots at what the server supports', () => {
+      expect(() => buildEggDeployment(terraria, { MAXPLAYERS: '256' })).toThrow(/at most 255/);
+    });
+  });
+
+  describe('Factorio', () => {
+    const factorio = getEgg('factorio')!;
+
+    it('leaves Space Age off by default, so the base game can join', () => {
+      // A Space Age server turns away every player who does not own the expansion.
+      expect(buildEggDeployment(factorio).env.DLC_SPACE_AGE).toBe('false');
+      expect(buildEggDeployment(factorio, { DLC_SPACE_AGE: 'TRUE' }).env.DLC_SPACE_AGE).toBe('true');
+    });
+  });
+
+  describe('Satisfactory', () => {
+    const satisfactory = getEgg('satisfactory')!;
+
+    it('sets the image’s own variable names and bounds', () => {
+      const built = buildEggDeployment(satisfactory);
+      expect(built.env).toMatchObject({ MAXPLAYERS: '4', AUTOSAVENUM: '5', STEAMBETA: 'false' });
+      expect(() => buildEggDeployment(satisfactory, { MAXPLAYERS: '0' })).toThrow(EggValidationError);
+    });
+  });
+
+  describe('Project Zomboid', () => {
+    const zomboid = getEgg('project-zomboid')!;
+
+    it('has the admin password the image needs at first start', () => {
+      // Without it the first start fails.
+      expect(buildEggDeployment(zomboid).env.ADMINPASSWORD).toBeTruthy();
+    });
+
+    it('refuses a server name with a space, which breaks the admin account', () => {
+      expect(() => buildEggDeployment(zomboid, { SERVERNAME: 'my server' })).toThrow(/Save name/);
+      expect(buildEggDeployment(zomboid, { SERVERNAME: 'my_server-2' }).env.SERVERNAME).toBe('my_server-2');
+    });
+
+    it('names its JVM heap, so it is derived from the memory limit (#308)', () => {
+      expect(zomboid.memoryVariable).toBe('MEMORY');
+      expect(zomboid.variables.some((v) => v.key === 'MEMORY')).toBe(true);
+    });
+
+    it('offers only the presets the game ships', () => {
+      // An unknown preset makes the image exit before the server starts.
+      const preset = zomboid.variables.find((v) => v.key === 'SERVERPRESET')!;
+      expect(preset.options).toEqual(['Apocalypse', 'Beginner', 'Builder', 'FirstWeek', 'SixMonthsLater', 'Survival', 'Survivor']);
+      expect(() => buildEggDeployment(zomboid, { SERVERPRESET: 'Hardcore' })).toThrow(EggValidationError);
+    });
+  });
+
+  describe('Enshrouded', () => {
+    const enshrouded = getEgg('enshrouded')!;
+
+    it('sets up an admin role and a player role, each behind its own password', () => {
+      // Enshrouded has no server password any more — access is per role, and a
+      // role with an empty password lets anyone in with its permissions.
+      const built = buildEggDeployment(enshrouded);
+      expect(built.env).toMatchObject({ SERVER_ROLE_0_NAME: 'Admin', SERVER_ROLE_0_CAN_KICK_BAN: 'true', SERVER_ROLE_1_NAME: 'Friend', SERVER_ROLE_1_CAN_KICK_BAN: 'false' });
+      expect(built.env.SERVER_ROLE_0_PASSWORD).toBeTruthy();
+      expect(built.env.SERVER_ROLE_1_PASSWORD).toBeTruthy();
+      expect(built.env.SERVER_PASSWORD).toBeUndefined();
+    });
+
+    it('does not let a caller hand the player role admin rights', () => {
+      // The permissions are the recipe, not a question.
+      const built = buildEggDeployment(enshrouded, { SERVER_ROLE_1_CAN_KICK_BAN: 'true' });
+      expect(built.env.SERVER_ROLE_1_CAN_KICK_BAN).toBe('false');
+    });
+
+    it('caps slots at the 16 the game allows', () => {
+      expect(() => buildEggDeployment(enshrouded, { SERVER_SLOT_COUNT: '17' })).toThrow(/at most 16/);
+    });
+
+    it('asks for the voice chat mode only when voice chat is on', () => {
+      expect(buildEggDeployment(enshrouded).env.SERVER_VOICE_CHAT_MODE).toBeUndefined();
+      const on = buildEggDeployment(enshrouded, { SERVER_ENABLE_VOICE_CHAT: 'true', SERVER_VOICE_CHAT_MODE: 'Global' });
+      expect(on.env.SERVER_VOICE_CHAT_MODE).toBe('Global');
+    });
+  });
+});

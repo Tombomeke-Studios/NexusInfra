@@ -76,7 +76,9 @@ Most people want the first one.
 
 ### In short
 
-- Deploy any Docker image, or a game preset, from a browser — with CPU, memory and restart policy
+- Deploy any Docker image, or a game preset, from a browser — with CPU, memory and restart policy.
+  Presets: Minecraft (Java and Bedrock), Palworld, Valheim, Rust, Counter-Strike 2, Terraria,
+  Factorio, Satisfactory, Project Zomboid and Enshrouded
 - Live console, interactive terminal, file browser and SFTP, managed databases, backups and cron schedules
 - Share servers by email or by team, with roles from read-only to full control
 - Automatic placement across several machines, with live health and uptime per host
