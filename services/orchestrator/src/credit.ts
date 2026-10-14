@@ -1,4 +1,5 @@
 import { isHosted } from 'shared';
+import { bridgeFetch } from './bridge.js';
 
 // Prepaid credit, enforced where servers are started (#365). The Billing Bridge
 // knows what an account has left; the Orchestrator is the one that starts
@@ -37,10 +38,10 @@ export function creditProblem(standing: Standing | null): string | null {
  * billing outage must not stop people running servers — and it is logged, so
  * running without the check is never silent.
  */
-export async function fetchStanding(bridgeUrl: string, userId: string): Promise<Standing | null> {
+export async function fetchStanding(userId: string): Promise<Standing | null> {
   if (!isHosted()) return null;
   try {
-    const r = await fetch(`${bridgeUrl}/billing/${encodeURIComponent(userId)}/standing`);
+    const r = await bridgeFetch(`/billing/${encodeURIComponent(userId)}/standing`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return (await r.json()) as Standing;
   } catch (err) {

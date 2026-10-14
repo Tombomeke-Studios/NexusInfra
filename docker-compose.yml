@@ -108,6 +108,8 @@ services:
     environment:
       - PORT=9300
       - NEXUS_EDITION=${NEXUS_EDITION:-community}
+      # Must match the Orchestrator's value: the bridge serves only callers that hold it (#372).
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-dev-internal-token}
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
       # SQLite unless BILLING_DATABASE_URL names PostgreSQL — its own schema in

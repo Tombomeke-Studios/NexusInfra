@@ -1,11 +1,10 @@
 import { Router, type Request, type Response } from 'express';
+import { bridgeFetch } from './bridge.js';
 
 // Authenticated billing proxy (hosted edition). The dashboard talks only to the
 // Orchestrator (/api); these routes forward to the Billing Bridge, injecting the
 // caller's authenticated userId from the JWT so the client never passes a user id
 // itself. Mounted after requireAuth.
-
-const BILLING_BRIDGE_URL = process.env.BILLING_BRIDGE_URL || 'http://billing-bridge:9300';
 
 function userIdOf(req: Request): string | undefined {
   return (req as Request & { userId?: string }).userId;
@@ -31,7 +30,7 @@ export function createBillingProxyRouter(deps: BillingProxyDeps = {}): Router {
 
   const forward = async (req: Request, res: Response, path: string, init?: RequestInit) => {
     try {
-      const r = await fetch(`${BILLING_BRIDGE_URL}/billing/${encodeURIComponent(userIdOf(req) as string)}${path}`, init);
+      const r = await bridgeFetch(`/billing/${encodeURIComponent(userIdOf(req) as string)}${path}`, init);
       const body = await r.text();
       res.status(r.status);
       return body ? res.type('application/json').send(body) : res.end();

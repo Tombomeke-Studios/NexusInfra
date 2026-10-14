@@ -125,7 +125,7 @@ const backupDeps: BackupDeps = {
   agentUrlFor,
   // The plan's ceiling on backups per server (#297); none in community.
   async backupCeiling(userId) {
-    return (await fetchEntitlements(process.env.BILLING_BRIDGE_URL || 'http://billing-bridge:9300', userId))?.maxBackupsPerServer ?? null;
+    return (await fetchEntitlements(userId))?.maxBackupsPerServer ?? null;
   },
   async snapshot({ agentUrl, ...spec }) {
     const r = await agentFetch(`${agentUrl}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(spec) });

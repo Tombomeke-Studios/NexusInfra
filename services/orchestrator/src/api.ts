@@ -25,6 +25,7 @@ import { pageOf, parseFilter, parsePage } from './deploymentQuery.js';
 import { getMinecraftVersions } from './minecraftVersions.js';
 import { fetchEntitlements, ramChangeProblem, ramProblem, usageFor, type Entitlements } from './entitlements.js';
 import { creditProblem, fetchStanding, type Standing } from './credit.js';
+import { bridgeFetch } from './bridge.js';
 import { committedRamMb } from './capacity.js';
 import type { DeploymentDetail, NodeRecord, Repository, ServerConfigRecord, UpdateServerConfigInput } from './types.js';
 import type { ResourceLimits } from 'shared';
@@ -56,7 +57,6 @@ export function agentFetch(url: string, init: RequestInit = {}): Promise<globalT
 }
 
 // Where the Billing Bridge's internal HTTP lives (hosted edition only).
-const BILLING_BRIDGE_URL = process.env.BILLING_BRIDGE_URL || 'http://billing-bridge:9300';
 
 /**
  * Whether a server has a live container to act on (#321).
@@ -207,7 +207,7 @@ export interface ApiDeps {
 const defaultCheckQuota: CheckQuotaFn = async (userId, resource, current) => {
   if (!isHosted()) return { allowed: true, limit: Infinity };
   try {
-    const r = await fetch(`${BILLING_BRIDGE_URL}/billing/${userId}/quota?resource=${resource}&current=${current}`);
+    const r = await bridgeFetch(`/billing/${encodeURIComponent(userId)}/quota?resource=${resource}&current=${current}`);
     if (!r.ok) return { allowed: true, limit: Infinity };
     return (await r.json()) as { allowed: boolean; limit: number };
   } catch {
@@ -356,8 +356,8 @@ export function createApiRouter(deps: ApiDeps): Router {
   const downloadBackup = deps.downloadBackup ?? defaultDownloadBackup;
   const scheduleActions = deps.scheduleActions ?? noopScheduleActions;
   const checkQuota = deps.checkQuota ?? defaultCheckQuota;
-  const getEntitlements = deps.getEntitlements ?? ((userId: string) => fetchEntitlements(BILLING_BRIDGE_URL, userId));
-  const getStanding = deps.getStanding ?? ((userId: string) => fetchStanding(BILLING_BRIDGE_URL, userId));
+  const getEntitlements = deps.getEntitlements ?? ((userId: string) => fetchEntitlements(userId));
+  const getStanding = deps.getStanding ?? ((userId: string) => fetchStanding(userId));
   const purgeDeploymentData = deps.purgeDeploymentData ?? defaultPurgeDeploymentData;
   const imageStatus = deps.imageStatus ?? defaultImageStatus;
   const diskUsage = deps.diskUsage ?? defaultDiskUsage;

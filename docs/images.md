@@ -171,6 +171,7 @@ Requires the Docker socket: `-v /var/run/docker.sock:/var/run/docker.sock`.
 | Variable | Required | Notes |
 |---|---|---|
 | `DATABASE_URL` | yes | `file:/data/billing.db` (mount a volume at `/data`), or PostgreSQL — its own schema if it shares the orchestrator's database, e.g. `postgresql://…/nexusinfra?schema=billing`. |
+| `INTERNAL_API_TOKEN` | yes | Must match the orchestrator's. The bridge serves only callers that hold it (#372); with different values every billing check fails — and they fail *open*, so nothing is enforced. |
 | `BILLING_WALLET_ID` | no | NexusInfra's receiver wallet id on top-up requests to FinVault. |
 | `FINVAULT_MESSAGE_KEY` | yes | Must be FinVault's value exactly. A different key cannot decrypt anything: the log says so, the event is dead-lettered, and top-ups turn *Not confirmed* (#298). |
 | `SETTLE_INTERVAL_MS` | no | How often running accounts are checked against their balance and suspended when it is used up (default `300000`, 5 min) (#365). |

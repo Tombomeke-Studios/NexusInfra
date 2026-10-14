@@ -295,6 +295,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [x] The Billing Bridge forgot who owned a server when it restarted, and stopped billing it (#364) 🐛 — owner and size are stored; a start reported twice opens one interval; a resize reaches billing
 - [x] Prepaid credit was not enforced — an account with no credit ran servers for a month, and could restart a suspended one (#365) 🐛 — creating and starting need credit (402, owner's standing); running servers are suspended within five minutes of the credit running out; the Billing page shows what is left to spend. Servers are not restarted automatically after a top-up, on purpose
 - [x] The Billing page's cycle usage counted every hour a server ever ran, not this cycle's (#366) 🐛
+- [x] The Billing Bridge's HTTP API was unauthenticated — anyone who could reach its port could read any wallet or start a top-up for anyone (#372) 🐛 — internal token on every route but `/health` and `/metrics`, one `bridgeFetch` in the Orchestrator, CORS removed
 - [ ] Verify a customer's email address at signup in the hosted edition (#367)
 - [ ] Plans a customer can choose between, and a provider's view of their customers (#369)
 - [x] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)

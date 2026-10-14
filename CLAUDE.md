@@ -309,6 +309,7 @@ is the migrations directory.
 | `src/lifecycle.ts` | Consumes `infra.server.started/stopped/crashed`, updates deployment status + audit |
 | `src/credit.ts` | Prepaid, enforced where servers start (#365): pure `creditProblem` + `fetchStanding` (fail-open, logged). Create and start answer `402` when the **owner** has nothing left; stopping is never blocked |
 | `src/suspend.ts` | `createSuspendHandler` — consumes `billing.server.suspend` (hosted), stops each named running deployment + audits it |
+| `src/bridge.ts` | `bridgeFetch` — the one way to call the Billing Bridge: base URL + the internal token (#372) |
 | `src/billingProxy.ts` | `createBillingProxyRouter` — authenticated `/billing/*` proxy → Billing Bridge, injecting the JWT user id (dashboard never sends a user id) and, on a top-up, the account's own email as the payer (#351). No user, no answer: 401 |
 | `src/monitoring.ts` | `createMonitoringRouter` — `GET /monitoring` proxies the Control Room's `/status` to the dashboard (`reachable:false` if it's down) |
 | `src/wsProxy.ts` | Pure `pipeSockets` + `toWsUrl` — the terminal WS proxy plumbing; `index.ts` authenticates the JWT, resolves the container, and pipes the client WS ↔ the Node Agent's `/terminal` WS (#71) |
@@ -331,6 +332,7 @@ is the migrations directory.
 | `src/prisma.integration.test.ts` | The billing repository on real SQLite and PostgreSQL: concurrent confirmations credit once (#298) |
 | `src/cycle.ts` | Monthly cycle runner: pure `computeCycleCost`/period helpers + `runBillingCycle` (charge credit → `billing.server.suspend` on short balance → `invoice.generate`) + `startCycleRunner` (hourly poll, idempotent) |
 | `src/api.ts` | `createBillingRouter` — HTTP: wallet/usage/ledger/plan/quota + `POST /topup` |
+| `src/internalAuth.ts` | `requireInternalToken` — every route but `/health` and `/metrics` needs the shared internal token (#372). The routes act on whichever account the path names, and nothing used to stop anyone naming one |
 | `src/index.ts` | Entry: PrismaRepository + service; consumes deployment/runtime + `bank.payment.*`; HTTP `/health` (+ billing routes when hosted) on `:9300`; inert in community |
 | `prisma/schema.prisma` | Prisma + SQLite: `BillingPlan`, `UserPlan`, `BillingDeployment` (owner + size, #364), `ServerBilling`, `CreditWallet`, `CreditLedger`, `BillingCycle`. `prisma/migrations` is the source of truth |
 | `Dockerfile` | Multi-stage build; runtime applies `prisma migrate deploy` then starts |
@@ -443,6 +445,9 @@ is the migrations directory.
 - **Agent calls must target the *owning* node** — resolve it with `agentUrlFor(deployment.nodeId)`,
   never the bare `NODE_AGENT_URL` constant (that is only the single-node fallback). Getting this wrong
   operates on the wrong host and fails silently with 2+ nodes (#171).
+- **Every Orchestrator → Billing Bridge call must go through `bridgeFetch`** (`bridge.ts`, #372). The
+  bridge believes the user id in the path, so it serves only callers with the internal token. A bare
+  `fetch` answers 401 — and the billing checks fail *open*, so the symptom is billing quietly not enforced.
 - **Every Orchestrator → Node Agent call must go through `agentFetch`** (or carry
   `INTERNAL_TOKEN_HEADER` explicitly, as the terminal WS dial does). The agent rejects untokened
   requests with 401 (#169) — a bare `fetch` to `NODE_AGENT_URL` will silently start failing.
