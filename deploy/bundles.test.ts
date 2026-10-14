@@ -162,4 +162,21 @@ describe('the panel’s nginx', () => {
     expect(api, 'could not read the /api/ location').toBeTruthy();
     expect(api).toMatch(/^\s*client_max_body_size 0;/m);
   });
+
+  // #401: the login limiter keys on the caller's address. The all-in-one's
+  // nginx did not pass it on, so every request came from 127.0.0.1 and one
+  // person's typos locked everybody out.
+  it.each(CONFIGS)('tells the orchestrator who is calling: %s', (file) => {
+    const conf = readFileSync(file, 'utf8');
+    expect(conf).toMatch(/proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;/);
+  });
+
+  it.each(COMPOSE_FILES.slice(1))('believes the dashboard’s nginx about the caller by default: %s', (file) => {
+    expect(readFileSync(file, 'utf8')).toMatch(/- TRUST_PROXY=\$\{TRUST_PROXY:-1\}/);
+  });
+
+  it('has the all-in-one trust its own nginx', () => {
+    const init = readFileSync(join(ROOT, 'allinone', 'root', 'usr', 'local', 'bin', 'nexusinfra-init'), 'utf8');
+    expect(init).toMatch(/TRUST_PROXY=\$\{TRUST_PROXY:-1\}/);
+  });
 });

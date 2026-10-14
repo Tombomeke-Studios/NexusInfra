@@ -89,6 +89,9 @@ fi
   echo "ORCHESTRATOR_URL=http://127.0.0.1:9200"
   echo "FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:-}"
   echo "DATABASE_PUBLIC_HOST=${DATABASE_PUBLIC_HOST:-localhost}"
+  # The orchestrator is reachable only through this container's nginx, which
+  # sets X-Forwarded-For (#401). Set 2 with your own reverse proxy in front.
+  echo "TRUST_PROXY=${TRUST_PROXY:-1}"
   # SFTP to a server's files (#235); SFTP_PORT=off turns it off.
   if [ "${SFTP_PORT:-2022}" != "off" ]; then
     echo "SFTP_PORT=${SFTP_PORT:-2022}"

@@ -287,9 +287,11 @@ scrolling log lines describing events that never happened.
 
 - [ ] Deleting a server leaves its backup archives on the node (#390) 🐛
 
-- [ ] Release bundles cannot turn on mail, password reset, 2FA enforcement, off-site backups or proxy trust (#391) 🐛
+- [x] Release bundles cannot turn on mail, password reset, 2FA enforcement, off-site backups or proxy trust (#391) 🐛
 
-- [ ] Release bundles publish internal ports on every interface, and 9000 collides with common tools (#392) 🐛
+- [x] Release bundles publish internal ports on every interface, and 9000 collides with common tools (#392) 🐛
+
+- [x] Out of the box every panel user shares one login rate-limit bucket (#401) 🐛
 
 - [ ] Every service prints the broker password to its log when it connects (#394) 🐛
 

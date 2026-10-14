@@ -151,8 +151,12 @@ server {
 
 Rate limiting (#225) keys on the caller's IP, and behind a proxy every request appears to come from
 the proxy — so one address would carry everyone's budget and lock the whole installation out
-together. Set `TRUST_PROXY=1` on the orchestrator so it reads `X-Forwarded-For`, and make sure the
-proxy sets that header.
+together. `TRUST_PROXY` tells the orchestrator how many proxies to believe `X-Forwarded-For` from, and
+make sure each one sets that header.
+
+Count the hops: the release bundles already default to `1` — the dashboard's own nginx — and the
+all-in-one image trusts its internal nginx itself (#401). **Put Caddy or nginx in front of a bundle
+and it is `2`**; with `1` every request would appear to come from your proxy again.
 
 Only do this behind a proxy you control. `X-Forwarded-For` is a request header like any other: if the
 orchestrator is reachable directly, a caller can set it themselves and choose which bucket to spend.

@@ -102,8 +102,11 @@ services:
       - SMTP_URL=${SMTP_URL:-}
       - SMTP_FROM=${SMTP_FROM:-}
       - PANEL_URL=${PANEL_URL:-}
-      # Behind a reverse proxy you control (#245); see docs/deployment.md.
-      - TRUST_PROXY=${TRUST_PROXY:-}
+      # 1 = believe the dashboard's nginx about the caller's address (#401), so
+      # the login limiter counts each person rather than one shared bucket.
+      # Safe here: the API is on 127.0.0.1 only and the gateway overwrites the
+      # header. Set 2 when your own reverse proxy sits in front of the panel.
+      - TRUST_PROXY=${TRUST_PROXY:-1}
       # true = every account must enrol a second factor (#229).
       - REQUIRE_TOTP=${REQUIRE_TOTP:-false}
       - MAX_UPLOAD_BYTES=${MAX_UPLOAD_BYTES:-64mb}
