@@ -41,6 +41,22 @@ export interface BillingServiceDeps {
  */
 export const DEFAULT_TOPUP_TIMEOUT_MS = 30 * 60 * 1000;
 
+/**
+ * How many top-ups one account may have waiting on FinVault (#351). Each one is
+ * a payment request in somebody's FinVault inbox, addressed by an email this
+ * side has not verified.
+ */
+export const MAX_PENDING_TOPUPS = 3;
+
+/** A top-up that was refused before anything was sent; `status` is the HTTP answer. */
+export class TopUpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+const REASON_MAX = 300;
+
 /** A confirmed amount "matches" to the cent: the ledger stores money, not floats. */
 const sameAmount = (a: number, b: number) => Math.round(a * 100) === Math.round(b * 100);
 
@@ -99,9 +115,17 @@ export function createBillingService(deps: BillingServiceDeps) {
     /**
      * Start a credit top-up: record a pending ledger entry and ask FinVault to
      * charge the user (payment.request). Credit is added only on payment.confirmed.
+     *
+     * `customerEmail` is who FinVault asks to pay (#351) — the account's own
+     * address, supplied by the Orchestrator from the signed-in user, never by the
+     * browser.
      */
-    async requestTopUp(userId: string, amount: number, currency?: string): Promise<TopUpResult> {
-      if (!(amount > 0)) throw new Error('top-up amount must be positive');
+    async requestTopUp(userId: string, amount: number, currency?: string, customerEmail?: string): Promise<TopUpResult> {
+      if (!(amount > 0)) throw new TopUpError('top-up amount must be positive', 400);
+      const waiting = (await repo.listLedger(userId)).filter((e) => e.type === 'topup' && e.status === 'pending').length;
+      if (waiting >= MAX_PENDING_TOPUPS) {
+        throw new TopUpError(`you already have ${waiting} top-ups waiting to be approved in FinVault — pay or decline one there first`, 409);
+      }
       const wallet = await repo.getWallet(userId);
       const cur = currency ?? wallet.currency;
       const reference = `topup-${userId}-${randomUUID()}`;
@@ -114,10 +138,25 @@ export function createBillingService(deps: BillingServiceDeps) {
         status: 'pending',
         description: 'NexusInfra credit top-up',
       });
-      await emit(KEY_PAYMENT_REQUEST, {
+      const sent = await emit(KEY_PAYMENT_REQUEST, {
         type: 'payment.request',
-        payload: { reference, senderWalletId: userId, receiverWalletId: billingWalletId, amount, currency: cur, description: 'NexusInfra credit top-up' },
+        payload: {
+          reference,
+          senderWalletId: userId,
+          receiverWalletId: billingWalletId,
+          amount,
+          currency: cur,
+          description: 'NexusInfra credit top-up',
+          ...(customerEmail ? { customerEmail } : {}),
+        },
       });
+      if (!sent) {
+        // The broker did not take it, so FinVault will never see this request.
+        // Saying so now beats thirty minutes of "pending" for nothing.
+        const reason = 'the request could not be sent to FinVault';
+        await repo.transitionLedgerStatus(entry.id, ['pending'], 'failed', reason);
+        throw new TopUpError(`${reason} — nothing was charged, try again in a moment`, 503);
+      }
       return { reference, entry };
     },
 
@@ -145,12 +184,13 @@ export function createBillingService(deps: BillingServiceDeps) {
       return repo.setBalance(entry.userId, applyTopUp(wallet.balance, entry.amount));
     },
 
-    /** A top-up failed in FinVault: mark it failed, no credit added. */
-    async handlePaymentFailed(payload: { reference: string }): Promise<CreditLedgerEntry | null> {
+    /** A top-up failed in FinVault: mark it failed with FinVault's reason, no credit added. */
+    async handlePaymentFailed(payload: { reference: string; reason?: string }): Promise<CreditLedgerEntry | null> {
       const entry = await repo.getLedgerByReference(payload.reference);
       if (!entry || entry.type !== 'topup') return null;
-      if (!(await repo.transitionLedgerStatus(entry.id, ['pending', 'expired'], 'failed'))) return null;
-      return { ...entry, status: 'failed' };
+      const failureReason = typeof payload.reason === 'string' && payload.reason.trim() ? payload.reason.trim().slice(0, REASON_MAX) : null;
+      if (!(await repo.transitionLedgerStatus(entry.id, ['pending', 'expired'], 'failed', failureReason ?? undefined))) return null;
+      return { ...entry, status: 'failed', failureReason };
     },
 
     /**

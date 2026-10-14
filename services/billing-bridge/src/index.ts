@@ -85,7 +85,7 @@ async function start() {
             await service.handlePaymentConfirmed(payload as { reference: string; amount: number });
             break;
           case 'payment.failed':
-            await service.handlePaymentFailed(payload as { reference: string });
+            await service.handlePaymentFailed(payload as { reference: string; reason?: string });
             break;
           default:
             break;

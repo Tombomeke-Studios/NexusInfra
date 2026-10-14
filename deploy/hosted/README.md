@@ -48,7 +48,14 @@ broker with the same message key:
    encryption; if the values differ the two platforms cannot read each other's events, and top-ups
    will silently never confirm.
 
+4. In **FinVault**, set `NEXUSINFRA_MERCHANT_EMAIL` to the FinVault account that should receive what
+   your customers pay. Until it is set FinVault ignores top-up requests.
+
 Both stacks declare the same exchanges idempotently, so start order does not matter.
+
+A customer tops up from the Billing page; that puts a payment request in the FinVault account with
+the **same email address** as their panel account, and the credit arrives when they pay it there. Tell
+your customers to register here with the address they use at FinVault.
 
 ## Before this is public
 

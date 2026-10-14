@@ -28,7 +28,8 @@ describe('database schemas (#241)', () => {
       const run = spawnSync(
         prisma,
         ['migrate', 'diff', '--exit-code', '--from-migrations', 'prisma/migrations', '--to-schema-datamodel', 'prisma/schema.prisma', '--shadow-database-url', `file:${path.join(dir, 'shadow.db')}`],
-        { cwd: serviceDir, encoding: 'utf8' }
+        // `.bin/prisma` is a shell script; on Windows only a shell can start it (#361).
+        { cwd: serviceDir, encoding: 'utf8', shell: process.platform === 'win32' }
       );
       // 0: no difference. 2: the migrations are missing something — add one.
       expect(run.status, `the SQLite migrations do not produce prisma/schema.prisma — add a migration:\n${run.stdout}${run.stderr}`).toBe(0);

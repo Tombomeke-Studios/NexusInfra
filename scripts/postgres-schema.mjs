@@ -16,6 +16,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const HEADER = `// GENERATED from ../schema.prisma by scripts/postgres-schema.mjs — do not edit.
 // Change ../schema.prisma, run \`npm run db:sync-postgres\`, and add a migration
@@ -58,7 +59,9 @@ function main() {
     } catch {
       // missing counts as out of date
     }
-    if (current !== wanted) {
+    // Line endings are the checkout's business (autocrlf), not a schema difference.
+    const lf = (text) => text.replace(/\r\n/g, '\n');
+    if (lf(current) !== lf(wanted)) {
       console.error(`✖ ${target} is out of date with ${source}. Run \`npm run db:sync-postgres\` in ${service} and add a PostgreSQL migration.`);
       process.exit(1);
     }
@@ -70,4 +73,6 @@ function main() {
   console.log(`wrote ${target}`);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main();
+// Compared as URLs: on Windows argv[1] is a backslashed path, which never equalled
+// `file://` + itself, so this script silently did nothing there (#361).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

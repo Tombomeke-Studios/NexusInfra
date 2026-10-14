@@ -63,9 +63,22 @@ the panel is **not** the owner of the hardware (a hosting-provider scenario). So
 - **Prepaid credit wallet in NexusInfra.** Each user has a **credit balance** held in NexusInfra. Usage
   each cycle draws it down. You **top up** the balance **via FinVault** — so you can fund the wallet
   without linking a card directly to NexusInfra.
-- **Top-up flow.** A top-up emits `payment.request` to FinVault referencing the **user** (FinVault
-  resolves the user's wallet/payment method on its side); on `payment.confirmed` the credit is added, on
-  `payment.failed` the top-up is marked failed.
+- **Top-up flow (#351).** A top-up emits `payment.request` to FinVault carrying the customer's **email
+  address**. FinVault turns it into a payment request in that person's FinVault account — under
+  Invoices → Payment Requests, in the web and mobile apps — payable to the hosting provider's merchant
+  account. Nothing is charged until the customer presses Pay there. On `payment.confirmed` the credit is
+  added; on `payment.failed` (declined, or refused by FinVault) the top-up is marked failed with
+  FinVault's reason, which the Billing page shows.
+  - **Who pays is the signed-in account, by its own address.** The Orchestrator fills the email in from
+    the session; one sent by the browser is ignored, because the address decides whose FinVault inbox
+    receives a payment request. A NexusInfra user id means nothing to FinVault until the two share an
+    identity (#17), and the email is what both already have.
+  - **The address is not verified** — NexusInfra does not confirm email addresses at signup. Someone
+    could register with another person's address and send them payment requests, which that person can
+    only decline. Both sides cap it: three top-ups waiting per NexusInfra account, five open requests per
+    recipient in FinVault.
+  - **Not sent is not pending.** If the broker does not take the request, the top-up fails immediately
+    and says so, rather than waiting out the timeout for an answer that cannot come.
   - **Once, and for the amount asked.** The status change is a single conditional update, so a
     confirmation delivered twice credits once (#298 — before, two concurrent deliveries both
     credited). A confirmation for a different amount than was requested credits nothing and is logged
@@ -114,13 +127,34 @@ Run against a checkout of FinVault's `main` on one RabbitMQ, with the hosted sta
 | Mismatched message key | ✅ Names its cause in the log, dead-letters (the Control Room reports it), and the top-up turns **Not confirmed** |
 | Late confirmation | ✅ Credited after expiry |
 | Monthly cycle | ✅ Charge → short balance → `billing.server.suspend` → the server's container actually stopped |
-| NexusInfra → FinVault request | ❌ **FinVault does not consume it** — a top-up cannot complete yet. See #351: FinVault needs a consumer, and the request needs an identity FinVault can resolve until #17 |
+| NexusInfra → FinVault request | See "The whole top-up, live" below |
+
+### The whole top-up, live (#351)
+
+Run on 2026-10-14 with both platforms from source — FinVault's gateway and its account, wallet and
+invoice services; NexusInfra's Orchestrator and Billing Bridge in the hosted edition — on one RabbitMQ,
+with `FINVAULT_MESSAGE_KEY` set, so every payload was encrypted:
+
+| | |
+|---|---|
+| Request reaches FinVault | ✅ A top-up asked for in the panel became a payment request in the FinVault account with the same email, payable to the merchant account |
+| The payer is the signed-in account | ✅ An address put in the request body was ignored |
+| Paid in FinVault | ✅ The money left the customer's FinVault account and the NexusInfra balance rose by the same amount, seconds later |
+| Pay pressed twice at once | ✅ One transfer, one credit; the second call was told the request is no longer pending |
+| Declined in FinVault | ✅ The top-up turned **Failed** with FinVault's reason; the balance did not move |
+
+Not exercised live: the FinVault apps' Pay and Decline buttons themselves (the run called the same
+endpoints they call), and a confirmation that fails to publish and is retried a minute later (covered
+by FinVault's unit tests only).
 
 ## How it links to the app (FinVault)
 
-- **Identity.** Long-term, the dashboard authenticates with a **FinVault-issued JWT** (shared identity,
-  via the API Gateway #20), so a NexusInfra `userId` *is* the FinVault user. `payment.request` references
-  that user; FinVault resolves the wallet. Until the gateway lands, the stub login stands in.
+- **Identity.** The two platforms have separate accounts. What links a NexusInfra customer to a FinVault
+  one is the **email address** on both (#351). Long-term the dashboard could authenticate with a
+  FinVault-issued JWT (#17), so a NexusInfra `userId` *is* the FinVault user.
+- **What FinVault needs.** `NEXUSINFRA_MERCHANT_EMAIL` set to the FinVault account that receives the
+  money, the same broker, and the same `FINVAULT_MESSAGE_KEY`. Without the merchant account FinVault
+  ignores top-up requests and they end as *Not confirmed*.
 - **Money never touches NexusInfra directly.** NexusInfra only holds a **credit balance**; the actual
   charge happens in FinVault (card/wallet), decoupled over RabbitMQ with AES-GCM-encrypted payloads.
 - **The panel keeps the balance current (#296).** A balance changes with nothing happening on the

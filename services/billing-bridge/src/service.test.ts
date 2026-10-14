@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { readPayload, type EventEnvelope } from 'shared';
 import { InMemoryRepository } from './repository.js';
-import { createBillingService, type BillingService } from './service.js';
+import { createBillingService, MAX_PENDING_TOPUPS, type BillingService } from './service.js';
 import { DEFAULT_PLAN } from './pricing.js';
 
 // Service tests run against the in-memory repo with a captured publisher and a
@@ -81,6 +81,38 @@ describe('billing service', () => {
       expect(wallet?.balance).toBe(20);
       const ledger = await repo.listLedger('u1');
       expect(ledger[0].status).toBe('confirmed');
+    });
+
+    it('tells FinVault who to ask, by the address it was given (#351)', async () => {
+      await svc.requestTopUp('u1', 20, undefined, 'u1@example.com');
+      expect(readPayload(published[0].envelope.event).customerEmail).toBe('u1@example.com');
+    });
+
+    it('keeps FinVault’s reason when a top-up fails', async () => {
+      const { reference } = await svc.requestTopUp('u1', 20);
+      const failed = await svc.handlePaymentFailed({ reference, reason: 'the customer declined the request' });
+      expect(failed?.failureReason).toBe('the customer declined the request');
+      expect((await repo.listLedger('u1'))[0]).toMatchObject({ status: 'failed', failureReason: 'the customer declined the request' });
+    });
+
+    it('refuses another top-up while too many are waiting, and allows one again when one settles', async () => {
+      const references: string[] = [];
+      for (let i = 0; i < MAX_PENDING_TOPUPS; i++) references.push((await svc.requestTopUp('u1', 5)).reference);
+      await expect(svc.requestTopUp('u1', 5)).rejects.toMatchObject({ status: 409 });
+      expect(published).toHaveLength(MAX_PENDING_TOPUPS);
+      // Somebody else's waiting top-ups are not this account's.
+      await expect(svc.requestTopUp('u2', 5)).resolves.toBeTruthy();
+
+      await svc.handlePaymentFailed({ reference: references[0], reason: 'declined' });
+      await expect(svc.requestTopUp('u1', 5)).resolves.toBeTruthy();
+    });
+
+    it('fails the top-up at once when the request never reached the broker', async () => {
+      const offline = createBillingService({ repo, publish: async () => false, now: () => clock });
+      await expect(offline.requestTopUp('u1', 20)).rejects.toMatchObject({ status: 503 });
+      const [entry] = await repo.listLedger('u1');
+      expect(entry).toMatchObject({ status: 'failed', failureReason: expect.stringContaining('could not be sent') });
+      expect((await repo.getWallet('u1')).balance).toBe(0);
     });
 
     it('marks failed on payment.failed and adds no credit', async () => {

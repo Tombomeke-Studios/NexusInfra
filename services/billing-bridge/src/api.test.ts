@@ -32,15 +32,29 @@ describe('billing API', () => {
   });
 
   it('starts a top-up and emits payment.request', async () => {
-    const res = await request(app).post('/billing/u1/topup').send({ amount: 25 });
+    const res = await request(app).post('/billing/u1/topup').send({ amount: 25, email: 'U1@Example.com' });
     expect(res.status).toBe(202);
     expect(res.body.status).toBe('pending');
+    expect(res.body.payerEmail).toBe('u1@example.com');
     expect(published[0].key).toBe('bank.payment.request');
-    expect(readPayload(published[0].envelope.event).amount).toBe(25);
+    expect(readPayload(published[0].envelope.event)).toMatchObject({ amount: 25, customerEmail: 'u1@example.com' });
+  });
+
+  it('refuses a top-up that does not say who FinVault should ask (#351)', async () => {
+    const res = await request(app).post('/billing/u1/topup').send({ amount: 25 });
+    expect(res.status).toBe(400);
+    expect(published).toHaveLength(0);
+  });
+
+  it('answers 409 once too many top-ups are waiting', async () => {
+    for (let i = 0; i < 3; i++) await request(app).post('/billing/u1/topup').send({ amount: 5, email: 'u1@example.com' });
+    const res = await request(app).post('/billing/u1/topup').send({ amount: 5, email: 'u1@example.com' });
+    expect(res.status).toBe(409);
+    expect(published).toHaveLength(3);
   });
 
   it('rejects a non-positive top-up', async () => {
-    const res = await request(app).post('/billing/u1/topup').send({ amount: 0 });
+    const res = await request(app).post('/billing/u1/topup').send({ amount: 0, email: 'u1@example.com' });
     expect(res.status).toBe(400);
   });
 

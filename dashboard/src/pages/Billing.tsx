@@ -43,6 +43,19 @@ export function statusLabel(status: LedgerEntry['status']): string {
 }
 
 /** Top-ups that were pending in `before` and are confirmed in `after`. */
+/** What to do next after asking for a top-up: the credit only arrives once it is approved in FinVault (#351). */
+export function approvalHint(amount: string, payerEmail?: string): string {
+  const where = payerEmail ? `the FinVault account of ${payerEmail}` : 'your FinVault account';
+  return `A payment request for ${amount} is waiting in ${where}. Approve it there and the credit is added here.`;
+}
+
+/** A reason from another system, shown as a sentence. */
+export function sentence(reason: string): string {
+  const text = reason.trim();
+  if (!text) return '';
+  return text.charAt(0).toUpperCase() + text.slice(1) + (/[.!?]$/.test(text) ? '' : '.');
+}
+
 export function newlyConfirmed(before: LedgerEntry[], after: LedgerEntry[]): LedgerEntry[] {
   // An expired top-up is still waiting in the sense that matters: FinVault may
   // confirm it late, and then the credit lands and deserves the same toast.
@@ -142,8 +155,8 @@ export function Billing() {
     if (!(amount > 0)) return;
     setBusy(true);
     try {
-      await topUp(amount);
-      toast(`Top-up of ${money(amount, currency)} requested — credit is added once payment confirms.`, 'success', 'Top-up');
+      const { payerEmail } = await topUp(amount);
+      toast(approvalHint(money(amount, currency), payerEmail), 'success', 'Top-up requested');
       await refresh();
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Top-up failed', 'error');
@@ -230,8 +243,14 @@ export function Billing() {
           </button>
         </div>
         <p className="subtle" style={{ margin: '10px 0 0', fontSize: '.8rem' }}>
-          A top-up charges your FinVault wallet; credit lands here once the payment confirms.
+          A top-up sends a payment request to the FinVault account with your email address. Approve it there, under
+          Invoices → Payment Requests, and the credit lands here within seconds. Nothing is charged until you do.
         </p>
+        {ledger.some((e) => e.type === 'topup' && e.status === 'pending') && (
+          <p role="status" className="alert alert--warning" style={{ margin: '12px 0 0' }}>
+            A top-up is waiting for you in FinVault. Pay it there to add the credit, or decline it to cancel.
+          </p>
+        )}
       </div>
 
       {/* History */}
@@ -264,7 +283,12 @@ export function Billing() {
                   <td style={{ padding: '6px 8px' }}>{formatRelative(e.createdAt)}</td>
                   <td style={{ padding: '6px 8px', textTransform: 'capitalize' }}>{e.type}</td>
                   <td style={{ padding: '6px 8px' }}>{e.description}</td>
-                  <td style={{ padding: '6px 8px' }}>{statusLabel(e.status)}</td>
+                  <td style={{ padding: '6px 8px' }}>
+                    {statusLabel(e.status)}
+                    {e.status === 'failed' && e.failureReason && (
+                      <div className="subtle" style={{ fontSize: '.78rem' }}>{sentence(e.failureReason)}</div>
+                    )}
+                  </td>
                   <td style={{ padding: '6px 8px', textAlign: 'right', color: e.type === 'topup' ? 'var(--color-success)' : 'inherit' }}>
                     {e.type === 'topup' ? '+' : '−'}{money(e.amount, e.currency)}
                   </td>

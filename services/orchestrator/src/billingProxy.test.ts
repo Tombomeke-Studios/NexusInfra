@@ -7,14 +7,16 @@ import { createBillingProxyRouter } from './billingProxy.js';
 // into the path. We stub global fetch to stand in for the bridge and stub auth to
 // set req.userId.
 
-function appAs(userId: string) {
+const EMAILS: Record<string, string> = { alice: 'alice@example.com', bob: 'bob@example.com' };
+
+function appAs(userId: string | undefined) {
   const app = express();
   app.use(express.json());
   app.use((req: Request & { userId?: string }, _res: Response, next: NextFunction) => {
     req.userId = userId;
     next();
   });
-  app.use(createBillingProxyRouter());
+  app.use(createBillingProxyRouter({ emailOf: async (id) => EMAILS[id] ?? null }));
   return app;
 }
 
@@ -46,7 +48,27 @@ describe('billing proxy', () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toContain('/billing/bob/topup');
     expect((init as RequestInit).method).toBe('POST');
-    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ amount: 20 });
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ amount: 20, email: 'bob@example.com' });
+  });
+
+  // The address decides whose FinVault inbox gets a payment request.
+  it('asks FinVault to bill the signed-in account, whatever address the body names (#351)', async () => {
+    fetchMock.mockResolvedValue(upstream({ status: 'pending', reference: 'r1' }, 202));
+    await request(appAs('bob')).post('/billing/topup').send({ amount: 20, email: 'victim@example.com' });
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse((init as RequestInit).body as string).email).toBe('bob@example.com');
+  });
+
+  it('refuses a top-up for an account with no address, without calling the bridge', async () => {
+    const res = await request(appAs('nobody')).post('/billing/topup').send({ amount: 20 });
+    expect(res.status).toBe(409);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('answers 401 rather than acting for a shared stand-in account', async () => {
+    const res = await request(appAs(undefined)).get('/billing/wallet');
+    expect(res.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('returns 502 when the billing service is unreachable', async () => {
