@@ -39,6 +39,8 @@ model User {
   // enabledAt is what says the person proved they can produce a code from it.
   totpSecret    String?
   totpEnabledAt DateTime?
+  // When the address was shown to reach its owner (#367); null until then.
+  emailVerifiedAt DateTime?
 }
 
 // One unused recovery code (#229) — the answer to a lost phone. Stored as a
@@ -274,6 +276,19 @@ model ApiToken {
 // A self-service password reset (#344). Like an API token, the secret is only
 // ever stored as its digest; it is single-use and short-lived.
 model PasswordReset {
+  id        String    @id
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// A mailed link that confirms an account's address (#367). Like a password
+// reset: single-use, short-lived, stored as a digest.
+model EmailVerification {
   id        String    @id
   userId    String
   tokenHash String    @unique

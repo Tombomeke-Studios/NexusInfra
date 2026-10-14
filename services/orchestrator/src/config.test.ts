@@ -11,14 +11,14 @@ describe('GET /config', () => {
     const app = express().use(createConfigRouter('community'));
     const res = await request(app).get('/config');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ edition: 'community', passwordResetByEmail: false, sftpPort: null });
+    expect(res.body).toEqual({ edition: 'community', passwordResetByEmail: false, sftpPort: null, emailVerification: false });
   });
 
   it('reports the hosted edition when configured', async () => {
     const app = express().use(createConfigRouter('hosted'));
     const res = await request(app).get('/config');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ edition: 'hosted', passwordResetByEmail: false, sftpPort: null });
+    expect(res.body).toEqual({ edition: 'hosted', passwordResetByEmail: false, sftpPort: null, emailVerification: false });
   });
 
   it('says whether a forgotten password can be reset by email (#344)', async () => {

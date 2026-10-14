@@ -18,6 +18,8 @@ export interface BillingProxyDeps {
    * anybody's FinVault inbox.
    */
   emailOf?(userId: string): Promise<string | null>;
+  /** Why this account may not top up, or null — an unconfirmed address, where confirming is possible (#367). */
+  topUpProblem?(userId: string): Promise<string | null>;
 }
 
 export function createBillingProxyRouter(deps: BillingProxyDeps = {}): Router {
@@ -47,6 +49,8 @@ export function createBillingProxyRouter(deps: BillingProxyDeps = {}): Router {
   router.post('/billing/topup', async (req, res) => {
     const email = await deps.emailOf?.(userIdOf(req) as string);
     if (!email) return res.status(409).json({ error: 'this account has no email address for FinVault to ask for payment' });
+    const problem = await deps.topUpProblem?.(userIdOf(req) as string);
+    if (problem) return res.status(403).json({ error: problem });
     const { amount, currency } = (req.body ?? {}) as { amount?: unknown; currency?: unknown };
     return forward(req, res, '/topup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ amount, currency, email }) });
   });
