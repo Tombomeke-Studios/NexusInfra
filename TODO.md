@@ -158,7 +158,7 @@ gateway work" above.)_
 - [x] WebSocket transport for a persistent exec/terminal session (JWT) (#69) — the terminal is a WebSocket end to end, through the gateway too; logs/stats stay server-sent events, which the gateway now streams instead of buffering (a second transport for a one-way stream would be two things to keep working)
 - [x] Dashboard: full interactive terminal (xterm.js, persistent PTY) for a server (#71)
 - [x] API Gateway: JWT validation, routing, WebSocket proxy (#20) — CORS, rate limit, JWT, streaming reverse proxy, WebSocket upgrades, API tokens passed through; verified live (terminal, SSE logs/stats, `nexusctl`)
-- [ ] Replace stub login with real FinVault JWT via the Gateway (#17, #20)
+- [ ] Sign in with FinVault — one identity across the two products (#377) — was "replace stub login with real FinVault JWT"; the stub login went with #174 and the old issue ref pointed at something else. Needs a decision on the flow before any code; until then accounts are linked by confirmed email address (#351, #367)
 
 ### Phase 6 — Multi-user sharing + two shippable editions
 
