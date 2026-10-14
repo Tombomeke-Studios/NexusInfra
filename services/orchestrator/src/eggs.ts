@@ -42,6 +42,21 @@ export interface EggVariable {
   min?: number;
   max?: number;
   /**
+   * Length bounds for `string`, in characters (#384) — for the games that refuse
+   * a value at startup rather than at the form: Valheim will not start with a
+   * password under five characters.
+   */
+  minLength?: number;
+  maxLength?: number;
+  /**
+   * The shape a `string` must have, as a regular expression source, matched
+   * against the **whole** value (#384). Project Zomboid uses the server name as
+   * a file name and breaks its admin account on a space.
+   */
+  pattern?: string;
+  /** What `pattern` means in words — the message when it does not match. */
+  patternHint?: string;
+  /**
    * Where a `version` variable's suggestions come from. Resolved when the
    * catalogue is served, not here — this file stays pure data (#311).
    */
@@ -200,6 +215,7 @@ const VALHEIM: Egg = {
       description: 'Required to join. Valheim refuses to start a public server without one of at least 5 characters.',
       kind: 'string',
       default: 'changeme',
+      minLength: 5,
     },
     { key: 'SERVER_PUBLIC', label: 'List publicly', description: 'Whether the server appears in the public browser.', kind: 'boolean', default: 'true' },
   ],
@@ -441,6 +457,23 @@ function coerce(variable: EggVariable, raw: string): string {
 
     case 'string':
       if (!value) throw new EggValidationError(`${variable.label} cannot be empty`);
+      // Several images write the value straight into a config file (#384), where
+      // a line break is a way to add lines of your own — a second `world=`, say.
+      // eslint-disable-next-line no-control-regex
+      if (/[\u0000-\u001f\u007f]/.test(value)) {
+        throw new EggValidationError(`${variable.label} cannot contain line breaks or control characters`);
+      }
+      if (variable.minLength != null && value.length < variable.minLength) {
+        throw new EggValidationError(`${variable.label} must be at least ${variable.minLength} characters`);
+      }
+      if (variable.maxLength != null && value.length > variable.maxLength) {
+        throw new EggValidationError(`${variable.label} must be at most ${variable.maxLength} characters`);
+      }
+      // Anchored here rather than trusted to the pattern, so one written without
+      // ^…$ cannot pass a value that merely contains a match.
+      if (variable.pattern && !new RegExp(`^(?:${variable.pattern})$`).test(value)) {
+        throw new EggValidationError(`${variable.label}: ${variable.patternHint ?? 'not in the expected format'}`);
+      }
       return value;
   }
 }

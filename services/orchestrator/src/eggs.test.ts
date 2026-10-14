@@ -270,3 +270,68 @@ describe('the eggs added in #315', () => {
     expect(getEgg('valheim')?.dockerImage).toBe('ghcr.io/community-valheim-tools/valheim-server');
   });
 });
+
+describe('string rules a game imposes (#384)', () => {
+  const base = getEgg('minecraft-java')!;
+  const egg = (overrides: Partial<Egg['variables'][number]>): Egg => ({
+    ...base,
+    variables: [{ key: 'NAME', label: 'Server name', description: 'The name the game files the save under.', kind: 'string', default: 'world', ...overrides }],
+  });
+
+  it('refuses a value shorter than the game accepts, naming the field', () => {
+    const e = egg({ minLength: 5 });
+    expect(() => buildEggDeployment(e, { NAME: 'abcd' })).toThrow(/Server name must be at least 5 characters/);
+    expect(buildEggDeployment(e, { NAME: 'abcde' }).env.NAME).toBe('abcde');
+  });
+
+  it('refuses a value longer than the game accepts', () => {
+    const e = egg({ maxLength: 8 });
+    expect(() => buildEggDeployment(e, { NAME: 'abcdefghi' })).toThrow(/at most 8 characters/);
+    expect(buildEggDeployment(e, { NAME: 'abcdefgh' }).env.NAME).toBe('abcdefgh');
+  });
+
+  it('refuses a value of the wrong shape with the hint a person can act on', () => {
+    const e = egg({ pattern: '^[A-Za-z0-9_-]+$', patternHint: 'letters, digits, - and _ only — no spaces' });
+    expect(() => buildEggDeployment(e, { NAME: 'my server' })).toThrow(/Server name: letters, digits, - and _ only/);
+    expect(buildEggDeployment(e, { NAME: 'my_server-1' }).env.NAME).toBe('my_server-1');
+  });
+
+  it('anchors the pattern to the whole value', () => {
+    // A pattern written without ^…$ must not pass a value that merely contains a match.
+    const e = egg({ pattern: '[a-z]+', patternHint: 'lower-case letters only' });
+    expect(() => buildEggDeployment(e, { NAME: 'abc def' })).toThrow(EggValidationError);
+    expect(buildEggDeployment(e, { NAME: 'abc' }).env.NAME).toBe('abc');
+  });
+
+  it('refuses control characters in any string', () => {
+    // Several images write the value straight into a config file — a newline
+    // there is a way to add lines of your own (another world path, a password).
+    const e = egg({});
+    for (const bad of ['a\nworld=/etc/passwd', 'tab\there', 'nul\u0000', 'bell\u0007', 'del\u007f']) {
+      expect(() => buildEggDeployment(e, { NAME: bad })).toThrow(/Server name cannot contain line breaks or control characters/);
+    }
+  });
+
+  it('still lets a blank answer mean "use the default", even for an optional field', () => {
+    // An optional password is a default of '' — the rules apply to what was typed.
+    const e = egg({ default: '', minLength: 5 });
+    expect(buildEggDeployment(e, { NAME: '' }).env.NAME).toBe('');
+    expect(buildEggDeployment(e, {}).env.NAME).toBe('');
+  });
+
+  it('holds Valheim to the 5 characters it needs to start', () => {
+    const valheim = getEgg('valheim')!;
+    expect(() => buildEggDeployment(valheim, { SERVER_PASS: 'abcd' })).toThrow(/Password must be at least 5 characters/);
+    expect(buildEggDeployment(valheim, { SERVER_PASS: 'abcde' }).env.SERVER_PASS).toBe('abcde');
+  });
+
+  it('gives every egg defaults that pass their own rules', () => {
+    // A default the egg itself would refuse is a form that starts out rejected.
+    for (const e of EGGS) {
+      for (const v of e.variables) {
+        if (v.kind !== 'string' || v.default === '') continue;
+        expect(() => buildEggDeployment(e, { [v.key]: v.default }), `${e.id}.${v.key}`).not.toThrow();
+      }
+    }
+  });
+});
