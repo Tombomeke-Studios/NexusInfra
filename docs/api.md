@@ -117,6 +117,18 @@ Body `{ "token": "…", "newPassword": "…" }` → `204`, and every session of 
 a password the rules refuse — checked *before* the link is spent, so a typo does not cost it — or for a
 link that is unknown, expired or already used (one message for all three).
 
+
+### Email confirmation (#367)
+
+- `POST /auth/verify-email/confirm` — public; body `{ token }` from the mailed link. `200
+  { status: "verified" }`, or `400` for a link that is unknown, expired or already used.
+- `POST /me/verify-email` — authenticated; mails the signed-in account a fresh link. `202 { status:
+  "sent", email }`; `200 { status: "verified" }` when there is nothing to confirm; `404` where the
+  installation cannot confirm addresses; `429` after five requests in an hour.
+
+`GET /config` carries `emailVerification` (whether this installation confirms addresses) and the
+account objects carry `emailVerified`.
+
 ### `POST /auth/login`  *(public)*
 
 Exchange account credentials for a signed JWT (12h TTL, signed with `JWT_SECRET`).
@@ -849,7 +861,8 @@ and **injects the caller's authenticated userId** from the JWT (the client never
 
 - `GET /billing/wallet` · `GET /billing/usage` · `GET /billing/standing` · `GET /billing/ledger` · `GET /billing/plan`
 - `POST /billing/topup` — body `{ amount }`. The Orchestrator adds the signed-in account's own email
-  address as the payer; an address in the body is ignored (#351). `409` if the account has none.
+  address as the payer; an address in the body is ignored (#351). `409` if the account has none; `403`
+  while the address is unconfirmed, where the installation confirms addresses (#367).
 
 Without an authenticated user these routes answer `401`.
 

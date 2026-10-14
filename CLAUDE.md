@@ -292,6 +292,7 @@ is the migrations directory.
 | `src/users.ts` | Account domain: bcrypt hashing, email normalisation, password rules, edition-derived signup policy, and `createUserService` (register / authenticate / change password / first-run bootstrap) (#174) |
 | `src/auth.ts` | `AuthProvider` seam (`createLocalAuthProvider`; FinVault JWT swaps in at #17) + `signToken`/`verifyToken` → `Principal`, `requireAuth`, `principalOf`, `requirePlatformAdmin`, and the auth/account/admin routers. **No anonymous fallback** — no token means 401. `createRequireAuth(repo)` additionally checks the session the token names still exists (#227), which is what makes signing out actually sign you out, and accepts an `nxi_` API token as the same account (#228) — `requireTokenScope` (mounted once in index.ts) then holds it to its scopes. A token cannot mint tokens |
 | `src/passwordReset.ts` | Self-service reset by email (#344): mint/hash (the secret is only stored as a digest), `parsePanelUrl`, and the public `POST /auth/password-reset` (+ `/confirm`) router. On only with `SMTP_URL` **and** `PANEL_URL` — the link is never built from the Host header. Same `202` for every address, mail sent after the response; the password is checked *before* the link is spent |
+| `src/emailVerification.ts` | Confirming an account's address (#367): mailed single-use link (the reset's token and `PANEL_URL` rules), a public confirm route, an authenticated resend, and pure `topUpProblem`. **Gates a hosted top-up only where the installation can send mail** — otherwise nothing waits on it. Accounts an administrator makes start confirmed |
 | `src/totp.ts` | Pure TOTP + recovery codes (#229): RFC 6238 in ~40 lines over Node's HMAC, checked against the RFC's own vectors — a dependency for that much code is a dependency to keep current in an auth path. `REQUIRE_TOTP=true` makes it mandatory, but never by refusing a login: an un-enrolled account signs in and finds only enrolment open, because refusing would lock out the one administrator the moment the flag flips |
 | `src/apiTokens.ts` | Pure API-token core (#228): mint/hash (`nxi_` prefix, SHA-256 — the secret is 256 random bits, so bcrypt would only rate-limit us) + scopes. **Scope is by HTTP method, not a path table** — a path table falls behind and silently unscopes the next new route, for token callers only. `admin` is separate from the account's platform role |
 | `src/loginLimiter.ts` | Pure per-IP **and** per-account login throttle (#225). The gateway's limiter is bypassed by the dashboard's nginx, so credential checks were unlimited. A lockout answers the same 401 as a wrong password — anything else confirms the account exists |
@@ -362,6 +363,7 @@ is the migrations directory.
 | `src/permissions.ts` | The panel's copy of the server permission matrix (#178) — `can`/`permissionsFor`/`ROLE_LABELS`. **Mirrors `orchestrator/src/access.ts`; change both together.** An absent role means full access, so an owner is never locked out of their own server |
 | `src/prefs.ts` | Persisted client preferences (localStorage): first-run intro flag + customisable New Deployment defaults (`getDeploymentDefaults`) |
 | `src/pages/Preferences.tsx` | Preferences page — edit/save/reset the New Deployment defaults |
+| `src/pages/VerifyEmail.tsx` | Where the mailed confirmation link lands (#367) — public; spends the token exactly once, even under StrictMode's double effect |
 | `src/pages/ResetPassword.tsx` | Where the mailed reset link lands (#344) — public, checks length and the repeat before spending the link |
 | `src/pages/Account.tsx` | Account page (#221) — who you are signed in as + change your own password. Platform role is read-only: your own standing is not yours to raise |
 | `src/pages/Users.tsx` | Accounts page (#222) — platform admins list and create accounts. The only way in for the community edition, where nobody self-registers. Nav link hidden for non-admins; `/users` answers 403 regardless |
@@ -464,6 +466,9 @@ is the migrations directory.
   that a request reached your handler.
 - **Never read a user id from the request body or a query param** — take it from `principalOf(req)`.
   A caller-supplied id is a caller-chosen identity.
+- **An address is only as trusted as `emailVerifiedAt` says (#367).** Anything new that acts on a
+  customer's email outside this panel — as a top-up does in FinVault — must check it the way
+  `topUpProblem` does, and only gate where `emailVerification.available`.
 - **Never return a raw user record over HTTP** — go through `toPublicUser`, which drops the
   credential digest. The same applies to anything embedding a user.
 - **An image's edition is fixed at build time and cannot be changed by `NEXUS_EDITION`** (#189). The

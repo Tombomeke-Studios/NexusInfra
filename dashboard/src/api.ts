@@ -260,6 +260,8 @@ export interface CurrentUser {
   createdAt: string;
   /** Whether this account has a second factor confirmed (#229). */
   twoFactorEnabled?: boolean;
+  /** Whether the address has been confirmed by a mailed link (#367). */
+  emailVerified?: boolean;
 }
 
 /**
@@ -399,6 +401,8 @@ export interface AppConfig {
   passwordResetByEmail?: boolean;
   /** The port SFTP listens on (#235), or null when it is off. */
   sftpPort?: number | null;
+  /** Whether this installation confirms email addresses (#367); a top-up then needs a confirmed one. */
+  emailVerification?: boolean;
 }
 
 /** One server's disk use (#347); a null is something the node could not measure. */
@@ -427,6 +431,16 @@ export function requestPasswordReset(email: string): Promise<{ status: string; m
 /** Set a new password with the token from the mailed link (#344). */
 export function confirmPasswordReset(token: string, newPassword: string): Promise<void> {
   return request('/auth/password-reset/confirm', { method: 'POST', body: JSON.stringify({ token, newPassword }) });
+}
+
+/** Spend the link from the confirmation mail (#367). Public: no session needed. */
+export function confirmEmail(token: string): Promise<{ status: string }> {
+  return request('/auth/verify-email/confirm', { method: 'POST', body: JSON.stringify({ token }) });
+}
+
+/** Ask for the confirmation mail again, for the signed-in account. */
+export function requestEmailVerification(): Promise<{ status: 'sent' | 'verified'; email?: string }> {
+  return request('/me/verify-email', { method: 'POST' });
 }
 
 /** Public config — read before login to decide whether billing UI renders (#144). */

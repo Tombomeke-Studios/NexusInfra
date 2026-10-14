@@ -317,6 +317,20 @@ Now:
 plaintext on the private network. mTLS and rotation belong with the production hardening (#21).
 
 
+### Confirming an email address (#367)
+
+In the hosted edition an account's address is more than a login name: a top-up's payment request is
+sent to the FinVault account that has it. So a self-registered account must open a mailed link before
+it can top up.
+
+- The link is built from `PANEL_URL`, never the request's Host header, and the token is 256 random
+  bits stored only as a digest — single-use, valid for 24 hours, superseded by asking again.
+- Asking for the mail again is limited per account.
+- It is enforced only when the installation has both `SMTP_URL` and `PANEL_URL`. `GET /config` says
+  which (`emailVerification`), so the panel never asks for something the server cannot do.
+- Confirming says the address reaches the account's owner. It is not a second factor and does not
+  replace one.
+
 ### The Billing Bridge (#372)
 
 The Billing Bridge's routes name the account in the path (`/billing/:userId/...`) and believe it: the
