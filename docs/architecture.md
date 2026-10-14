@@ -64,6 +64,7 @@ exposes `pendingEvents` / `droppedEvents`.
 | `bank.payment.confirmed` / `bank.payment.failed` | FinVault | billing-bridge (add/mark-failed credit) |
 | `events.payment.confirmed` / `events.payment.failed` | FinVault's gateway (it routes every event as `events.<type>`) | billing-bridge — the same handlers; FinVault's own P2P confirmations share the key and are ignored by reference (#298) |
 | `billing.server.suspend` | billing-bridge (cycle runner) | orchestrator (stops the named servers) |
+| `billing.credit.low` | billing-bridge (every `SETTLE_INTERVAL_MS`) | orchestrator (a `credit.low` notification to the account, #379) |
 | `invoice.generate` | billing-bridge (cycle runner) | FinVault (monthly invoice record) |
 | `monitoring.heartbeat.node.{id}` | node-agent | control-room **and** orchestrator (node registry) |
 

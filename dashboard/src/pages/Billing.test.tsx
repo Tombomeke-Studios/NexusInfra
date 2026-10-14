@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { act } from '@testing-library/react';
-import { Billing, approvalHint, leftToSpendNote, newlyConfirmed, refreshInterval, sentence, statusLabel, POLL_MS, PENDING_POLL_MS } from './Billing';
+import { Billing, approvalHint, leftToSpendNote, newlyConfirmed, refreshInterval, runwayNote, sentence, statusLabel, POLL_MS, PENDING_POLL_MS } from './Billing';
 import type { LedgerEntry } from '../api';
 import { ToastProvider } from '../components/Toast';
 import { DialogProvider } from '../components/Dialog';
@@ -65,6 +65,21 @@ describe('Billing page', () => {
     renderBilling();
     expect(await screen.findByText(/You owe .*2[.,]00/)).toBeInTheDocument();
     expect(screen.getByText(/Servers cannot be started/)).toBeInTheDocument();
+  });
+
+  // #379: an amount does not say how long it lasts.
+  it('says how long the credit lasts, and warns when that is short', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        String(url).endsWith('/billing/standing')
+          ? Promise.resolve(jsonResponse({ balance: 5, accrued: 1, available: 4, freeHoursLeft: 0, canRun: true, currency: 'EUR', hoursLeft: 8, runsLow: true }))
+          : routeFetch(String(url))
+      )
+    );
+    renderBilling();
+    expect(await screen.findByText(/Lasts about 8 hours at the current rate/)).toBeInTheDocument();
+    expect(screen.getByText(/Your credit runs out in about 8 hours/)).toHaveAttribute('role', 'status');
   });
 
   // #369: found by looking at the page — after a switch it went on quoting the old plan's rate.
@@ -148,6 +163,17 @@ describe('Billing page', () => {
       const standing = { balance: 10, accrued: 4, available: 6, freeHoursLeft: 0, canRun: true, currency: 'EUR' };
       expect(leftToSpendNote(standing)).toMatch(/balance less .*4[.,]00 used this cycle/);
       expect(leftToSpendNote({ ...standing, freeHoursLeft: 12.5 })).toContain('12.5 free hours left');
+    });
+
+    // #379: what the amount means in time.
+    it('says how long what is left lasts, or that nothing is spending it', () => {
+      const standing = { balance: 10, accrued: 4, available: 6, freeHoursLeft: 0, canRun: true, currency: 'EUR', hoursLeft: 30, runsLow: false };
+      expect(runwayNote(standing)).toBe('Lasts about 30 hours at the current rate');
+      expect(runwayNote({ ...standing, hoursLeft: 100 })).toBe('Lasts about 4 days at the current rate');
+      expect(runwayNote({ ...standing, hoursLeft: 0.3 })).toBe('Lasts less than an hour at the current rate');
+      expect(runwayNote({ ...standing, hoursLeft: null })).toBe('No server is running, so nothing is being spent');
+      // An older bridge does not report it at all.
+      expect(runwayNote({ ...standing, hoursLeft: undefined })).toBeNull();
     });
 
     it('shows a reason from FinVault as a sentence', () => {

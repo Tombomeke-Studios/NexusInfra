@@ -30,6 +30,7 @@ import { nodeTransitions } from './notify.js';
 import { nodeHealth } from './nodeRegistry.js';
 import type { NodeHealth } from './types.js';
 import { createSuspendHandler, type SuspendPayload } from './suspend.js';
+import { creditLowSummary } from './credit.js';
 import { startScheduler, type ScheduleActions } from './scheduler.js';
 import { requestImageUpdate } from './imageUpdate.js';
 import { backfillPortAllocations } from './portAllocation.js';
@@ -411,6 +412,8 @@ async function start() {
         // describing a machine that no longer matches (#244).
         'infra.node.inventory',
         'billing.server.suspend',
+        // The Billing Bridge's warning that an account's credit is running low (#379).
+        'billing.credit.low',
       ],
       async (envelope: EventEnvelope) => {
         if (envelope.event.type === 'heartbeat.node') {
@@ -419,6 +422,11 @@ async function start() {
           await reconcile(envelope);
         } else if (envelope.event.type === 'billing.server.suspend') {
           await suspend(readPayload(envelope.event) as unknown as SuspendPayload);
+        } else if (envelope.event.type === 'billing.credit.low') {
+          // Only the hosted edition has credit; a community stack never offers the event.
+          if (!isHosted()) return;
+          const low = readPayload(envelope.event) as { userId: string; hoursLeft: number; available: number; currency: string };
+          await notifier.notifyAccount(low.userId, { event: 'credit.low', summary: creditLowSummary(low), details: { hoursLeft: low.hoursLeft, available: low.available, currency: low.currency } });
         } else {
           reports.inc({ type: envelope.event.type });
           await lifecycle.handleReport(envelope);

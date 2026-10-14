@@ -2,7 +2,8 @@ import { randomBytes } from 'crypto';
 import { lookup } from 'dns/promises';
 import { Router, type Request, type Response } from 'express';
 import { principalOf } from './auth.js';
-import { isPrivateAddress, NODE_EVENTS, NOTIFICATION_EVENTS, parseChannelInput } from './notify.js';
+import { isHosted } from 'shared';
+import { eventsFor, isPrivateAddress, parseChannelInput } from './notify.js';
 import type { Notifier } from './notifier.js';
 import type { NotificationChannelRecord, Repository } from './types.js';
 
@@ -22,8 +23,11 @@ export function createNotificationRouter(deps: {
   notifier: Notifier;
   /** Resolve a webhook's host at creation, to refuse a private one with a clear message. Injectable for tests. */
   resolveHost?: (host: string) => Promise<string[]>;
+  /** Whether account events such as the low-credit warning exist here (#379); the edition by default. */
+  hosted?: boolean;
 }): Router {
   const { repo, notifier } = deps;
+  const hosted = deps.hosted ?? isHosted();
   const resolveHost = deps.resolveHost ?? (async (host: string) => (await lookup(host, { all: true })).map((a) => a.address));
   const router = Router();
 
@@ -45,7 +49,7 @@ export function createNotificationRouter(deps: {
       channels: channels.map(publicChannel),
       capabilities: {
         email: notifier.emailEnabled,
-        events: NOTIFICATION_EVENTS.filter((e) => admin || !(NODE_EVENTS as readonly string[]).includes(e)),
+        events: eventsFor({ admin, hosted }),
       },
     });
   });
@@ -54,7 +58,7 @@ export function createNotificationRouter(deps: {
     const principal = principalOf(req);
     const user = await repo.getUser(principal.id);
     if (!user) return res.status(404).json({ error: 'account not found' });
-    const parsed = parseChannelInput(req.body, { email: user.email, platformRole: principal.platformRole });
+    const parsed = parseChannelInput(req.body, { email: user.email, platformRole: principal.platformRole, hosted });
     if (!parsed.ok) return res.status(400).json({ error: parsed.error });
     const { channel } = parsed;
     if (channel.kind === 'email' && !notifier.emailEnabled) {
@@ -91,7 +95,7 @@ export function createNotificationRouter(deps: {
     let nextEvents: string[] | undefined;
     if (events !== undefined) {
       const user = await repo.getUser(principal.id);
-      const parsed = parseChannelInput({ kind: channel.kind, target: channel.target, format: channel.format, events }, { email: user?.email ?? channel.target, platformRole: principal.platformRole });
+      const parsed = parseChannelInput({ kind: channel.kind, target: channel.target, format: channel.format, events }, { email: user?.email ?? channel.target, platformRole: principal.platformRole, hosted });
       if (!parsed.ok) return res.status(400).json({ error: parsed.error });
       nextEvents = parsed.channel.events;
     }

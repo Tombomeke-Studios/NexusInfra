@@ -526,7 +526,8 @@ answers `404`.
 
 Events: `server.crashed` and `server.suspended` go to everyone with access to the server who
 subscribed (owner, shares, team); `node.offline` and `node.recovered` are for platform
-administrators. `format` is `json` (the whole notification, below), `discord` (`{ content }`) or
+administrators. `credit.low` goes to the account alone, and exists only in the hosted edition — the
+community edition neither lists nor accepts it (#379). `format` is `json` (the whole notification, below), `discord` (`{ content }`) or
 `slack` (`{ text }`). Email needs `SMTP_URL` on the orchestrator and always goes to the account's
 own address.
 
@@ -931,9 +932,13 @@ across the user's runtime intervals; billable hours are charged at each server's
 ### `GET /billing/:userId/standing`
 
 What the account has left and whether it may run servers (#365): `{ balance, accrued, available,
-freeHoursLeft, canRun, currency }`. `accrued` is usage not yet charged to the balance; `available` is
+freeHoursLeft, canRun, currency, hoursLeft, runsLow }`. `accrued` is usage not yet charged to the balance; `available` is
 `balance - accrued`. The Orchestrator asks before creating or starting a server and answers `402` when
 `canRun` is false.
+
+`hoursLeft` is how long what is left lasts at the rate the running servers spend it, free hours first
+(#379) — `null` when nothing is running or nothing running costs anything. `runsLow` is whether that is
+under `LOW_CREDIT_HOURS`.
 
 ### `GET /billing/:userId/ledger`
 
@@ -1025,6 +1030,7 @@ truth. Summary:
 | `payment.request` | billing-bridge → FinVault | credit top-up charge; FinVault's `payment.request` shape plus `customerEmail`, which names the payer (#351) |
 | `payment.confirmed` / `payment.failed` | FinVault → billing-bridge | consumed to add / mark-failed a top-up's credit |
 | `billing.server.suspend` | billing-bridge → orchestrator | stop a user's servers when credit is exhausted (hosted; NexusInfra-only key) |
+| `billing.credit.low` | billing-bridge → orchestrator | `{ userId, hoursLeft, available, currency }` — the account's credit lasts less than `LOW_CREDIT_HOURS`; sent once per dip (hosted; NexusInfra-only key, #379) |
 | `invoice.generate` | billing-bridge → FinVault | monthly invoice record for a closed cycle (hosted; NexusInfra-only key) |
 
 Envelopes and encryption: see [architecture.md](architecture.md#event-bus). Payload shapes for the

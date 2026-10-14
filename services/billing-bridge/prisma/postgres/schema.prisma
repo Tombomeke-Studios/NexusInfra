@@ -80,6 +80,10 @@ model CreditWallet {
   // The address the account last asked FinVault to bill (#375) — where its
   // monthly statement goes. Null until a first top-up.
   email    String?
+  // When the account was last warned that its credit is running low (#379);
+  // null once it lasts past the threshold again. Stored so a restart of the
+  // bridge does not warn twice for one dip.
+  lowCreditWarnedAt DateTime?
 }
 
 // Append-only credit movements: top-ups (funded via FinVault) and usage charges.

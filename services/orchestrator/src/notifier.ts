@@ -22,6 +22,8 @@ export interface Notifier {
   notifyServer(deploymentId: string, n: Omit<Notification, 'occurredAt' | 'server'>): Promise<number>;
   /** Tell the platform's administrators — fleet events. */
   notifyAdmins(n: Omit<Notification, 'occurredAt'>): Promise<number>;
+  /** Tell one account about itself — its credit (#379). Nobody it shares servers with hears it. */
+  notifyAccount(userId: string, n: Omit<Notification, 'occurredAt'>): Promise<number>;
   /** Send what is due. Returns how many deliveries were attempted. */
   drain(now?: Date): Promise<number>;
   /** Send one message to one channel now, outside the queue — the Test button. */
@@ -139,6 +141,9 @@ export function createNotifier(deps: {
     async notifyAdmins(n) {
       const admins = (await repo.listUsers()).filter((u) => u.platformRole === 'admin' || u.platformRole === 'owner').map((u) => u.id);
       return enqueue(admins, { ...n, occurredAt: new Date().toISOString() });
+    },
+    notifyAccount(userId, n) {
+      return enqueue([userId], { ...n, occurredAt: new Date().toISOString() });
     },
     drain: (now) => kick(now),
     async sendNow(channel, n) {

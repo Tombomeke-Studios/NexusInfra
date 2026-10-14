@@ -3,7 +3,7 @@ import { buildEnvelope, publishRabbitEvent, type EventEnvelope, type NexusInfraE
 import { DEFAULT_PLAN, resourceFactor, roundCurrency, type BillingPlan } from './pricing.js';
 import { parsePlanInput, planIdFrom, retireProblem, switchProblem } from './plans.js';
 import { ratesOf } from './cycle.js';
-import { computeStanding, currentPeriod, usageIn, type Standing } from './standing.js';
+import { computeStanding, currentPeriod, lowCreditStep, parseLowCreditHours, usageIn, type Standing } from './standing.js';
 import { applyTopUp } from './wallet.js';
 import type { BilledDeployment, CreditLedgerEntry, CreditWallet, Repository, ServerBillingRecord } from './types.js';
 
@@ -19,6 +19,7 @@ export type PublishFn = (routingKey: string, envelope: EventEnvelope) => Promise
 // `payment.request` for wire-compatibility.
 export const KEY_PAYMENT_REQUEST = 'bank.payment.request';
 const KEY_SUSPEND = 'billing.server.suspend';
+export const KEY_CREDIT_LOW = 'billing.credit.low';
 
 /** How often running accounts are checked against their balance (#365). */
 export const DEFAULT_SETTLE_INTERVAL_MS = 5 * 60 * 1000;
@@ -30,6 +31,8 @@ export interface BillingServiceDeps {
   /** NexusInfra's receiver wallet id on payment.request (FinVault resolves the sender). */
   billingWalletId?: string;
   log?: (message: string) => void;
+  /** Warn an account whose credit lasts fewer hours than this (#379); `LOW_CREDIT_HOURS`, else a day. */
+  lowCreditHours?: number;
 }
 
 /**
@@ -92,6 +95,7 @@ export function createBillingService(deps: BillingServiceDeps) {
   const now = deps.now ?? (() => new Date().toISOString());
   const billingWalletId = deps.billingWalletId ?? process.env.BILLING_WALLET_ID ?? 'nexusinfra';
   const log = deps.log ?? ((m: string) => console.warn(`[BillingBridge] ${m}`));
+  const lowCreditHours = deps.lowCreditHours ?? parseLowCreditHours(process.env.LOW_CREDIT_HOURS);
 
   const emit = (routingKey: string, event: NexusInfraEvent) => publish(routingKey, buildEnvelope('billing-bridge', event));
 
@@ -262,7 +266,35 @@ export function createBillingService(deps: BillingServiceDeps) {
         repo.listCycles(userId),
         repo.listPlans(),
       ]);
-      return computeStanding({ balance: wallet.balance, currency: wallet.currency, intervals, cycles, plan, now: now(), rateOf: ratesOf(plans) });
+      return computeStanding({ balance: wallet.balance, currency: wallet.currency, intervals, cycles, plan, now: now(), rateOf: ratesOf(plans), lowCreditHours });
+    },
+
+    /**
+     * Warn every account whose credit lasts less than the threshold at its
+     * running servers' rate (#379) — once per dip. The mark is stored with the
+     * wallet, so a restart does not warn again; it is cleared once the credit
+     * lasts the threshold again, so the next dip warns. A warning the broker did
+     * not take is not marked, and is tried again next time. Returns who was warned.
+     */
+    async warnLowCredit(): Promise<string[]> {
+      const warned: string[] = [];
+      for (const userId of await repo.listBillableUserIds()) {
+        if (!(await repo.listIntervals(userId)).some((i) => i.stoppedAt === null)) continue;
+        const standing = await this.getStanding(userId);
+        // Out of credit is the suspension's news (settle), not a warning.
+        if (!standing.canRun) continue;
+        const step = lowCreditStep(standing.hoursLeft, lowCreditHours, await repo.getLowCreditWarnedAt(userId));
+        if (step === 'clear') await repo.setLowCreditWarnedAt(userId, null);
+        if (step !== 'warn' || standing.hoursLeft === null) continue;
+        const sent = await emit(KEY_CREDIT_LOW, {
+          type: 'billing.credit.low',
+          payload: { userId, hoursLeft: standing.hoursLeft, available: standing.available, currency: standing.currency },
+        });
+        if (!sent) continue;
+        await repo.setLowCreditWarnedAt(userId, now());
+        warned.push(userId);
+      }
+      return warned;
     },
 
     /**
