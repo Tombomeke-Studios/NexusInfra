@@ -43,6 +43,18 @@ describe('createLifecycle', () => {
     expect(detail?.stoppedAt).not.toBeNull();
   });
 
+  // #380: suspended until it is next started — the stop billing caused keeps it, a start clears it.
+  it('keeps a billing suspension through the stop, and clears it when the server starts again', async () => {
+    const d = await seedDeployment(repo);
+    await repo.updateDeploymentStatus(d.id, { status: 'running', containerId: 'abc123', suspendedAt: '2026-10-15T00:00:00.000Z', suspendedReason: 'credit exhausted' });
+
+    await lifecycle.handleReport(report({ type: 'server.stopped', payload: { deploymentId: d.id, containerId: 'abc123' } }));
+    expect(await repo.getDeployment(d.id)).toMatchObject({ status: 'stopped', suspendedReason: 'credit exhausted' });
+
+    await lifecycle.handleReport(report({ type: 'server.started', payload: { deploymentId: d.id, containerId: 'def456', nodeId: 'node-local' } }));
+    expect(await repo.getDeployment(d.id)).toMatchObject({ status: 'running', suspendedAt: null, suspendedReason: null });
+  });
+
   it('forgets the container on server.stopped — the agent removed it (#321)', async () => {
     const d = await seedDeployment(repo);
     await repo.updateDeploymentStatus(d.id, { status: 'running', containerId: 'abc123' });

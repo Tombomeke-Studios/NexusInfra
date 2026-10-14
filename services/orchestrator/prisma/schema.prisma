@@ -166,6 +166,10 @@ model Deployment {
   startedAt      DateTime?
   stoppedAt      DateTime?
   createdAt      DateTime          @default(now())
+  // When billing stopped it for lack of credit, and why (#380). Cleared when it
+  // next starts; kept with the server so it does not look like any other stop.
+  suspendedAt     DateTime?
+  suspendedReason String?
   events         DeploymentEvent[]
   databases      ServerDatabase[]
   backups        ServerBackup[]

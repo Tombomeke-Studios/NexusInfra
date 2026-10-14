@@ -141,6 +141,13 @@ export interface DeploymentRecord {
   startedAt: string | null;
   stoppedAt: string | null;
   createdAt: string;
+  /**
+   * When billing stopped this server for lack of credit, and why (#380) — null
+   * otherwise. Recorded with the server rather than inferred from the audit
+   * trail, so the list and the page can say so; cleared when it next starts.
+   */
+  suspendedAt: string | null;
+  suspendedReason: string | null;
 }
 
 /** A deployment joined with its config — what the API/dashboard render in a list. */
@@ -348,6 +355,8 @@ export interface DeploymentStatusPatch {
   containerId?: string | null;
   startedAt?: string | null;
   stoppedAt?: string | null;
+  suspendedAt?: string | null;
+  suspendedReason?: string | null;
 }
 
 /**
