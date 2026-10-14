@@ -127,6 +127,7 @@ scrape_configs:
 | `TRUST_PROXY` | no | Number of reverse proxies in front (1 for the setup in [deployment.md](deployment.md#putting-it-behind-tls-245)). Makes per-IP rate limiting measure the caller rather than the proxy. Leave unset unless only the proxy can reach this process — `X-Forwarded-For` is caller-supplied. |
 | `BILLING_BRIDGE_URL` | hosted | Where plan-quota checks go. |
 | `DATABASE_PUBLIC_HOST` | no | Hostname given to users connecting to a provisioned database. Defaults to `localhost`. |
+| `MAX_UPLOAD_BYTES` | no | Largest file upload through the panel, default `64mb`. The only limit: the dashboard's nginx sets none of its own (#389). Set the same value on the node agent. |
 | `SMTP_URL` | no | Turns on **email notifications** (#236), e.g. `smtps://user:pass@smtp.example.com:465` or `smtp://user:pass@mail.local:587` (STARTTLS when offered). Unset means webhooks only, and the panel says so. |
 | `SMTP_FROM` | no | The sender, e.g. `NexusInfra <panel@example.com>`. |
 | `PANEL_URL` | no | The panel's public address, e.g. `https://panel.example.com`. With `SMTP_URL`, turns on **password reset by email** (#344); the mailed link is built from this, never from the request. |

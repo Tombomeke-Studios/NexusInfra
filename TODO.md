@@ -280,6 +280,22 @@ scrolling log lines describing events that never happened.
 - [x] The hosted billing-bridge image contradicts its own edition stamp (#292)
 - [x] IO priority makes every container start fail on hosts without `io.weight` — detect and skip it (#288)
 
+### 🚀 First deployment round (v0.4.0) — found by smoke-testing the release bundles
+
+- [x] Uploading a file over 1 MB through the panel fails with 413 (#389) 🐛
+
+- [ ] Deleting a server leaves its backup archives on the node (#390) 🐛
+
+- [ ] Release bundles cannot turn on mail, password reset, 2FA enforcement, off-site backups or proxy trust (#391) 🐛
+
+- [ ] Release bundles publish internal ports on every interface, and 9000 collides with common tools (#392) 🐛
+
+- [ ] Every service prints the broker password to its log when it connects (#394) 🐛
+
+- [ ] Heartbeats flood every service's log twice a second (#395) 🐛
+
+- [ ] Local image builds send stale `dist/` and `node_modules` into the image (#396) 🐛
+
 ### Panel — replace the browser's own dialogs
 
 - [x] Replace all 16 `window.confirm` / `window.prompt` calls with in-app dialogs (#299)
