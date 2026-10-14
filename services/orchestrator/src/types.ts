@@ -23,6 +23,8 @@ export interface UserRecord {
   totpSecret?: string | null;
   /** Set once the person has proved they can produce a code from that secret. */
   totpEnabledAt?: string | null;
+  /** When the address was shown to reach its owner (#367); null or absent until then. */
+  emailVerifiedAt?: string | null;
 }
 
 export interface CreateUserInput {
@@ -31,6 +33,8 @@ export interface CreateUserInput {
   displayName: string;
   passwordHash: string;
   platformRole: string;
+  /** Set when whoever creates the account vouches for the address (#367). */
+  emailVerifiedAt?: string | null;
 }
 
 export type NodeHealth = 'healthy' | 'degraded' | 'offline';
@@ -481,6 +485,14 @@ export interface Repository {
    * one link cannot both succeed.
    */
   consumePasswordReset(tokenHash: string, now: string): Promise<string | null>;
+
+  // ── Email confirmation (#367) — same shape as a password reset ────────────
+  /** Record a confirmation link for a user, superseding any they had not used. */
+  createEmailVerification(input: { userId: string; tokenHash: string; expiresAt: string }): Promise<void>;
+  /** Claim a link: marks it used and returns its user, or null. Atomic. */
+  consumeEmailVerification(tokenHash: string, now: string): Promise<string | null>;
+  /** Mark an account's address confirmed. Keeps the first time it was. */
+  setUserEmailVerified(id: string, at: string): Promise<void>;
 
   // ── API tokens (#228) — a credential a script may hold ────────────────────
   createApiToken(input: CreateApiTokenInput): Promise<ApiTokenRecord>;

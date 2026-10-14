@@ -148,6 +148,8 @@ export function createPasswordResetRouter(deps: PasswordResetDeps): Router {
     const result = await users.resetPassword(userId, String(newPassword ?? ''));
     if (!result.ok) return res.status(result.status).json({ error: result.error });
     await repo.deleteSessionsForUser(userId);
+    // The link reached the mailbox, which is all confirming an address means (#367).
+    await repo.setUserEmailVerified(userId, new Date(now()).toISOString());
     return res.status(204).end();
   });
 

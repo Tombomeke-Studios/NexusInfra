@@ -18,6 +18,7 @@ import { createSftpServer, parseSftpPort } from './sftp.js';
 import { createAgentSftpFiles, createSftpAuthenticator, loadOrCreateHostKey } from './sftpBackend.js';
 import { createLoginLimiter } from './loginLimiter.js';
 import { createPasswordResetRouter, parsePanelUrl, resetAvailable } from './passwordReset.js';
+import { createEmailVerification, topUpProblem } from './emailVerification.js';
 import { createAccountRouter, createAuthRouter, createRequireAuth, createUserAdminRouter, requireTokenScope, requireTotpEnrolment } from './auth.js';
 import { createUserService, isTotpRequired } from './users.js';
 import { createTeamRouter } from './teams.js';
@@ -203,14 +204,18 @@ const passwordReset = { repo, users, panelUrl, sendMail: process.env.SMTP_URL ? 
 // tells people to connect to, when a port mapping makes it differ.
 const sftpPort = parseSftpPort(process.env.SFTP_PORT);
 const sftpPublicPort = parseSftpPort(process.env.SFTP_PUBLIC_PORT) ?? sftpPort;
-app.use(catchAsync(createConfigRouter(undefined, { passwordResetByEmail: resetAvailable(passwordReset), sftpPort: sftpPublicPort })));
+// Confirming an address (#367) needs the same two things; without them it is not
+// offered and nothing waits on it.
+const emailVerification = createEmailVerification({ repo, panelUrl, sendMail: passwordReset.sendMail });
+app.use(catchAsync(createConfigRouter(undefined, { passwordResetByEmail: resetAvailable(passwordReset), sftpPort: sftpPublicPort, emailVerification: emailVerification.available })));
+app.use(catchAsync(emailVerification.publicRouter()));
 // Public, like login: somebody who forgot their password has no token.
 app.use(catchAsync(createPasswordResetRouter(passwordReset)));
 // Public login/registration, then everything below requires a valid Bearer token.
 // One login budget for the panel and SFTP: two doors to the same passwords must
 // not give a guesser two budgets (#225, #235).
 const loginLimiter = createLoginLimiter();
-app.use(catchAsync(createAuthRouter({ users, repo, loginLimiter })));
+app.use(catchAsync(createAuthRouter({ users, repo, loginLimiter, onRegistered: (user) => emailVerification.sendAfterSignup(user) })));
 // Session-aware (#227): a valid signature is not enough, the session it names
 // must still exist — which is what makes signing out actually sign you out.
 app.use(createRequireAuth({ repo }));
@@ -224,12 +229,20 @@ app.use(requireTokenScope);
 // in instead would lock out everyone the moment the flag was turned on.
 app.use(requireTotpEnrolment);
 app.use(catchAsync(createAccountRouter({ users, repo })));
+app.use(catchAsync(emailVerification.accountRouter()));
 app.use(catchAsync(createNotificationRouter({ repo, notifier })));
 app.use(catchAsync(createUserAdminRouter({ users, repo })));
 app.use(catchAsync(createTeamRouter({ repo })));
 app.use(catchAsync(createApiRouter({ repo, scheduleActions, publish: countedPublish })));
 // Authenticated billing proxy → Billing Bridge (hosted edition; injects the JWT user id).
-app.use(catchAsync(createBillingProxyRouter({ emailOf: async (userId) => (await repo.getUser(userId))?.email ?? null })));
+app.use(
+  catchAsync(
+    createBillingProxyRouter({
+      emailOf: async (userId) => (await repo.getUser(userId))?.email ?? null,
+      topUpProblem: async (userId) => topUpProblem(await repo.getUser(userId), emailVerification.available),
+    })
+  )
+);
 // Plans a customer picks from, and the provider's view of accounts (#369). Hosted only:
 // in community there is no bridge to ask, and no reason for the routes to exist.
 if (isHosted()) app.use(catchAsync(createBillingPlansRouter({ repo })));

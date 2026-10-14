@@ -14,9 +14,11 @@ interface EditionState {
   passwordResetByEmail: boolean;
   /** The SFTP port (#235), or null when this installation does not offer SFTP. */
   sftpPort: number | null;
+  /** Whether this installation confirms email addresses (#367). */
+  emailVerification: boolean;
 }
 
-const DEFAULT_STATE: EditionState = { edition: 'community', isHosted: false, loaded: false, passwordResetByEmail: false, sftpPort: null };
+const DEFAULT_STATE: EditionState = { edition: 'community', isHosted: false, loaded: false, passwordResetByEmail: false, sftpPort: null, emailVerification: false };
 
 const EditionContext = createContext<EditionState>(DEFAULT_STATE);
 
@@ -38,6 +40,7 @@ export function EditionProvider({ children }: { children: ReactNode }) {
             loaded: true,
             passwordResetByEmail: cfg.passwordResetByEmail === true,
             sftpPort: typeof cfg.sftpPort === 'number' ? cfg.sftpPort : null,
+            emailVerification: cfg.emailVerification === true,
           });
       })
       .catch(() => {

@@ -59,7 +59,7 @@ export class InMemoryRepository implements Repository {
 
   // ── Accounts (#174) ─────────────────────────────────────────────────────────
   async createUser(input: CreateUserInput): Promise<UserRecord> {
-    const user: UserRecord = { ...input, createdAt: new Date().toISOString() };
+    const user: UserRecord = { ...input, emailVerifiedAt: input.emailVerifiedAt ?? null, createdAt: new Date().toISOString() };
     this.users.set(user.id, user);
     return user;
   }
@@ -224,6 +224,27 @@ export class InMemoryRepository implements Repository {
     if (!reset || reset.usedAt || reset.expiresAt <= now) return null;
     reset.usedAt = now;
     return reset.userId;
+  }
+
+  private emailVerifications = new Map<string, { userId: string; expiresAt: string; usedAt: string | null }>();
+
+  async createEmailVerification(input: { userId: string; tokenHash: string; expiresAt: string }): Promise<void> {
+    for (const [hash, link] of this.emailVerifications) {
+      if (link.userId === input.userId && !link.usedAt) this.emailVerifications.delete(hash);
+    }
+    this.emailVerifications.set(input.tokenHash, { userId: input.userId, expiresAt: input.expiresAt, usedAt: null });
+  }
+
+  async consumeEmailVerification(tokenHash: string, now: string): Promise<string | null> {
+    const link = this.emailVerifications.get(tokenHash);
+    if (!link || link.usedAt || link.expiresAt <= now) return null;
+    link.usedAt = now;
+    return link.userId;
+  }
+
+  async setUserEmailVerified(id: string, at: string): Promise<void> {
+    const user = this.users.get(id);
+    if (user && !user.emailVerifiedAt) this.users.set(id, { ...user, emailVerifiedAt: at });
   }
 
   async touchSession(id: string, at: string): Promise<void> {

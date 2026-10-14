@@ -91,10 +91,16 @@ the panel is **not** the owner of the hardware (a hosting-provider scenario). So
     the session; one sent by the browser is ignored, because the address decides whose FinVault inbox
     receives a payment request. A NexusInfra user id means nothing to FinVault until the two share an
     identity (#17), and the email is what both already have.
-  - **The address is not verified** — NexusInfra does not confirm email addresses at signup. Someone
-    could register with another person's address and send them payment requests, which that person can
-    only decline. Both sides cap it: three top-ups waiting per NexusInfra account, five open requests per
-    recipient in FinVault.
+  - **The address has to be confirmed first (#367).** A self-registered account is mailed a single-use
+    link, and a top-up is refused (`403`) until it has been opened — otherwise anyone could register with
+    another person's address and send payment requests to their FinVault account. The Billing page says
+    so, holds the button, and can send the link again.
+    - Only where the installation **can** confirm: it needs `SMTP_URL` and `PANEL_URL`, like the password
+      reset. Without them nothing is gated — a rule nobody can satisfy would lock every customer out of
+      paying — and the caps below are the only protection: three top-ups waiting per NexusInfra account,
+      five open requests per recipient in FinVault. **Set both before taking real customers.**
+    - Accounts an administrator creates, the first administrator, and anyone who completes a mailed
+      password reset count as confirmed. Accounts from before this start unconfirmed.
   - **Not sent is not pending.** If the broker does not take the request, the top-up fails immediately
     and says so, rather than waiting out the timeout for an answer that cannot come.
   - **Once, and for the amount asked.** The status change is a single conditional update, so a

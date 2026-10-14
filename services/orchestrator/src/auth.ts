@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { canSelfRegister, isPlatformRole, isTotpRequired, toPublicUser, type PlatformRole, type UserService } from './users.js';
-import type { ApiTokenRecord, Repository } from './types.js';
+import type { ApiTokenRecord, Repository, UserRecord } from './types.js';
 import { createLoginLimiter, loginKeys, type LoginLimiter } from './loginLimiter.js';
 import {
   formatScopes,
@@ -332,6 +332,8 @@ export interface AuthRouterDeps {
   allowSelfRegistration?: boolean;
   /** Injected so tests drive the clock; one is created per router otherwise (#225). */
   loginLimiter?: LoginLimiter;
+  /** Called after a self-registration succeeds — mails the confirmation link (#367). */
+  onRegistered?: (user: UserRecord) => void;
 }
 
 /** Public auth routes (login, registration). Mount before `requireAuth`. */
@@ -431,6 +433,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       limiter.fail(ipKeys);
       return res.status(result.status).json({ error: result.error });
     }
+    deps.onRegistered?.(result.user);
     const session = await repo.createSession({
       userId: result.user.id,
       userAgent: req.headers['user-agent'] ?? null,
@@ -693,7 +696,8 @@ export function createUserAdminRouter(deps: { users: UserService; repo: Reposito
     if (platformRole !== undefined && !isPlatformRole(platformRole)) {
       return res.status(400).json({ error: 'platformRole must be owner, admin or user' });
     }
-    const result = await users.register({ email: String(email ?? ''), password: String(password ?? ''), displayName, platformRole });
+    // An administrator vouches for the address they type (#367).
+    const result = await users.register({ email: String(email ?? ''), password: String(password ?? ''), displayName, platformRole, verified: true });
     if (!result.ok) return res.status(result.status).json({ error: result.error });
     return res.status(201).json(toPublicUser(result.user));
   });

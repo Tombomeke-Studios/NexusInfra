@@ -83,6 +83,8 @@ export interface PublicUser {
   createdAt: string;
   /** Whether this account has confirmed a second factor (#229). Never the secret. */
   twoFactorEnabled: boolean;
+  /** Whether the address has been shown to reach its owner (#367). */
+  emailVerified: boolean;
 }
 
 export function toPublicUser(user: UserRecord): PublicUser {
@@ -95,6 +97,7 @@ export function toPublicUser(user: UserRecord): PublicUser {
     // An allowlist, deliberately: totpSecret and passwordHash are on the record
     // this is built from, and both are credentials.
     twoFactorEnabled: Boolean(user.totpEnabledAt),
+    emailVerified: Boolean(user.emailVerifiedAt),
   };
 }
 
@@ -114,6 +117,11 @@ export interface RegisterInput {
   password: string;
   displayName?: string;
   platformRole?: PlatformRole;
+  /**
+   * The creator vouches for the address (#367): an administrator making an
+   * account. Never set from a self-registration.
+   */
+  verified?: boolean;
 }
 
 export type RegisterResult = { ok: true; user: UserRecord } | { ok: false; status: number; error: string };
@@ -158,6 +166,7 @@ export function createUserService(deps: { repo: Repository }): UserService {
       displayName: input.displayName?.trim() || email.split('@')[0],
       passwordHash: await hashPassword(input.password),
       platformRole: input.platformRole ?? 'user',
+      emailVerifiedAt: input.verified ? new Date().toISOString() : null,
     } satisfies CreateUserInput);
 
     // Anything shared with this address while it had no account (#176).
@@ -210,6 +219,8 @@ export function createUserService(deps: { repo: Repository }): UserService {
       displayName: input.displayName?.trim() || 'Administrator',
       passwordHash: await hashPassword(input.password),
       platformRole: 'owner',
+      // Whoever installed the panel chose this address.
+      emailVerifiedAt: new Date().toISOString(),
     });
     return 'created';
   }

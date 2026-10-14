@@ -111,6 +111,7 @@ function toUserRecord(u: PrismaUser): UserRecord {
     createdAt: u.createdAt.toISOString(),
     totpSecret: u.totpSecret,
     totpEnabledAt: iso(u.totpEnabledAt),
+    emailVerifiedAt: iso(u.emailVerifiedAt),
   };
 }
 
@@ -311,7 +312,8 @@ export class PrismaRepository implements Repository {
 
   // ── Accounts (#174) ─────────────────────────────────────────────────────────
   async createUser(input: CreateUserInput): Promise<UserRecord> {
-    return toUserRecord(await this.client.user.create({ data: input }));
+    const { emailVerifiedAt, ...fields } = input;
+    return toUserRecord(await this.client.user.create({ data: { ...fields, emailVerifiedAt: emailVerifiedAt ? new Date(emailVerifiedAt) : null } }));
   }
 
   async getUser(id: string): Promise<UserRecord | null> {
@@ -495,6 +497,32 @@ export class PrismaRepository implements Repository {
     });
     if (claimed.count !== 1) return null;
     return (await this.client.passwordReset.findUnique({ where: { tokenHash } }))?.userId ?? null;
+  }
+
+  // ── Email confirmation (#367) ──────────────────────────────────────────────
+  async createEmailVerification(input: { userId: string; tokenHash: string; expiresAt: string }): Promise<void> {
+    // A new link supersedes the old ones: only the most recent mail works.
+    await this.client.$transaction([
+      this.client.emailVerification.deleteMany({ where: { userId: input.userId, usedAt: null } }),
+      this.client.emailVerification.create({
+        data: { id: randomUUID(), userId: input.userId, tokenHash: input.tokenHash, expiresAt: new Date(input.expiresAt) },
+      }),
+    ]);
+  }
+
+  async consumeEmailVerification(tokenHash: string, now: string): Promise<string | null> {
+    const at = new Date(now);
+    // The claim is the update: only one caller can move usedAt off null.
+    const claimed = await this.client.emailVerification.updateMany({
+      where: { tokenHash, usedAt: null, expiresAt: { gt: at } },
+      data: { usedAt: at },
+    });
+    if (claimed.count !== 1) return null;
+    return (await this.client.emailVerification.findUnique({ where: { tokenHash } }))?.userId ?? null;
+  }
+
+  async setUserEmailVerified(id: string, at: string): Promise<void> {
+    await this.client.user.updateMany({ where: { id, emailVerifiedAt: null }, data: { emailVerifiedAt: new Date(at) } });
   }
 
   // ── API tokens (#228) ──────────────────────────────────────────────────────

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getWallet, getUsage, getLedger, getStanding, topUp, getEntitlements, type CreditWallet, type BillingUsage, type CreditStanding, type LedgerEntry, type ChargingModel } from '../api';
+import { getWallet, getUsage, getLedger, getStanding, topUp, getEntitlements, getCurrentUser, requestEmailVerification, type CreditWallet, type BillingUsage, type CreditStanding, type LedgerEntry, type ChargingModel } from '../api';
 import { chargingSentence } from '../plan';
 import { useToast } from '../components/Toast';
 import { PlanChooser } from '../components/PlanChooser';
+import { useEdition } from '../edition';
 import { formatRelative } from '../format';
 
 // Billing page (#149) — hosted edition only (the route is gated in routes.tsx via
@@ -81,6 +82,38 @@ export function Billing() {
   // How the plan charges (#297), said in words: "nothing was charged when I
   // created a server" reads as a bug unless the page says that is the model.
   const [charging, setCharging] = useState<ChargingModel | null>(null);
+  // A top-up's payment request goes to the FinVault account with this address,
+  // so it has to be confirmed first — where the installation can confirm at all (#367).
+  const { emailVerification } = useEdition();
+  const [me, setMe] = useState<{ email: string; emailVerified?: boolean } | null>(null);
+  const [linkState, setLinkState] = useState<'idle' | 'sending' | 'sent'>('idle');
+  useEffect(() => {
+    let live = true;
+    getCurrentUser()
+      .then((u) => live && setMe(u))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
+  const mustConfirm = emailVerification && me !== null && me.emailVerified === false;
+  const sendLink = async () => {
+    setLinkState('sending');
+    try {
+      const result = await requestEmailVerification();
+      if (result.status === 'verified') {
+        // Confirmed in another tab since this page loaded.
+        setMe((current) => (current ? { ...current, emailVerified: true } : current));
+        setLinkState('idle');
+      } else {
+        setLinkState('sent');
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not send the mail', 'error');
+      setLinkState('idle');
+    }
+  };
+
   // Bumped when the plan changes (#369): the sentence describes the plan, and one
   // left describing the plan you just moved off is a wrong price stated plainly.
   const [planVersion, setPlanVersion] = useState(0);
@@ -268,6 +301,18 @@ export function Billing() {
       {/* Top up */}
       <div className="card" style={{ padding: '20px 22px', marginBottom: 22 }}>
         <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 10 }}>Top up credit</strong>
+        {mustConfirm && (
+          <div role="status" className="alert alert--warning" style={{ marginBottom: 12 }}>
+            <strong>Confirm your email address first.</strong> A top-up sends a payment request to the FinVault account with the address{' '}
+            <span className="mono">{me?.email}</span>, so we need to know it is yours. Open the link we mailed you
+            {linkState === 'sent' ? ' — a new one is on its way.' : ', or '}
+            {linkState !== 'sent' && (
+              <button className="btn btn--secondary btn--sm" onClick={() => void sendLink()} disabled={linkState === 'sending'} style={{ marginLeft: 4 }}>
+                {linkState === 'sending' ? 'Sending…' : 'send it again'}
+              </button>
+            )}
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           {TOP_UP_PRESETS.map((v) => (
             <button key={v} className={`btn btn--secondary btn--sm${amount === v ? ' is-active' : ''}`} data-ripple onClick={() => setAmount(v)}>
@@ -282,7 +327,7 @@ export function Billing() {
             aria-label="Top-up amount"
             style={{ width: 100 }}
           />
-          <button className="btn btn--primary btn--sm" data-ripple data-burst onClick={onTopUp} disabled={busy || !(amount > 0)}>
+          <button className="btn btn--primary btn--sm" data-ripple data-burst onClick={onTopUp} disabled={busy || !(amount > 0) || mustConfirm}>
             {busy ? <span className="spinner" /> : `Top up ${money(amount || 0, currency)}`}
           </button>
         </div>

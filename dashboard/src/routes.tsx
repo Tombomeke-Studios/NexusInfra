@@ -13,6 +13,7 @@ import { Preferences } from './pages/Preferences';
 import { Account } from './pages/Account';
 import { Users } from './pages/Users';
 import { Billing } from './pages/Billing';
+import { VerifyEmail } from './pages/VerifyEmail';
 import { Customers } from './pages/Customers';
 import { useEdition } from './edition';
 import { BILLING_INCLUDED } from './buildEdition';
@@ -26,6 +27,7 @@ export function AppRoutes() {
       <Route path="/login" element={<Login />} />
       {/* Where the mailed reset link lands (#344) — public, like /login. */}
       <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/verify-email" element={<VerifyEmail />} />
       {/* Self-registration is a hosted-edition affordance (#174): on a
           self-hosted panel an administrator creates the accounts. */}
       {isHosted && <Route path="/register" element={<Login mode="register" />} />}
