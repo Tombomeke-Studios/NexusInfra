@@ -512,6 +512,14 @@ export function NewDeployment() {
                     <strong className="mono">{derivedHeap} MB</strong>, from the {capMb} MB limit above. The remaining{' '}
                     {capMb != null ? capMb - derivedHeap : 0} MB is for Java itself — metaspace, threads and buffers.
                   </p>
+                ) : ramUnit === 'percent' ? (
+                  // A percentage of a node whose memory is not known yet is a cap
+                  // nobody can turn into megabytes — not "no limit". Saying the
+                  // latter hid the old fixed-2G collision behind a wrong reason.
+                  <p className="subtle" style={{ margin: '0 0 8px', fontSize: '.84rem' }}>
+                    {target ? `${target.name} has` : 'The node has'} not reported its memory yet, so no heap can be worked out
+                    from a percentage. Set the RAM limit in MB and the heap follows it.
+                  </p>
                 ) : (
                   <p className="subtle" style={{ margin: '0 0 8px', fontSize: '.84rem' }}>
                     Set by the image, because this server has no memory limit to derive one from.
