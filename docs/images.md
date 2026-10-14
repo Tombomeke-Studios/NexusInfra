@@ -99,6 +99,8 @@ it. Nothing else changes.
 | `NEXUS_EDITION` | no | Ignored in a released image; the image's own edition wins. Only meaningful when running from source. |
 | `METRICS_TOKEN` | no | Protects `GET /metrics` (#246) with `Authorization: Bearer <token>`. Open when unset — the numbers are aggregates with no names or ids — but **set it on the orchestrator and gateway**, whose ports are public (the dashboard's `/api` proxy reaches the orchestrator's `/metrics` too). |
 
+Ready-made Prometheus + Grafana with a dashboard: the `monitoring` compose profile, see [deployment.md](deployment.md#monitoring-355).
+
 Every service serves **Prometheus metrics** at `GET /metrics` (text format 0.0.4): request counts
 and durations by route pattern, `nexusinfra_build_info`, process memory and uptime, plus what is
 particular to it — see [architecture.md](architecture.md#metrics-246). A scrape config:
