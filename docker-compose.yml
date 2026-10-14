@@ -56,6 +56,8 @@ services:
     # The agent drives the host Docker daemon, so it needs the socket mounted.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      # Backups outlive the container (#357) — the image's BACKUP_DIR.
+      - agent_backups:/var/lib/nexusinfra/backups
     depends_on:
       - rabbitmq
 
@@ -228,6 +230,7 @@ services:
 
 volumes:
   rabbitmq_data:
+  agent_backups:
   orchestrator_data:
   billing_data:
   postgres_data:

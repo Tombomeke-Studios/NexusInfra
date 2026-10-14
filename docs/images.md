@@ -143,7 +143,7 @@ Volume: `/data` — the database, which also holds notifications waiting to be r
 | `NODE_ID` | yes | Unique per host. |
 | `INTERNAL_API_TOKEN` | yes | Must match the orchestrator's. |
 | `AGENT_URL` | no | How the orchestrator reaches this agent, advertised on its heartbeat. Defaults to `http://<hostname>:<PORT>`, which works on a Compose network; set it explicitly for anything else. |
-| `BACKUP_DIR` | no | Where backup tarballs live. Point at a volume so they survive restarts. |
+| `BACKUP_DIR` | no | Where backup tarballs live. Defaults to `/var/lib/nexusinfra/backups`, which the image declares as a volume (#357): mount a **named** volume or a host directory there. Without a mount Docker gives each new container its own anonymous volume, so the backups of the previous container are left behind on upgrade. |
 | `BACKUP_S3_BUCKET` | no | Turns on **off-site backups** (#232): every backup is also copied to this S3-compatible bucket (AWS, Backblaze B2, Wasabi, Cloudflare R2, a self-hosted store). Off unless the bucket and both keys are set. Restore and download fall back to it when the node's own copy is gone. |
 | `BACKUP_S3_ACCESS_KEY_ID` / `BACKUP_S3_SECRET_ACCESS_KEY` | with a bucket | Credentials for the bucket. Give them access to that bucket (and prefix) only. |
 | `BACKUP_S3_ENDPOINT` | no | Defaults to AWS for `BACKUP_S3_REGION`. Set it for anything else, e.g. `https://s3.eu-central-003.backblazeb2.com`. |
@@ -251,13 +251,25 @@ On the second host, with the same broker and token:
 
 ```bash
 docker run -d --name nexusinfra-node-agent \
+  --restart unless-stopped \
   -e NODE_ID=node-berlin \
   -e RABBITMQ_URL=amqp://user:pass@broker.example.com:5672 \
   -e INTERNAL_API_TOKEN=... \
   -e AGENT_URL=http://10.0.0.42:9100 \
+  -p 9100:9100 \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  -v nexusinfra-backups:/var/lib/nexusinfra/backups \
   ghcr.io/tombomeke-studios/nexusinfra/node-agent:community
 ```
+
+Three of those lines are easy to leave out and each fails quietly (#357):
+
+- `--restart unless-stopped` — without it an agent that crashes, or a host that reboots, leaves the
+  node offline until somebody notices.
+- `-p 9100:9100` — `AGENT_URL` only says where the agent is; this is what makes it reachable there.
+  Restrict it to the orchestrator's address with your firewall.
+- the `nexusinfra-backups` volume — backups live there. Without a named volume they are left behind
+  the next time the container is replaced, and the panel goes on listing backups that are gone.
 
 It registers via heartbeats and becomes a placement target. `AGENT_URL` must be an address the
 orchestrator can actually reach, and that path should not cross an untrusted network — see
