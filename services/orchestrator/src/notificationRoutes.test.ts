@@ -12,6 +12,7 @@ describe('notification channels API (#236)', () => {
     emailEnabled,
     notifyServer: async () => 0,
     notifyAdmins: async () => 0,
+    notifyAccount: async () => 0,
     drain: async () => 0,
     sendNow: async (c) => {
       tested.push(c.id);
@@ -19,7 +20,7 @@ describe('notification channels API (#236)', () => {
     },
   });
 
-  const appAs = (id: string, platformRole: 'user' | 'admin' = 'user', emailEnabled = true) => {
+  const appAs = (id: string, platformRole: 'user' | 'admin' = 'user', emailEnabled = true, hosted = false) => {
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
@@ -30,6 +31,7 @@ describe('notification channels API (#236)', () => {
       createNotificationRouter({
         repo,
         notifier: notifier(emailEnabled),
+        hosted,
         resolveHost: async (host) => (host.endsWith('.internal') ? ['10.0.0.5'] : ['93.184.216.34']),
       })
     );
@@ -69,6 +71,16 @@ describe('notification channels API (#236)', () => {
   it('offers node events to administrators only', async () => {
     expect((await request(appAs('ada')).get('/me/notifications')).body.capabilities.events).toEqual(['server.crashed', 'server.suspended']);
     expect((await request(appAs('root', 'admin')).get('/me/notifications')).body.capabilities.events).toContain('node.offline');
+  });
+
+  // #379: the low-credit warning exists only where there is credit.
+  it('offers the low-credit warning only in the hosted edition', async () => {
+    expect((await request(appAs('ada')).get('/me/notifications')).body.capabilities.events).not.toContain('credit.low');
+    await request(appAs('ada')).post('/me/notifications').send({ kind: 'webhook', target: 'https://hooks.example.com/x', events: ['credit.low'] }).expect(400);
+
+    const hosted = appAs('ada', 'user', true, true);
+    expect((await request(hosted).get('/me/notifications')).body.capabilities.events).toContain('credit.low');
+    await request(hosted).post('/me/notifications').send({ kind: 'webhook', target: 'https://hooks.example.com/x', events: ['credit.low'] }).expect(201);
   });
 
   it('refuses email when the installation has no SMTP, and says so', async () => {

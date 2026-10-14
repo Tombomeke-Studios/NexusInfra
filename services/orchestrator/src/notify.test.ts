@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createHmac } from 'crypto';
-import { isPrivateAddress, nextAttemptDelayMs, nodeTransitions, parseChannelInput, signBody, webhookBody, type Notification } from './notify.js';
+import { eventsFor, isPrivateAddress, nextAttemptDelayMs, nodeTransitions, parseChannelInput, signBody, webhookBody, type Notification } from './notify.js';
 
 const crash: Notification = {
   event: 'server.crashed',
@@ -58,6 +58,19 @@ describe('parseChannelInput', () => {
   it('sends email only to the account itself — the panel is not a mailer', () => {
     expect(parseChannelInput({ kind: 'email', events: ['server.crashed'] }, account)).toMatchObject({ ok: true, channel: { target: 'ada@example.com' } });
     expect(parseChannelInput({ kind: 'email', target: 'someone@else.com', events: ['server.crashed'] }, account).ok).toBe(false);
+  });
+
+  // #379: there is no credit to run low on in the community edition.
+  it('offers the low-credit warning in the hosted edition only', () => {
+    const body = { kind: 'webhook', target: 'https://x.io', events: ['credit.low'] };
+    expect(parseChannelInput(body, account)).toMatchObject({ ok: false, error: 'unknown event credit.low' });
+    expect(parseChannelInput(body, { ...account, hosted: true })).toMatchObject({ ok: true, channel: { events: ['credit.low'] } });
+  });
+
+  it('lists the events an account may choose from', () => {
+    expect(eventsFor({ admin: false, hosted: false })).toEqual(['server.crashed', 'server.suspended']);
+    expect(eventsFor({ admin: false, hosted: true })).toEqual(['server.crashed', 'server.suspended', 'credit.low']);
+    expect(eventsFor({ admin: true, hosted: false })).toEqual(['server.crashed', 'server.suspended', 'node.offline', 'node.recovered']);
   });
 
   it('keeps node events to the people who run the nodes', () => {

@@ -17,6 +17,25 @@ export interface Standing {
   freeHoursLeft: number;
   canRun: boolean;
   currency: string;
+  /** Hours the credit lasts at the running servers' rate (#379); null with nothing running. */
+  hoursLeft: number | null;
+  /** Whether that is under the warning threshold. */
+  runsLow: boolean;
+}
+
+/** "about 21 hours", "about 3 days" — how long, the way a person reads it at a glance (#379). */
+export function runwayText(hours: number): string {
+  if (hours < 1) return 'less than an hour';
+  if (hours < 48) {
+    const h = Math.round(hours);
+    return `about ${h} hour${h === 1 ? '' : 's'}`;
+  }
+  return `about ${Math.round(hours / 24)} days`;
+}
+
+/** The one line of a `credit.low` notification (#379): how long, and what to do about it. */
+export function creditLowSummary(p: { hoursLeft: number; available: number; currency: string }): string {
+  return `Your credit (${money(p.available, p.currency)}) runs out in ${runwayText(p.hoursLeft)} at the rate your servers are using it — top up on the Billing page, or your servers will be stopped`;
 }
 
 const money = (amount: number, currency: string) => `${currency === 'EUR' ? '€' : `${currency} `}${amount.toFixed(2)}`;

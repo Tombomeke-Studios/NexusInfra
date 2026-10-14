@@ -147,6 +147,19 @@ describe('notifier (#236)', () => {
     expect(await n.notifyAdmins({ event: 'node.offline', summary: 'Node a is offline', node: { id: 'a', name: 'a' } })).toBe(1);
   });
 
+  // #379: credit belongs to an account, not to a server or the people on it.
+  it('tells the account itself about its credit, and nobody it shares servers with', async () => {
+    await user('guest');
+    await repo.createSubuser({ deploymentId, email: 'guest@example.com', role: 'viewer', userId: 'guest', status: 'active' });
+    await channel('owner', { events: ['credit.low'] });
+    await channel('guest', { events: ['credit.low'] });
+    const n = notifier();
+    expect(await n.notifyAccount('owner', { event: 'credit.low', summary: 'Your credit runs out in about 5 hours' })).toBe(1);
+    await n.drain();
+    expect(posts.map((p) => p.url)).toEqual(['https://hooks.example.com/owner']);
+    expect(JSON.parse(posts[0].body)).toMatchObject({ event: 'credit.low', summary: 'Your credit runs out in about 5 hours' });
+  });
+
   it('sends a test straight away and says whether it worked', async () => {
     const c = await channel('owner');
     expect(await notifier().sendNow(c, { event: 'test', occurredAt: '', summary: 'Test' })).toEqual({ ok: true });

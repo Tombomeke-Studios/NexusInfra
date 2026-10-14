@@ -13,8 +13,20 @@ import type { NodeHealth, NodeRecord } from './types.js';
 export const SERVER_EVENTS = ['server.crashed', 'server.suspended'] as const;
 /** Fleet events — for the people who run the nodes, not the people who run servers on them. */
 export const NODE_EVENTS = ['node.offline', 'node.recovered'] as const;
-export const NOTIFICATION_EVENTS = [...SERVER_EVENTS, ...NODE_EVENTS] as const;
+/**
+ * About the account itself, in the hosted edition only (#379) — there is no
+ * credit to run low on in the community edition, so it is not offered there.
+ */
+export const ACCOUNT_EVENTS = ['credit.low'] as const;
+export const NOTIFICATION_EVENTS = [...SERVER_EVENTS, ...ACCOUNT_EVENTS, ...NODE_EVENTS] as const;
 export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number] | 'test';
+
+/** The events an account may subscribe to: node events for administrators, account events where they exist. */
+export function eventsFor(who: { admin: boolean; hosted: boolean }): Exclude<NotificationEvent, 'test'>[] {
+  return NOTIFICATION_EVENTS.filter(
+    (e) => (who.admin || !(NODE_EVENTS as readonly string[]).includes(e)) && (who.hosted || !(ACCOUNT_EVENTS as readonly string[]).includes(e))
+  );
+}
 
 export const WEBHOOK_FORMATS = ['json', 'discord', 'slack'] as const;
 export type WebhookFormat = (typeof WEBHOOK_FORMATS)[number];
@@ -99,14 +111,16 @@ export interface ChannelInput {
  */
 export function parseChannelInput(
   body: unknown,
-  account: { email: string; platformRole: string },
+  account: { email: string; platformRole: string; hosted?: boolean },
 ): { ok: true; channel: ChannelInput } | { ok: false; error: string } {
   const input = (body ?? {}) as Record<string, unknown>;
   const events = input.events;
   const admin = account.platformRole === 'admin' || account.platformRole === 'owner';
+  // Node events are refused with their own reason below; here only what this edition has.
+  const known = eventsFor({ admin: true, hosted: account.hosted === true }) as readonly unknown[];
   if (!Array.isArray(events) || events.length === 0) return { ok: false, error: 'choose at least one event' };
   for (const e of events) {
-    if (!(NOTIFICATION_EVENTS as readonly unknown[]).includes(e)) return { ok: false, error: `unknown event ${String(e)}` };
+    if (!known.includes(e)) return { ok: false, error: `unknown event ${String(e)}` };
     if ((NODE_EVENTS as readonly unknown[]).includes(e) && !admin) return { ok: false, error: 'node events are for platform administrators' };
   }
   const chosen = [...new Set(events)] as ChannelInput['events'];
