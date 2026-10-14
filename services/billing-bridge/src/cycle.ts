@@ -134,9 +134,22 @@ export async function runBillingCycle(deps: CycleRunnerDeps, period: CyclePeriod
         }
       }
 
+      // FinVault files the statement under the customer's account, which it finds
+      // by address (#375) — the one their top-ups were billed to. An account that
+      // never topped up has none; the event then goes out without it and FinVault
+      // has nobody to show it to.
+      const customerEmail = await repo.getWalletEmail(userId);
       await emit(KEY_INVOICE, {
         type: 'invoice.generate',
-        payload: { reference: `invoice-${period.start}-${userId}`, userId, periodStart: period.start, periodEnd: period.end, amount: cost, currency: plan.currency },
+        payload: {
+          reference: `invoice-${period.start}-${userId}`,
+          userId,
+          periodStart: period.start,
+          periodEnd: period.end,
+          amount: cost,
+          currency: plan.currency,
+          ...(customerEmail ? { customerEmail } : {}),
+        },
       });
     }
 

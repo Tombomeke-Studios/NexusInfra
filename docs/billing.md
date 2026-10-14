@@ -156,7 +156,7 @@ the panel is **not** the owner of the hardware (a hosting-provider scenario). So
 | `payment.confirmed` | FinVault → NexusInfra | Top-up succeeded → add credit (accepted on `bank.payment.confirmed` and on `events.payment.confirmed`, the key FinVault's gateway actually publishes on) |
 | `payment.failed` | FinVault → NexusInfra | Top-up failed → mark failed (suspend if balance can't cover usage) |
 | `billing.server.suspend` | Billing Bridge → Orchestrator | Stop a user's servers when credit is exhausted |
-| `invoice.generate` | NexusInfra → FinVault | Monthly invoice record |
+| `invoice.generate` | NexusInfra → FinVault | Monthly statement: what the account used, with `customerEmail` so FinVault can file it under the customer (#375) |
 
 > `billing.server.suspend` and `invoice.generate` are defined in `shared/src/events.ts` (added in #145;
 > NexusInfra-only routing keys, the envelope/encryption contract unchanged).
@@ -191,6 +191,25 @@ with `FINVAULT_MESSAGE_KEY` set, so every payload was encrypted:
 Not exercised live: the FinVault apps' Pay and Decline buttons themselves (the run called the same
 endpoints they call), and a confirmation that fails to publish and is retried a minute later (covered
 by FinVault's unit tests only).
+
+### The monthly statement (#375)
+
+When a month closes and an account was charged, the bridge publishes `invoice.generate`. FinVault
+records it for the account with that email address, where the customer finds it under **Invoices →
+Receipts** with a PDF, titled *Server hosting — usage for September 2026, paid from your prepaid
+credit*. It sits beside the top-ups that left their FinVault account, so they can see what that money
+was spent on.
+
+- **It is a statement, not a charge.** No money moves in FinVault: it moved when the top-up was paid.
+- **Whose it is** is the address the account last topped up with — kept with the wallet, because the
+  bridge otherwise knows a customer only by id. An account that never topped up has none; its
+  statement goes out without an address and FinVault has nobody to show it to.
+- Nothing was listening for this event before; it had been published since #147 to nobody.
+
+Run live on 2026-10-14, both platforms from source on one broker with encrypted payloads: a customer
+topped up €15 through FinVault, a month was closed with 300 hours of usage on the default plan (100 free,
+€4.00 charged), the NexusInfra balance went to €11.00, and the statement appeared in that customer's
+FinVault receipts — `HOST-2026-09-…`, €4.00, payable to the merchant account — with its PDF.
 
 ## How it links to the app (FinVault)
 

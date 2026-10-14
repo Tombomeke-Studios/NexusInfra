@@ -154,6 +154,8 @@ export function createBillingService(deps: BillingServiceDeps) {
         throw new TopUpError(`you already have ${waiting} top-ups waiting to be approved in FinVault — pay or decline one there first`, 409);
       }
       const wallet = await repo.getWallet(userId);
+      // Where this account's monthly statement goes too (#375).
+      if (customerEmail) await repo.setWalletEmail(userId, customerEmail);
       const cur = currency ?? wallet.currency;
       const reference = `topup-${userId}-${randomUUID()}`;
       const entry = await repo.createLedgerEntry({

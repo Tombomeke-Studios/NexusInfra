@@ -247,6 +247,14 @@ describe('billing service', () => {
       expect(readPayload(published[0].envelope.event).customerEmail).toBe('u1@example.com');
     });
 
+    it('remembers that address for the monthly statement, and follows it when it changes (#375)', async () => {
+      expect(await repo.getWalletEmail('u1')).toBeNull();
+      await svc.requestTopUp('u1', 20, undefined, 'u1@example.com');
+      expect(await repo.getWalletEmail('u1')).toBe('u1@example.com');
+      await svc.requestTopUp('u1', 20, undefined, 'new@example.com');
+      expect(await repo.getWalletEmail('u1')).toBe('new@example.com');
+    });
+
     it('keeps FinVault’s reason when a top-up fails', async () => {
       const { reference } = await svc.requestTopUp('u1', 20);
       const failed = await svc.handlePaymentFailed({ reference, reason: 'the customer declined the request' });
