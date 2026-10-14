@@ -309,6 +309,8 @@ is the migrations directory.
 | `src/lifecycle.ts` | Consumes `infra.server.started/stopped/crashed`, updates deployment status + audit |
 | `src/credit.ts` | Prepaid, enforced where servers start (#365): pure `creditProblem` + `fetchStanding` (fail-open, logged). Create and start answer `402` when the **owner** has nothing left; stopping is never blocked |
 | `src/suspend.ts` | `createSuspendHandler` — consumes `billing.server.suspend` (hosted), stops each named running deployment + audits it |
+| `src/bridge.ts` | `bridgeFetch` — the one way to call the Billing Bridge: base URL + the internal token (#372) |
+| `src/billingPlans.ts` | Plans and the provider's view (#369, hosted only): `/billing/plans` + `PUT /billing/plan` for an account about itself, `/billing/admin/…` for platform administrators (catalogue, every account, manual credit). Pure `planFitProblem` — a switch is refused when the account holds more than the plan allows. Who adjusted credit comes from the session, never the body |
 | `src/billingProxy.ts` | `createBillingProxyRouter` — authenticated `/billing/*` proxy → Billing Bridge, injecting the JWT user id (dashboard never sends a user id) and, on a top-up, the account's own email as the payer (#351). No user, no answer: 401 |
 | `src/monitoring.ts` | `createMonitoringRouter` — `GET /monitoring` proxies the Control Room's `/status` to the dashboard (`reachable:false` if it's down) |
 | `src/wsProxy.ts` | Pure `pipeSockets` + `toWsUrl` — the terminal WS proxy plumbing; `index.ts` authenticates the JWT, resolves the container, and pipes the client WS ↔ the Node Agent's `/terminal` WS (#71) |
@@ -320,6 +322,7 @@ is the migrations directory.
 | Path | Contents |
 |---|---|
 | `src/pricing.ts` | Pure pricing: `BillingPlan` (incl. the #297 entitlements `maxRamMb`/`maxBackupsPerServer`, null = no ceiling) + `resourceFactor` (CPU/RAM → multiplier) + `billableHours`/`computeCharge` + `roundCurrency` + `chargingModel` (the model as data, so the panel states what the charge does) |
+| `src/plans.ts` | The plan catalogue, pure (#369): `parsePlanInput` (an edit may send only what changed), `planIdFrom`, `retireProblem` (never the default plan), `switchProblem` (a retired plan keeps its accounts, takes no new ones) |
 | `src/quotas.ts` | Pure plan quota checks (`quotaLimit`, `withinQuota`) for servers/databases |
 | `src/tracking.ts` | Pure runtime math: `hoursBetween` + `accruedHours` (open interval counts up to now) |
 | `src/wallet.ts` | Pure credit-wallet math: `applyTopUp`/`applyCharge`/`canCover` |
@@ -331,6 +334,7 @@ is the migrations directory.
 | `src/prisma.integration.test.ts` | The billing repository on real SQLite and PostgreSQL: concurrent confirmations credit once (#298) |
 | `src/cycle.ts` | Monthly cycle runner: pure `computeCycleCost`/period helpers + `runBillingCycle` (charge credit → `billing.server.suspend` on short balance → `invoice.generate`) + `startCycleRunner` (hourly poll, idempotent) |
 | `src/api.ts` | `createBillingRouter` — HTTP: wallet/usage/ledger/plan/quota + `POST /topup` |
+| `src/internalAuth.ts` | `requireInternalToken` — every route but `/health` and `/metrics` needs the shared internal token (#372). The routes act on whichever account the path names, and nothing used to stop anyone naming one |
 | `src/index.ts` | Entry: PrismaRepository + service; consumes deployment/runtime + `bank.payment.*`; HTTP `/health` (+ billing routes when hosted) on `:9300`; inert in community |
 | `prisma/schema.prisma` | Prisma + SQLite: `BillingPlan`, `UserPlan`, `BillingDeployment` (owner + size, #364), `ServerBilling`, `CreditWallet`, `CreditLedger`, `BillingCycle`. `prisma/migrations` is the source of truth |
 | `Dockerfile` | Multi-stage build; runtime applies `prisma migrate deploy` then starts |
@@ -372,6 +376,8 @@ is the migrations directory.
 | `src/components/IntroTour.tsx` | First-run intro walkthrough (skippable, re-openable from the nav Help button) |
 | `src/pages/{Login,Overview,NewDeployment,Servers}.tsx` | Login, node health/overview (+ Platform-services strip from Control Room monitoring, #157), deployment form, live server list + stop |
 | `src/components/PlanPanel.tsx` · `src/plan.ts` | The plan beside the size being chosen in New Deployment (#297): ceilings, what is spent, whether this server fits (with a one-click "use what is left"), and the charging model in words. **Hosted-only** — aliased to `PlanPanel.stub.tsx` in a community build and marked in `verify-edition.mjs` |
+| `src/pages/Customers.tsx` · `src/billingAdmin.ts` | The provider's page (#369, **hosted-only** — aliased to `Customers.stub.tsx` in a community build, marked in `verify-edition.mjs`): every account with plan, usage, balance and what is left; move an account to a plan; adjust credit with a reason; create, edit and retire plans. `billingAdmin.ts` is the pure half — the plan form (memory typed in GB, a comma accepted as a decimal point), `planLimits`, `hourly` (keeps the digits of a €0.005 rate) |
+| `src/components/PlanChooser.tsx` | The plans on the customer's Billing page (#369). A plan the account does not fit shows *why* and no button; a switch is confirmed first, since it changes the rate from that moment |
 | `src/pages/Billing.tsx` | Billing page (hosted only): credit balance, top-up via FinVault, cycle usage/cost, payment history — route + nav link gated on `useEdition().isHosted` |
 | `src/health.ts` | Status → colour helpers shared across pages |
 | `src/test/setup.ts` · `vitest.config.ts` | jsdom + Testing Library setup; in-memory localStorage |
@@ -434,6 +440,9 @@ is the migrations directory.
 - **Starting a server costs money in hosted, so every path that starts one asks `getStanding` first (#365).**
   The start control and the create route do; a new feature that brings a stopped server up must too, or
   it is a way to run without credit. Recreating one that is already running (restart, image update) does not.
+- **Runtime is charged at the rate of the plan it ran under (#369).** `computeCycleCost` takes a `rateOf`
+  lookup; pass it (`ratesOf(await repo.listPlans())`) wherever a cost is computed, or an account that
+  changed plans is repriced for the whole month at the plan it ended on.
 - **A ledger status changes through `transitionLedgerStatus`, never read-then-write.** The broker delivers
   at least once; two deliveries of one confirmation used to both see "pending" and both credit (#298).
 - Consumers `nack` without requeue on error → message dead-letters to `finvault.events.dlq` (3-retry
@@ -444,6 +453,9 @@ is the migrations directory.
 - **Agent calls must target the *owning* node** — resolve it with `agentUrlFor(deployment.nodeId)`,
   never the bare `NODE_AGENT_URL` constant (that is only the single-node fallback). Getting this wrong
   operates on the wrong host and fails silently with 2+ nodes (#171).
+- **Every Orchestrator → Billing Bridge call must go through `bridgeFetch`** (`bridge.ts`, #372). The
+  bridge believes the user id in the path, so it serves only callers with the internal token. A bare
+  `fetch` answers 401 — and the billing checks fail *open*, so the symptom is billing quietly not enforced.
 - **Every Orchestrator → Node Agent call must go through `agentFetch`** (or carry
   `INTERNAL_TOKEN_HEADER` explicitly, as the terminal WS dial does). The agent rejects untokened
   requests with 401 (#169) — a bare `fetch` to `NODE_AGENT_URL` will silently start failing.
@@ -472,6 +484,10 @@ is the migrations directory.
 - **Anything that runs inside a container needs LF line endings** — see `.gitattributes`. CRLF makes
   the kernel read the carriage return as part of the interpreter path (`bad interpreter`), and it
   only shows up on a fresh clone on Windows.
+- **Nothing absolutely positioned inside a scrolling card unless the card is `position: relative` (#369).**
+  A `.sr-only` label in a table header escaped its card's `overflow-x: auto` — the card was not its
+  containing block — and the whole Customers page scrolled sideways on a phone. No unit test sees that;
+  it was found by measuring `scrollWidth` in a real browser at 390px.
 - **Colour tokens are measured, not picked (#247).** Every text token clears WCAG AA on every surface
   it sits on, in both themes — checked with axe across the whole panel. `--color-primary` is for text,
   borders and marks; **`--color-primary-solid`** (and `--color-danger-solid`) is for a fill with white

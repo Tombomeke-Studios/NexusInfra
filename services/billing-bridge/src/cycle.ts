@@ -47,7 +47,16 @@ export function clipIntervalHours(interval: ServerBillingRecord, period: CyclePe
  * free-hour grant is a single pool spent (in interval order) across servers;
  * remaining billable hours are charged at each server's resource factor.
  */
-export function computeCycleCost(intervals: ServerBillingRecord[], plan: BillingPlan, period: CyclePeriod): number {
+/** The hourly rate a plan id stands for; undefined when the plan is not known. */
+export type RateOf = (planId: string) => number | undefined;
+
+/** A rate lookup over a list of plans. */
+export function ratesOf(plans: BillingPlan[]): RateOf {
+  const byId = new Map(plans.map((p) => [p.id, p.pricePerHour]));
+  return (planId) => byId.get(planId);
+}
+
+export function computeCycleCost(intervals: ServerBillingRecord[], plan: BillingPlan, period: CyclePeriod, rateOf?: RateOf): number {
   const ordered = [...intervals].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
   let remainingFree = plan.freeHoursPerMonth;
   let cost = 0;
@@ -56,7 +65,10 @@ export function computeCycleCost(intervals: ServerBillingRecord[], plan: Billing
     if (h <= 0) continue;
     const freeApplied = Math.min(remainingFree, h);
     remainingFree -= freeApplied;
-    cost += (h - freeApplied) * plan.pricePerHour * resourceFactor(i.limits);
+    // Each interval is charged at the rate of the plan it ran under (#369). An
+    // account that switched plans mid-month would otherwise have the whole month
+    // repriced at whichever plan it ended on — cheapest-on-the-30th.
+    cost += (h - freeApplied) * (rateOf?.(i.planId) ?? plan.pricePerHour) * resourceFactor(i.limits);
   }
   return roundCurrency(cost);
 }
@@ -88,13 +100,14 @@ export async function runBillingCycle(deps: CycleRunnerDeps, period: CyclePeriod
   const publish = deps.publish ?? publishRabbitEvent;
   const emit = (routingKey: string, event: NexusInfraEvent) => publish(routingKey, buildEnvelope('billing-bridge', event));
 
+  const rateOf = ratesOf(await repo.listPlans());
   const outcomes: CycleOutcome[] = [];
   for (const userId of await repo.listBillableUserIds()) {
     const alreadyBilled = (await repo.listCycles(userId)).some((c) => c.periodStart === period.start);
     if (alreadyBilled) continue;
 
     const [plan, intervals] = await Promise.all([repo.getUserPlan(userId), repo.listIntervals(userId)]);
-    const cost = computeCycleCost(intervals, plan, period);
+    const cost = computeCycleCost(intervals, plan, period, rateOf);
 
     let status: CycleStatus = 'paid';
     let suspendedDeploymentIds: string[] = [];

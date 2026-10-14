@@ -1,9 +1,9 @@
 import express from 'express';
-import cors from 'cors';
 import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, getEdition, isHosted, readPayload, startHeartbeat, type EventEnvelope, MetricsRegistry, registerBuildInfo, httpMetrics, metricsHandler } from 'shared';
 import { PrismaRepository } from './db.js';
 import { createBillingService, DEFAULT_SETTLE_INTERVAL_MS, DEFAULT_TOPUP_TIMEOUT_MS } from './service.js';
 import { createBillingRouter } from './api.js';
+import { requireInternalToken } from './internalAuth.js';
 import { startCycleRunner } from './cycle.js';
 
 // ── Billing Bridge (hosted edition) ───────────────────────────────────────────
@@ -33,7 +33,6 @@ const app = express();
 const metrics = new MetricsRegistry();
 registerBuildInfo(metrics, 'billing-bridge', buildInfo());
 app.use(httpMetrics(metrics, 'billing-bridge'));
-app.use(cors());
 app.use(express.json());
 app.get('/metrics', metricsHandler(metrics));
 app.get('/health', (_req, res) => {
@@ -41,6 +40,9 @@ app.get('/health', (_req, res) => {
 });
 
 if (isHosted(edition)) {
+  // Only the Orchestrator may call these (#372): they act on whichever account
+  // the path names. No CORS either — no browser talks to this service.
+  app.use(requireInternalToken());
   app.use(createBillingRouter({ repo, service }));
 }
 app.listen(PORT, () => console.log(`[BillingBridge] HTTP listening on http://localhost:${PORT} (edition: ${edition})`));

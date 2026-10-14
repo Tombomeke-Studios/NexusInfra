@@ -1,4 +1,5 @@
 import { isHosted } from 'shared';
+import { bridgeFetch } from './bridge.js';
 import { committedRamMb } from './capacity.js';
 import type { DeploymentView, NodeRecord } from './types.js';
 
@@ -103,10 +104,10 @@ export function ramProblem(entitlements: Entitlements | null, usage: Entitlement
  * outage must not stop people running servers. It is logged, because a plan
  * silently unenforced is a bill silently wrong.
  */
-export async function fetchEntitlements(bridgeUrl: string, userId: string): Promise<Entitlements | null> {
+export async function fetchEntitlements(userId: string): Promise<Entitlements | null> {
   if (!isHosted()) return null;
   try {
-    const r = await fetch(`${bridgeUrl}/billing/${encodeURIComponent(userId)}/entitlements`);
+    const r = await bridgeFetch(`/billing/${encodeURIComponent(userId)}/entitlements`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return (await r.json()) as Entitlements;
   } catch (err) {

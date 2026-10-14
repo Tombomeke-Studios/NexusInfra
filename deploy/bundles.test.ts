@@ -63,6 +63,19 @@ describe('service images', () => {
     .map((service) => join(ROOT, 'services', service, 'Dockerfile'))
     .concat(join(ROOT, 'dashboard', 'Dockerfile'), join(ROOT, 'allinone', 'Dockerfile'));
 
+  // #372: the bridge serves only callers holding the internal token. A compose
+  // file that gives the token to the Orchestrator and not to the bridge leaves
+  // the bridge on the built-in default — every call answers 401 and billing is
+  // quietly not enforced (the checks fail open).
+  it.each(COMPOSE_FILES)('gives the billing bridge the internal token wherever it runs: %s', (file) => {
+    // Line endings are the checkout's business; normalised so the match means the same everywhere.
+    const compose = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+    if (!/^ {2}billing-bridge:/m.test(compose)) return; // the community bundle has no billing bridge
+    const service = compose.match(/^ {2}billing-bridge:\n((?: {4}.*\n|\n)+)/m)?.[1];
+    expect(service, 'could not read the billing-bridge service block').toBeTruthy();
+    expect(service).toMatch(/INTERNAL_API_TOKEN=/);
+  });
+
   // #357: both bundles mounted a volume for the agent's backups and neither set
   // BACKUP_DIR, so nothing was ever written to it — backups lived in the
   // container and went with it on every upgrade. The image now names the

@@ -31,6 +31,8 @@ export default defineConfig({
         ? []
         : [
             { find: fromHere('./src/pages/Billing.tsx'), replacement: fromHere('./src/pages/Billing.stub.tsx') },
+            // The provider's customers and plans (#369).
+            { find: fromHere('./src/pages/Customers.tsx'), replacement: fromHere('./src/pages/Customers.stub.tsx') },
             // The plan panel in New Deployment (#297).
             { find: fromHere('./src/components/PlanPanel.tsx'), replacement: fromHere('./src/components/PlanPanel.stub.tsx') },
           ],

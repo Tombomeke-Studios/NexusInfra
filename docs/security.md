@@ -316,6 +316,22 @@ Now:
 **Remaining gap:** the token is a static shared secret with no rotation, and AMQP/HTTP hops are still
 plaintext on the private network. mTLS and rotation belong with the production hardening (#21).
 
+
+### The Billing Bridge (#372)
+
+The Billing Bridge's routes name the account in the path (`/billing/:userId/...`) and believe it: the
+Orchestrator is meant to be the only caller, and puts the signed-in user's id there. Nothing enforced
+that either. Anyone able to reach the bridge's port could read any account's wallet and ledger, or start
+a top-up — a payment request in somebody's FinVault account — for any user and any address.
+
+- Every route except `/health` and `/metrics` now requires the same `INTERNAL_API_TOKEN`.
+- The Orchestrator calls it only through `bridgeFetch`, which attaches the token.
+- CORS is gone from the bridge; no browser talks to it.
+- **A mismatched token is quiet.** The Orchestrator's billing checks fail open by design (a billing
+  outage must not stop servers), so with different values on the two services quotas and credit are
+  simply not enforced. The Orchestrator logs each check it could not make; the release bundle refuses
+  to start without the variable, and a bundle test checks every compose file passes it to both.
+
 ## Container file management (#108)
 
 - The Node Agent's file API operates **inside** the target container. Every path is normalised to a

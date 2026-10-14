@@ -65,6 +65,7 @@ function toPlan(p: PrismaPlan): BillingPlan {
     maxDatabases: p.maxDatabases,
     maxRamMb: p.maxRamMb ?? null,
     maxBackupsPerServer: p.maxBackupsPerServer ?? null,
+    active: p.active,
   };
 }
 
@@ -126,6 +127,26 @@ export class PrismaRepository implements Repository {
     const planId = assignment?.planId ?? DEFAULT_PLAN.id;
     const plan = await this.client.billingPlan.findUnique({ where: { id: planId } });
     return plan ? toPlan(plan) : DEFAULT_PLAN;
+  }
+
+  async listPlans(): Promise<BillingPlan[]> {
+    const rows = await this.client.billingPlan.findMany({ orderBy: { createdAt: 'asc' } });
+    return rows.map(toPlan);
+  }
+
+  async getPlan(id: string): Promise<BillingPlan | null> {
+    const row = await this.client.billingPlan.findUnique({ where: { id } });
+    return row ? toPlan(row) : null;
+  }
+
+  async savePlan(plan: BillingPlan): Promise<BillingPlan> {
+    const { id, ...fields } = plan;
+    const row = await this.client.billingPlan.upsert({ where: { id }, create: { id, ...fields }, update: fields });
+    return toPlan(row);
+  }
+
+  async setUserPlan(userId: string, planId: string): Promise<void> {
+    await this.client.userPlan.upsert({ where: { userId }, create: { userId, planId }, update: { planId } });
   }
 
   async saveDeployment(deployment: BilledDeployment): Promise<void> {
@@ -259,13 +280,12 @@ export class PrismaRepository implements Repository {
   }
 
   async listBillableUserIds(): Promise<string[]> {
-    const [intervals, wallets] = await Promise.all([
+    const [intervals, wallets, assignments, deployments] = await Promise.all([
       this.client.serverBilling.findMany({ distinct: ['userId'], select: { userId: true } }),
       this.client.creditWallet.findMany({ select: { userId: true } }),
+      this.client.userPlan.findMany({ select: { userId: true } }),
+      this.client.billingDeployment.findMany({ distinct: ['userId'], select: { userId: true } }),
     ]);
-    const ids = new Set<string>();
-    for (const i of intervals) ids.add(i.userId);
-    for (const w of wallets) ids.add(w.userId);
-    return [...ids];
+    return [...new Set([...intervals, ...wallets, ...assignments, ...deployments].map((row) => row.userId))];
   }
 }

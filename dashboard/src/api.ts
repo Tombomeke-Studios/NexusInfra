@@ -512,6 +512,85 @@ export function getUsage(): Promise<BillingUsage> {
   return request('/billing/usage');
 }
 
+// ── Plans and the provider's view (#369, hosted) ────────────────────────────
+
+/** A plan in the catalogue. */
+export interface BillingPlanOption {
+  id: string;
+  name: string;
+  pricePerHour: number;
+  currency: string;
+  freeHoursPerMonth: number;
+  maxServers: number;
+  maxDatabases: number;
+  maxRamMb: number | null;
+  maxBackupsPerServer: number | null;
+  /** False once retired: accounts on it keep it, nobody new may choose it. */
+  active: boolean;
+}
+
+export interface PlanOptions {
+  currentPlanId: string;
+  /** `problem` says why this account's servers do not fit the plan, or is null. */
+  plans: Array<BillingPlanOption & { problem: string | null }>;
+}
+
+export function getPlanOptions(): Promise<PlanOptions> {
+  return request('/billing/plans');
+}
+
+export function choosePlan(planId: string): Promise<BillingPlanOption> {
+  return request('/billing/plan', { method: 'PUT', body: JSON.stringify({ planId }) });
+}
+
+/** One account as the provider sees it. */
+export interface BillingAccount {
+  userId: string;
+  email: string;
+  displayName: string;
+  platformRole: PlatformRole;
+  createdAt: string;
+  servers: number;
+  runningServers: number;
+  planId: string | null;
+  planName: string | null;
+  balance: number;
+  /** Balance less usage not yet charged. */
+  available: number;
+  /** Null when billing has never heard of the account. */
+  canRun: boolean | null;
+  currency: string;
+  hours: number;
+  cost: number;
+}
+
+type PlanFields = Pick<BillingPlanOption, 'name' | 'pricePerHour' | 'freeHoursPerMonth' | 'maxServers' | 'maxDatabases' | 'maxRamMb' | 'maxBackupsPerServer'>;
+
+export function adminListPlans(): Promise<BillingPlanOption[]> {
+  return request('/billing/admin/plans');
+}
+
+export function adminCreatePlan(plan: PlanFields): Promise<BillingPlanOption> {
+  return request('/billing/admin/plans', { method: 'POST', body: JSON.stringify(plan) });
+}
+
+export function adminUpdatePlan(id: string, changes: Partial<PlanFields> & { active?: boolean }): Promise<BillingPlanOption> {
+  return request(`/billing/admin/plans/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(changes) });
+}
+
+export function adminListAccounts(): Promise<BillingAccount[]> {
+  return request('/billing/admin/accounts');
+}
+
+export function adminSetAccountPlan(userId: string, planId: string): Promise<BillingPlanOption> {
+  return request(`/billing/admin/accounts/${encodeURIComponent(userId)}/plan`, { method: 'PUT', body: JSON.stringify({ planId }) });
+}
+
+/** A negative amount removes credit. The reason is shown to the customer. */
+export function adminAdjustCredit(userId: string, amount: number, reason: string): Promise<{ wallet: CreditWallet }> {
+  return request(`/billing/admin/accounts/${encodeURIComponent(userId)}/credit`, { method: 'POST', body: JSON.stringify({ amount, reason }) });
+}
+
 /** What an account has left to spend, and whether it may run servers (#365). */
 export interface CreditStanding {
   balance: number;

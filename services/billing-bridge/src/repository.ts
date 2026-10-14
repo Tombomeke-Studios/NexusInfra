@@ -39,6 +39,24 @@ export class InMemoryRepository implements Repository {
     return (planId && this.plans.get(planId)) || this.plans.get(DEFAULT_PLAN.id) || DEFAULT_PLAN;
   }
 
+  async listPlans(): Promise<BillingPlan[]> {
+    return [...this.plans.values()].map((p) => ({ ...p }));
+  }
+
+  async getPlan(id: string): Promise<BillingPlan | null> {
+    const plan = this.plans.get(id);
+    return plan ? { ...plan } : null;
+  }
+
+  async savePlan(plan: BillingPlan): Promise<BillingPlan> {
+    this.plans.set(plan.id, { ...plan });
+    return { ...plan };
+  }
+
+  async setUserPlan(userId: string, planId: string): Promise<void> {
+    this.userPlans.set(userId, planId);
+  }
+
   async saveDeployment(deployment: BilledDeployment): Promise<void> {
     this.deployments.set(deployment.deploymentId, { ...deployment });
   }
@@ -147,6 +165,8 @@ export class InMemoryRepository implements Repository {
     const ids = new Set<string>();
     for (const i of this.intervals) ids.add(i.userId);
     for (const userId of this.wallets.keys()) ids.add(userId);
+    for (const userId of this.userPlans.keys()) ids.add(userId);
+    for (const d of this.deployments.values()) ids.add(d.userId);
     return [...ids];
   }
 }

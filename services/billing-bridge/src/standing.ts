@@ -1,5 +1,5 @@
 import { roundCurrency, type BillingPlan } from './pricing.js';
-import { clipIntervalHours, computeCycleCost, monthPeriodOf, previousMonthPeriod, type CyclePeriod } from './cycle.js';
+import { clipIntervalHours, computeCycleCost, monthPeriodOf, previousMonthPeriod, type CyclePeriod, type RateOf } from './cycle.js';
 import type { BillingCycleRecord, ServerBillingRecord } from './types.js';
 
 // An account's standing: what it has, what it has used and not yet been charged
@@ -35,9 +35,9 @@ export interface Standing {
  * charge them. An interval still open counts up to the period's end, so pass a
  * period that ends *now* for a month in progress.
  */
-export function usageIn(intervals: ServerBillingRecord[], plan: BillingPlan, period: CyclePeriod): Usage {
+export function usageIn(intervals: ServerBillingRecord[], plan: BillingPlan, period: CyclePeriod, rateOf?: RateOf): Usage {
   const hours = intervals.reduce((sum, i) => sum + clipIntervalHours(i, period), 0);
-  return { hours: Math.round(hours * 1000) / 1000, cost: computeCycleCost(intervals, plan, period) };
+  return { hours: Math.round(hours * 1000) / 1000, cost: computeCycleCost(intervals, plan, period, rateOf) };
 }
 
 /** The month in progress, ending now rather than at the end of the month. */
@@ -52,15 +52,17 @@ export function computeStanding(input: {
   cycles: Pick<BillingCycleRecord, 'periodStart'>[];
   plan: BillingPlan;
   now: string;
+  /** Rates of the plans intervals ran under (#369); without it everything is charged at `plan`'s. */
+  rateOf?: RateOf;
 }): Standing {
-  const { balance, intervals, cycles, plan, now } = input;
-  const thisMonth = usageIn(intervals, plan, currentPeriod(now));
+  const { balance, intervals, cycles, plan, now, rateOf } = input;
+  const thisMonth = usageIn(intervals, plan, currentPeriod(now), rateOf);
 
   // The cycle runner polls hourly, so just after a month closes its usage is in
   // neither the balance nor the month in progress. Count it until it is charged.
   const previous = previousMonthPeriod(now);
   const previousBilled = cycles.some((c) => c.periodStart === previous.start);
-  const unbilledPrevious = previousBilled ? 0 : usageIn(intervals, plan, previous).cost;
+  const unbilledPrevious = previousBilled ? 0 : usageIn(intervals, plan, previous, rateOf).cost;
 
   const accrued = roundCurrency(thisMonth.cost + unbilledPrevious);
   const available = roundCurrency(balance - accrued);

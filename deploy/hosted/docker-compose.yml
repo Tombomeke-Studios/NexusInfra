@@ -106,6 +106,8 @@ services:
       - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
       - METRICS_TOKEN=${METRICS_TOKEN:-}
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:?must match FinVault}
+      # Must match the Orchestrator's value: the bridge serves only callers that hold it (#372).
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?set a strong random value in .env}
       # SQLite unless BILLING_DATABASE_URL names PostgreSQL — its own schema in
       # the same database, e.g. …/nexusinfra?schema=billing (#241).
       - DATABASE_URL=${BILLING_DATABASE_URL:-file:/data/billing.db}

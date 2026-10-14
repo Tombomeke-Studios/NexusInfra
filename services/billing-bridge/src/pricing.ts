@@ -28,6 +28,8 @@ export interface BillingPlan {
   maxRamMb: number | null;
   /** How many backups each server keeps at most (#297); null for no ceiling. */
   maxBackupsPerServer: number | null;
+  /** Whether accounts may still choose it (#369). A retired plan keeps the accounts it has. */
+  active: boolean;
 }
 
 /** The default plan used when a user has none assigned (keeps community-style usage free-ish). */
@@ -41,6 +43,7 @@ export const DEFAULT_PLAN: BillingPlan = {
   maxDatabases: 5,
   maxRamMb: 8192,
   maxBackupsPerServer: 10,
+  active: true,
 };
 
 // A "standard unit" is 50% CPU + 50% RAM of a node → factor 1.0. Bigger servers
