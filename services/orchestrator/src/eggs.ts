@@ -579,6 +579,8 @@ const PROJECT_ZOMBOID: Egg = {
   // disables it without a password, and this recipe does not set one.
   ports: { '16261': '16261/udp', '16262': '16262/udp' },
   dataPath: '/home/steam/Zomboid',
+  // A Steam server: the game port answers A2S (#382).
+  query: { protocol: 'a2s', port: '16261' },
   // The image passes MEMORY to both -Xms and -Xmx, like itzg's — so the JVM
   // commits it, and it has to fit the memory limit (#271, #308).
   memoryVariable: 'MEMORY',
@@ -653,6 +655,8 @@ const ENSHROUDED: Egg = {
   // game port to publish any more.
   ports: { '15637': '15637/udp' },
   dataPath: '/opt/enshrouded',
+  // The query port is the Steam one, so it answers A2S (#382).
+  query: { protocol: 'a2s', port: '15637' },
   // Enshrouded dropped its server password for roles, and a role with an empty
   // password lets anyone in with its rights. The recipe fixes the two roles and
   // what each may do, so a caller cannot hand the friend role a ban hammer; only

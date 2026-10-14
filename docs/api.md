@@ -707,7 +707,7 @@ What the game itself says, asked by the node it runs on (`server.view`). Always 
 | `online` | The game answered. `players` is `null` when the server hides its count — not `0`. |
 | `offline` | The server runs, but the game did not answer on its status port; `error` says how it failed. |
 | `stopped` | The server is not running, so nobody was asked. |
-| `unsupported` | This kind of server has no status protocol the panel speaks (a plain application, Palworld). |
+| `unsupported` | This kind of server has no status protocol the panel speaks — a plain application, Palworld, Terraria, Factorio, Satisfactory. |
 | `unknown` | The node could not be asked; `error` says why. |
 
 Only `online` carries figures. `protocol` is `minecraft` (Server List Ping), `bedrock` (RakNet ping) or

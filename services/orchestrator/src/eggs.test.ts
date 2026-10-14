@@ -509,5 +509,13 @@ describe('status queries (#382)', () => {
     expect(getEgg('valheim')!.query).toEqual({ protocol: 'a2s', port: '2457' });
     expect(getEgg('rust')!.query?.protocol).toBe('a2s');
     expect(getEgg('cs2')!.query?.protocol).toBe('a2s');
+    expect(getEgg('project-zomboid')!.query).toEqual({ protocol: 'a2s', port: '16261' });
+    expect(getEgg('enshrouded')!.query).toEqual({ protocol: 'a2s', port: '15637' });
+  });
+
+  it('does not pretend to ask a game whose status protocol it does not speak', () => {
+    // Palworld does not report players over A2S; Terraria, Factorio and
+    // Satisfactory each have a protocol of their own. Unsupported beats a wrong 0.
+    for (const id of ['palworld', 'terraria', 'factorio', 'satisfactory']) expect(getEgg(id)!.query, id).toBeUndefined();
   });
 });
