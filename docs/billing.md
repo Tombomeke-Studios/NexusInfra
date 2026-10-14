@@ -128,6 +128,17 @@ the panel is **not** the owner of the hardware (a hosting-provider scenario). So
   - **Free hours count.** An account that owes nothing and still has free hours this month may run, which
     is how a plan with a free allowance lets a new customer start before paying. A provider who wants
     payment first sets the plan's free hours to zero.
+  - **Warned before, not only told after (#379).** The standing says how many hours what is left lasts
+    at the rate the running servers spend it — the free hours first, which every running server spends
+    at once, then the credit. Nothing running means no estimate, not an infinite one. The Billing page
+    shows it under *Left to spend*. When it drops under `LOW_CREDIT_HOURS` (default 24) the bridge
+    publishes `billing.credit.low` once, and the account hears it on the channels it chose for
+    `credit.low` (#236) — an event the community edition does not offer. The bridge remembers that it
+    warned, with the wallet, so a restart does not warn again; it forgets once the credit lasts the
+    threshold again, so the next dip warns. Stopping the servers changes nothing either way. An
+    account that has already run out hears about the suspension instead.
+    It is an estimate: it assumes the servers keep running as they are, and does not count next
+    month's free hours.
   - **Servers do not restart on their own after a top-up.** The customer starts them; a stopped game
     server coming back unasked, at an hour nobody chose, is its own kind of surprise.
   - **If the bridge cannot be asked, nothing is blocked** (and it is logged), as with quotas.
@@ -156,6 +167,7 @@ the panel is **not** the owner of the hardware (a hosting-provider scenario). So
 | `payment.confirmed` | FinVault → NexusInfra | Top-up succeeded → add credit (accepted on `bank.payment.confirmed` and on `events.payment.confirmed`, the key FinVault's gateway actually publishes on) |
 | `payment.failed` | FinVault → NexusInfra | Top-up failed → mark failed (suspend if balance can't cover usage) |
 | `billing.server.suspend` | Billing Bridge → Orchestrator | Stop a user's servers when credit is exhausted |
+| `billing.credit.low` | Billing Bridge → Orchestrator | The account's credit lasts less than `LOW_CREDIT_HOURS` — notify it (#379) |
 | `invoice.generate` | NexusInfra → FinVault | Monthly statement: what the account used, with `customerEmail` so FinVault can file it under the customer (#375) |
 
 > `billing.server.suspend` and `invoice.generate` are defined in `shared/src/events.ts` (added in #145;

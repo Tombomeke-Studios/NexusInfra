@@ -299,6 +299,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [x] The monthly invoice event was published to nobody, and did not say whose it was (#375) — it carries the address the account topped up with; FinVault (its #94) records it as a hosting statement under the customer's receipts
 - [x] Verify a customer's email address at signup in the hosted edition (#367) — a self-registration is mailed a single-use link and cannot top up until it is opened; only where `SMTP_URL` and `PANEL_URL` are set (nothing is gated otherwise); administrator-made accounts and completed password resets count as confirmed
 - [x] Plans a customer can choose between, and a provider's view of their customers (#369) — administrators define, edit and retire plans; a customer switches on the Billing page when their servers fit; runtime is charged at the rate of the plan it ran under; a Customers page lists every account with plan, usage and balance, and adjusts credit by hand with a reason the customer sees
+- [x] Warn a customer before their credit runs out, and show how long it will last (#379) — the standing says how many hours what is left lasts at the running servers' rate (free hours first), shown under *Left to spend*; under `LOW_CREDIT_HOURS` (default 24) the account gets one `credit.low` notification per dip, remembered across a restart; the event is not offered in the community edition
 - [x] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)
 - [x] `docs/billing.md` is missing from the documentation ownership table (#248)
 

@@ -176,7 +176,8 @@ Requires the Docker socket: `-v /var/run/docker.sock:/var/run/docker.sock`.
 | `INTERNAL_API_TOKEN` | yes | Must match the orchestrator's. The bridge serves only callers that hold it (#372); with different values every billing check fails — and they fail *open*, so nothing is enforced. |
 | `BILLING_WALLET_ID` | no | NexusInfra's receiver wallet id on top-up requests to FinVault. |
 | `FINVAULT_MESSAGE_KEY` | yes | Must be FinVault's value exactly. A different key cannot decrypt anything: the log says so, the event is dead-lettered, and top-ups turn *Not confirmed* (#298). |
-| `SETTLE_INTERVAL_MS` | no | How often running accounts are checked against their balance and suspended when it is used up (default `300000`, 5 min) (#365). |
+| `SETTLE_INTERVAL_MS` | no | How often running accounts are checked against their balance and suspended when it is used up (default `300000`, 5 min) (#365). The low-credit warning is checked on the same cadence. |
+| `LOW_CREDIT_HOURS` | no | Warn an account once when its credit lasts fewer hours than this at its running servers' rate (default `24`) (#379). |
 | `TOPUP_TIMEOUT_MS` | no | How long a top-up waits for FinVault before the panel shows it as not confirmed (default `1800000`, 30 min). A late confirmation is still credited. |
 
 ### `dashboard`
