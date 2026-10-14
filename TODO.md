@@ -285,7 +285,7 @@ scrolling log lines describing events that never happened.
 
 - [x] Uploading a file over 1 MB through the panel fails with 413 (#389) 🐛
 
-- [ ] Deleting a server leaves its backup archives on the node (#390) 🐛
+- [x] Deleting a server leaves its backup archives on the node (#390) 🐛
 
 - [ ] Release bundles cannot turn on mail, password reset, 2FA enforcement, off-site backups or proxy trust (#391) 🐛
 
