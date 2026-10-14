@@ -121,6 +121,10 @@ export interface Repository {
   // Wallet
   getWallet(userId: string): Promise<CreditWallet>;
   setBalance(userId: string, balance: number): Promise<CreditWallet>;
+  /** Remember the address this account's top-ups are billed to (#375). */
+  setWalletEmail(userId: string, email: string): Promise<void>;
+  /** That address, or null when the account has never topped up. */
+  getWalletEmail(userId: string): Promise<string | null>;
 
   // Ledger
   createLedgerEntry(input: CreateLedgerInput): Promise<CreditLedgerEntry>;

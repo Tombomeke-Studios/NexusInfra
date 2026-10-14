@@ -60,7 +60,8 @@ export type NexusInfraEvent =
   // Billing Bridge → Orchestrator: stop this user's servers when credit runs out.
   | { type: 'billing.server.suspend'; payload: { userId: string; deploymentIds: string[]; reason: string } }
   // NexusInfra → FinVault: a monthly invoice record for a closed billing cycle.
-  | { type: 'invoice.generate'; payload: { reference: string; userId: string; periodStart: string; periodEnd: string; amount: number; currency: string } };
+  // `customerEmail` is how FinVault finds whose statement it is (#375).
+  | { type: 'invoice.generate'; payload: { reference: string; userId: string; periodStart: string; periodEnd: string; amount: number; currency: string; customerEmail?: string } };
 
 /** What an agent needs to start a server's container (see orchestrator startCommand.ts). */
 export interface ServerStartPayload {

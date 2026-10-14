@@ -211,6 +211,18 @@ export class PrismaRepository implements Repository {
     return { userId: wallet.userId, balance: wallet.balance, currency: wallet.currency };
   }
 
+  async setWalletEmail(userId: string, email: string): Promise<void> {
+    await this.client.creditWallet.upsert({
+      where: { userId },
+      create: { userId, balance: 0, currency: DEFAULT_PLAN.currency, email },
+      update: { email },
+    });
+  }
+
+  async getWalletEmail(userId: string): Promise<string | null> {
+    return (await this.client.creditWallet.findUnique({ where: { userId }, select: { email: true } }))?.email ?? null;
+  }
+
   async setBalance(userId: string, balance: number): Promise<CreditWallet> {
     const wallet = await this.client.creditWallet.upsert({
       where: { userId },

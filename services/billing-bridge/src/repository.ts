@@ -22,6 +22,7 @@ export class InMemoryRepository implements Repository {
   private deployments = new Map<string, BilledDeployment>();
   private intervals: ServerBillingRecord[] = [];
   private wallets = new Map<string, CreditWallet>();
+  private walletEmails = new Map<string, string>();
   private ledger: CreditLedgerEntry[] = [];
   private cycles: BillingCycleRecord[] = [];
 
@@ -108,6 +109,15 @@ export class InMemoryRepository implements Repository {
       this.wallets.set(userId, wallet);
     }
     return { ...wallet };
+  }
+
+  async setWalletEmail(userId: string, email: string): Promise<void> {
+    await this.getWallet(userId);
+    this.walletEmails.set(userId, email);
+  }
+
+  async getWalletEmail(userId: string): Promise<string | null> {
+    return this.walletEmails.get(userId) ?? null;
   }
 
   async setBalance(userId: string, balance: number): Promise<CreditWallet> {
