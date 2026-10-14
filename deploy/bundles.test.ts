@@ -63,6 +63,18 @@ describe('the release bundles', () => {
     }
   });
 
+  // #392: the bundles published control-room on 0.0.0.0:9000 — which nothing
+  // outside needs, and which Portainer and MinIO already hold on a typical
+  // self-hosting box, so `up` failed before the panel started — and the
+  // orchestrator's API on every interface, against docs/deployment.md.
+  it.each(COMPOSE_FILES.slice(1))('publishes only what is meant to be reached: %s', (file) => {
+    const compose = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+    const block = (service: string) => compose.match(new RegExp(`^ {2}${service}:\\n((?: {4}.*\\n|\\n)+)`, 'm'))?.[1] ?? '';
+    expect(block('control-room')).not.toMatch(/^\s*ports:/m);
+    expect(block('node-agent')).not.toMatch(/^\s*ports:/m);
+    expect(block('orchestrator')).toMatch(/'127\.0\.0\.1:\$\{ORCHESTRATOR_PORT:-9200\}:9200'/);
+  });
+
   it('ships a billing-bridge in the hosted bundle and not in the community one', () => {
     const hosted = readFileSync(join(DEPLOY, 'hosted', 'docker-compose.yml'), 'utf8');
     const community = readFileSync(join(DEPLOY, 'community', 'docker-compose.yml'), 'utf8');

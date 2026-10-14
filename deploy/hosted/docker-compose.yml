@@ -29,7 +29,8 @@ services:
     image: ghcr.io/tombomeke-studios/nexusinfra/control-room:${NEXUSINFRA_VERSION:-hosted}
     container_name: nexusinfra-control-room
     restart: unless-stopped
-    ports: ['9000:9000']
+    # Not published (#392): only the Orchestrator reads it, over this network, and
+    # the panel shows its status. 9000 is also Portainer's and MinIO's default.
     environment:
       - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
       - METRICS_TOKEN=${METRICS_TOKEN:-}
@@ -75,7 +76,10 @@ services:
     container_name: nexusinfra-orchestrator
     restart: unless-stopped
     # 2022 is SFTP to a server's files (#235); remove it and SFTP_PORT to turn SFTP off.
-    ports: ['9200:9200', '${SFTP_PUBLIC_PORT:-2022}:2022']
+    # The API listens on 127.0.0.1 only (#392): the panel reaches it over this
+    # network and scripts on this machine can still use it. From anywhere else,
+    # use the gateway.
+    ports: ['127.0.0.1:${ORCHESTRATOR_PORT:-9200}:9200', '${SFTP_PUBLIC_PORT:-2022}:2022']
     environment:
       - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672
       - METRICS_TOKEN=${METRICS_TOKEN:-}
@@ -111,7 +115,7 @@ services:
     image: ghcr.io/tombomeke-studios/nexusinfra/gateway:${NEXUSINFRA_VERSION:-hosted}
     container_name: nexusinfra-gateway
     restart: unless-stopped
-    ports: ['9400:9400']
+    ports: ['${GATEWAY_PORT:-9400}:9400']
     environment:
       - ORCHESTRATOR_URL=http://orchestrator:9200
       - JWT_SECRET=${JWT_SECRET:?set a strong random value in .env}

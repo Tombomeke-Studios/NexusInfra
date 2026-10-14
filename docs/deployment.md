@@ -91,9 +91,11 @@ publish nothing else.
 | grafana `3000` (the `monitoring` profile, #355) | Behind the proxy if at all — it holds a password of its own. Prometheus is never published |
 | RabbitMQ `5672` / `15672` | No. Management UI least of all — it ships with `guest/guest` |
 
-The compose files publish ports on the host so a local install works out of the box. For an exposed
-host, bind the ones you are not proxying to localhost (`127.0.0.1:9200:9200`) so a stray firewall rule
-cannot turn them into an entry point.
+The release bundles already follow this table (#392): they publish the dashboard, SFTP and the gateway
+(`DASHBOARD_PORT`, `SFTP_PUBLIC_PORT`, `GATEWAY_PORT`), bind the orchestrator to `127.0.0.1`
+(`ORCHESTRATOR_PORT`) and do not publish the Control Room at all. The dev compose file at the repo root
+still publishes everything, for poking at services directly. For an exposed host, bind whatever you
+are not proxying to localhost so a stray firewall rule cannot turn it into an entry point.
 
 ### Caddy
 
