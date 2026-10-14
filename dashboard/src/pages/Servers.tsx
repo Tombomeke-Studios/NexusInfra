@@ -13,6 +13,7 @@ import {
   type DeploymentView,
 } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
+import { PlayerCount } from '../components/PlayerStatus';
 import { IconStop, IconRestart, IconPlay } from '../components/Icons';
 import { useToast } from '../components/Toast';
 import { formatLimits, formatRelative, isGameServer, shortId } from '../format';
@@ -454,6 +455,8 @@ function ServerTable({
                 <td className="wide-only">{d.nodeId ?? '—'}</td>
                 <td>
                   <StatusBadge status={d.status} />
+                  {/* Players, as the game reports them (#382). */}
+                  {isGameServer(d) && <PlayerCount deploymentId={d.id} running={d.status === 'running'} />}
                 </td>
                 {showRole && <td className="subtle wide-only">{role ? ROLE_LABELS[role] : '—'}</td>}
                 <td className="mono subtle wide-only">{shortId(d.containerId)}</td>
