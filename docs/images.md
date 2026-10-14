@@ -19,6 +19,7 @@ docker run -d \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v nexusinfra:/data \
   -p 8095:80 -p 2022:2022 \
+  --add-host=host.docker.internal:host-gateway \
   ghcr.io/tombomeke-studios/nexusinfra-community
 ```
 
@@ -153,6 +154,7 @@ Volume: `/data` — the database, which also holds notifications waiting to be r
 | `DISK_PATH` | no | **Rarely needed.** Which filesystem to report disk usage for (#276). The agent works this out by itself: it asks Docker for its data root and measures that when it is readable, and otherwise measures its own root — which under overlay2 already reports the filesystem the Docker data sits on, because that is where the container's writable layer lives. Set this only when the disk you care about is somewhere else, e.g. volumes on a second drive mounted into the agent. A node that cannot measure at all reports nothing rather than zero. |
 | `MAX_DOWNLOAD_BYTES` | no | Largest file one SFTP download may read, in bytes (#235); default 256 MB. The file is held in memory while it is sent. |
 | `IMPORT_ROOT` | no | Enables importing existing server directories (#268). A path a person may point a new server at, so it runs against files already on this host. **Unset means the feature is off, which is the default.** Only a platform administrator may use it, and the agent refuses anything that does not resolve inside this root. Mount the same path into the agent container so it can see it. |
+| `QUERY_HOST` | no | Where the agent reaches a server's **published** port to ask the game for its status — players, version, MOTD (#382). Defaults to `host.docker.internal` when that name resolves, otherwise `127.0.0.1`. Inside a container loopback is the container itself, so on Linux run the agent with `--add-host=host.docker.internal:host-gateway` (the bundles do); without it every game server reads *offline*. |
 
 Requires the Docker socket: `-v /var/run/docker.sock:/var/run/docker.sock`.
 
@@ -220,6 +222,7 @@ services:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?}
       AGENT_URL: http://node-agent:9100
+    extra_hosts: ["host.docker.internal:host-gateway"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on: [rabbitmq]
@@ -262,6 +265,7 @@ docker run -d --name nexusinfra-node-agent \
   -p 9100:9100 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v nexusinfra-backups:/var/lib/nexusinfra/backups \
+  --add-host=host.docker.internal:host-gateway \
   ghcr.io/tombomeke-studios/nexusinfra/node-agent:community
 ```
 

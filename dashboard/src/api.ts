@@ -418,6 +418,27 @@ export function getDeploymentDisk(id: string): Promise<DeploymentDisk> {
   return request(`/deployments/${id}/disk`);
 }
 
+/**
+ * What a game server says about itself (#382). Only `online` carries figures;
+ * `players` is null when the server hides its count, which is not zero.
+ */
+export interface ServerQuery {
+  status: 'online' | 'offline' | 'stopped' | 'unsupported' | 'unknown';
+  protocol: 'minecraft' | 'bedrock' | 'a2s' | null;
+  players: { online: number; max: number } | null;
+  version: string | null;
+  motd: string | null;
+  name: string | null;
+  map: string | null;
+  latencyMs: number | null;
+  checkedAt: string;
+  error?: string;
+}
+
+export function getServerQuery(id: string): Promise<ServerQuery> {
+  return request(`/deployments/${id}/query`);
+}
+
 /** Every server on a node by disk use, largest first — administrators only (#347). */
 export function getNodeDisk(nodeId: string): Promise<{ measuredAt: string; deployments: Array<Omit<DeploymentDisk, 'measuredAt'> & { name: string | null; known: boolean }> }> {
   return request(`/nodes/${encodeURIComponent(nodeId)}/disk`);

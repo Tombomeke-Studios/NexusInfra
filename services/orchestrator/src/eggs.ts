@@ -72,6 +72,17 @@ export function variableApplies(variable: EggVariable, values: Record<string, st
   return condition.equals.includes(values[condition.key] ?? '');
 }
 
+/**
+ * How to ask a running server of this kind how it is doing (#382) — players,
+ * version, MOTD. `port` is the **container** side of one of the egg's ports;
+ * the host port it is published on is looked up per server, since the creator
+ * may have chosen another.
+ */
+export interface EggQuery {
+  protocol: 'minecraft' | 'bedrock' | 'a2s';
+  port: string;
+}
+
 export interface Egg {
   id: string;
   name: string;
@@ -106,6 +117,8 @@ export interface Egg {
    * caller that skips the form.
    */
   fixedEnv?: Record<string, string>;
+  /** How to ask the game for its status (#382); absent when there is no way to. */
+  query?: EggQuery;
 }
 
 const MINECRAFT: Egg = {
@@ -116,6 +129,7 @@ const MINECRAFT: Egg = {
   dockerImage: 'itzg/minecraft-server',
   ports: { '25565': '25565' },
   dataPath: '/data',
+  query: { protocol: 'minecraft', port: '25565' },
   memoryVariable: 'MEMORY',
   // Accepting the EULA is a condition of running the server at all, so it is not a
   // question the form asks — creating a Minecraft server is the acceptance.
@@ -206,6 +220,7 @@ const VALHEIM: Egg = {
   // browser. Valheim needs no TCP at all for play.
   ports: { '2456': '2456/udp', '2457': '2457/udp' },
   dataPath: '/config',
+  query: { protocol: 'a2s', port: '2457' },
   variables: [
     { key: 'SERVER_NAME', label: 'Server name', description: 'Shown in the server browser.', kind: 'string', default: 'A NexusInfra server' },
     { key: 'WORLD_NAME', label: 'World name', description: 'The save this server loads and writes.', kind: 'string', default: 'NexusInfra' },
@@ -230,6 +245,7 @@ const RUST: Egg = {
   // only part of Rust that wants TCP.
   ports: { '28015': '28015/udp', '28016': '28016/tcp' },
   dataPath: '/steamcmd/rust',
+  query: { protocol: 'a2s', port: '28015' },
   variables: [
     { key: 'RUST_SERVER_NAME', label: 'Server name', description: 'Shown in the server browser.', kind: 'string', default: 'A NexusInfra server' },
     { key: 'RUST_SERVER_MAXPLAYERS', label: 'Player slots', description: 'How many people may be connected at once.', kind: 'integer', default: '50', min: 1, max: 500 },
@@ -244,6 +260,7 @@ const CS2: Egg = {
   // Source servers use the same number for gameplay (UDP) and RCON (TCP).
   ports: { '27015': '27015/tcp+udp' },
   dataPath: '/home/steam/cs2-dedicated',
+  query: { protocol: 'a2s', port: '27015' },
   variables: [
     { key: 'CS2_SERVERNAME', label: 'Server name', description: 'Shown in the server browser.', kind: 'string', default: 'A NexusInfra server' },
     { key: 'CS2_MAXPLAYERS', label: 'Player slots', description: 'How many people may be connected at once.', kind: 'integer', default: '10', min: 1, max: 64 },
@@ -259,6 +276,7 @@ const MINECRAFT_BEDROCK: Egg = {
   // UDP, like every Bedrock client. Published as TCP it answers nothing (#313).
   ports: { '19132': '19132/udp' },
   dataPath: '/data',
+  query: { protocol: 'bedrock', port: '19132' },
   // Accepting the EULA is a condition of running the server at all, so it is not
   // a question the form asks — creating the server is the acceptance.
   fixedEnv: { EULA: 'TRUE' },
@@ -341,6 +359,8 @@ const PALWORLD: Egg = {
   // UDP — as TCP they publish nothing usable (#313).
   ports: { '8211': '8211/udp', '27015': '27015/udp' },
   dataPath: '/palworld',
+  // No `query` (#382): Palworld's dedicated server does not report its players
+  // over A2S, so asking would show a confident and wrong count.
   variables: [
     {
       key: 'SERVER_NAME',
@@ -559,6 +579,8 @@ const PROJECT_ZOMBOID: Egg = {
   // disables it without a password, and this recipe does not set one.
   ports: { '16261': '16261/udp', '16262': '16262/udp' },
   dataPath: '/home/steam/Zomboid',
+  // A Steam server: the game port answers A2S (#382).
+  query: { protocol: 'a2s', port: '16261' },
   // The image passes MEMORY to both -Xms and -Xmx, like itzg's — so the JVM
   // commits it, and it has to fit the memory limit (#271, #308).
   memoryVariable: 'MEMORY',
@@ -633,6 +655,8 @@ const ENSHROUDED: Egg = {
   // game port to publish any more.
   ports: { '15637': '15637/udp' },
   dataPath: '/opt/enshrouded',
+  // The query port is the Steam one, so it answers A2S (#382).
+  query: { protocol: 'a2s', port: '15637' },
   // Enshrouded dropped its server password for roles, and a role with an empty
   // password lets anyone in with its rights. The recipe fixes the two roles and
   // what each may do, so a caller cannot hand the friend role a ban hammer; only

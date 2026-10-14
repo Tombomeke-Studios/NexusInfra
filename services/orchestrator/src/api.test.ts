@@ -1180,6 +1180,101 @@ describe('disk usage (#347)', () => {
   });
 });
 
+describe('game status queries (#382)', () => {
+  type Asked = Array<{ agentUrl: string; protocol: string; hostPort: number }>;
+
+  function queryApp(repo: InMemoryRepository, opts: { principal?: typeof OWNER; asked?: Asked; answer?: () => Promise<unknown> } = {}) {
+    const asked = opts.asked ?? [];
+    const app = express();
+    app.use(express.json());
+    app.use(asPrincipal(opts.principal ?? OWNER));
+    app.use(
+      createApiRouter({
+        repo,
+        publish: async () => true,
+        checkQuota: allowQuota,
+        getEntitlements: noPlan,
+        getStanding: noStanding,
+        gameQuery: async (agentUrl, protocol, hostPort) => {
+          asked.push({ agentUrl, protocol, hostPort });
+          return opts.answer ? opts.answer() : { status: 'online', protocol, players: { online: 3, max: 10 }, version: '0.219', name: 'Viking box', motd: null, map: null, latencyMs: 7 };
+        },
+      })
+    );
+    return app;
+  }
+
+  async function seed(repo: InMemoryRepository, body: Record<string, unknown>, running = true) {
+    await repo.upsertNode({ id: 'node-local', name: 'node-local', lastHeartbeat: new Date().toISOString(), cpuPercent: 5, ramUsedMb: 500, ramTotalMb: 8000 });
+    const created = await request(queryApp(repo)).post('/deployments').send(body);
+    expect(created.status).toBe(201);
+    if (running) await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'abc' });
+    return created.body.id as string;
+  }
+
+  it('asks the owning node on the host port the egg’s query port is published on', async () => {
+    const repo = new InMemoryRepository();
+    const id = await seed(repo, { name: 'vikings', eggId: 'valheim', ports: { '24560': '2456/udp', '24570': '2457/udp' } });
+    const asked: Asked = [];
+    const res = await request(queryApp(repo, { asked })).get(`/deployments/${id}/query`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ status: 'online', protocol: 'a2s', players: { online: 3, max: 10 }, name: 'Viking box', latencyMs: 7 });
+    expect(asked).toEqual([{ agentUrl: expect.any(String), protocol: 'a2s', hostPort: 24570 }]);
+  });
+
+  it('asks the game at most once per interval, however often the panel polls', async () => {
+    const repo = new InMemoryRepository();
+    const id = await seed(repo, { name: 'vikings', eggId: 'valheim' });
+    const asked: Asked = [];
+    const app = queryApp(repo, { asked });
+    for (let i = 0; i < 5; i++) expect((await request(app).get(`/deployments/${id}/query`)).status).toBe(200);
+    expect(asked).toHaveLength(1);
+  });
+
+  it('does not ask a stopped server, and says it is stopped rather than empty', async () => {
+    const repo = new InMemoryRepository();
+    const id = await seed(repo, { name: 'vikings', eggId: 'valheim' }, false);
+    await repo.updateDeploymentStatus(id, { status: 'stopped', containerId: null });
+    const asked: Asked = [];
+    const res = await request(queryApp(repo, { asked })).get(`/deployments/${id}/query`);
+    expect(res.body).toMatchObject({ status: 'stopped', players: null });
+    expect(asked).toHaveLength(0);
+  });
+
+  it('says a server with no status protocol is unsupported', async () => {
+    const repo = new InMemoryRepository();
+    const id = await seed(repo, { name: 'web', dockerImage: 'nginx' });
+    const asked: Asked = [];
+    const res = await request(queryApp(repo, { asked })).get(`/deployments/${id}/query`);
+    expect(res.body).toMatchObject({ status: 'unsupported', players: null });
+    expect(asked).toHaveLength(0);
+  });
+
+  it('passes on a game that does not answer as offline, with no player count', async () => {
+    const repo = new InMemoryRepository();
+    const id = await seed(repo, { name: 'vikings', eggId: 'valheim' });
+    const res = await request(queryApp(repo, { answer: async () => ({ status: 'offline', protocol: 'a2s', error: 'no answer within 2500 ms' }) })).get(
+      `/deployments/${id}/query`
+    );
+    expect(res.body).toMatchObject({ status: 'offline', players: null, error: 'no answer within 2500 ms' });
+  });
+
+  it('is unknown, not offline, when the node cannot be asked', async () => {
+    const repo = new InMemoryRepository();
+    const id = await seed(repo, { name: 'vikings', eggId: 'valheim' });
+    const res = await request(queryApp(repo, { answer: async () => Promise.reject(new Error('fetch failed')) })).get(`/deployments/${id}/query`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ status: 'unknown', players: null, error: 'fetch failed' });
+  });
+
+  it('is not visible to somebody without access to the server', async () => {
+    const repo = new InMemoryRepository();
+    const id = await seed(repo, { name: 'vikings', eggId: 'valheim' });
+    const stranger = { id: 'user-stranger', email: 's@example.com', platformRole: 'user' as const };
+    expect((await request(queryApp(repo, { principal: stranger })).get(`/deployments/${id}/query`)).status).toBe(404);
+  });
+});
+
 describe('plan entitlements (#297)', () => {
   const plan = (maxRamMb: number | null, maxBackupsPerServer: number | null = null) => ({
     planId: 'standard',

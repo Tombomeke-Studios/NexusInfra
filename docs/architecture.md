@@ -155,6 +155,20 @@ agent's import (a created-never-started container of the server's own image carr
 no helper image is needed), then the backup tars, then switches the record, then cleans the source.
 Start never moves a server by itself (#329) — it starts on the node that has the data.
 
+**Game status (#382).** A running container says nothing about whether anybody can join, so the panel
+asks the game itself, in the game's own protocol: Minecraft Java's Server List Ping (TCP), Bedrock's
+RakNet unconnected ping (UDP) and Steam's A2S_INFO (UDP, answering the challenge Valve added in 2020).
+Which protocol and which **container** port is a property of the egg (`query`); the orchestrator finds
+the host port that container port is published on, and asks the owning node's agent, which sends the
+packets — it is on the host the port is published on, and the orchestrator may not be able to reach it
+at all. Inside the agent's container loopback is the container, so the agent reaches published ports
+through `host.docker.internal` (mapped to the host gateway in every compose file; `QUERY_HOST`
+overrides). Answers are cached per server for 10 s, with one question in flight, so polling cannot
+turn into a flood of packets at a game. The answer is one of `online` (with what the game said),
+`offline` (it runs, the game did not answer), `stopped`, `unsupported` (no protocol for this kind of
+server) or `unknown` (the node could not be asked) — only `online` carries a player count, so a server
+nobody can reach never reads "0 players".
+
 **Multi-node routing (#171).** Placement spans every healthy node, and start/stop/restart are addressed
 by `nodeId` over the bus. Direct agent calls (files, exec, terminal, logs/stats, backups, databases)
 must reach the node that actually hosts the deployment — previously they all went to a single

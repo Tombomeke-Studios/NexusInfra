@@ -127,6 +127,7 @@ stack — no compose file, no installer:
 
 ```bash
 docker run -d -v /var/run/docker.sock:/var/run/docker.sock \
+  --add-host=host.docker.internal:host-gateway \
   -v nexusinfra:/data -p 8095:80 ghcr.io/tombomeke-studios/nexusinfra-community
 ```
 

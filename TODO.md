@@ -254,6 +254,7 @@ scrolling log lines describing events that never happened.
 - [x] Bulk actions on multiple servers (#238)
 - [x] Update a deployment's container image (pull + recreate) (#239)
 - [x] `nexusctl` — a CLI client for the panel (#240)
+- [x] Live player count and server status for game servers — Minecraft SLP, Bedrock RakNet ping, Steam A2S_INFO (#382)
 
 ### 🐛 Bugs / fixes (open)
 

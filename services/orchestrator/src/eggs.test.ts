@@ -482,3 +482,40 @@ describe('the eggs added in #384', () => {
     });
   });
 });
+
+describe('status queries (#382)', () => {
+  it('asks only on a port the egg actually publishes', () => {
+    // The query names the container side; a port that is not published has no
+    // host port to ask on, and the server would read "offline" forever.
+    for (const egg of EGGS) {
+      if (!egg.query) continue;
+      const containerPorts = Object.values(egg.ports).map((p) => p.split('/')[0]);
+      expect(containerPorts, egg.id).toContain(egg.query.port);
+    }
+  });
+
+  it('asks UDP games over a port published as UDP, and Java Minecraft over TCP', () => {
+    for (const egg of EGGS) {
+      if (!egg.query) continue;
+      const spec = Object.values(egg.ports).find((p) => p.split('/')[0] === egg.query!.port)!;
+      const protocols = (spec.split('/')[1] ?? 'tcp').split('+');
+      expect(protocols, egg.id).toContain(egg.query.protocol === 'minecraft' ? 'tcp' : 'udp');
+    }
+  });
+
+  it('knows how to ask every game whose protocol is known', () => {
+    expect(getEgg('minecraft-java')!.query).toEqual({ protocol: 'minecraft', port: '25565' });
+    expect(getEgg('minecraft-bedrock')!.query).toEqual({ protocol: 'bedrock', port: '19132' });
+    expect(getEgg('valheim')!.query).toEqual({ protocol: 'a2s', port: '2457' });
+    expect(getEgg('rust')!.query?.protocol).toBe('a2s');
+    expect(getEgg('cs2')!.query?.protocol).toBe('a2s');
+    expect(getEgg('project-zomboid')!.query).toEqual({ protocol: 'a2s', port: '16261' });
+    expect(getEgg('enshrouded')!.query).toEqual({ protocol: 'a2s', port: '15637' });
+  });
+
+  it('does not pretend to ask a game whose status protocol it does not speak', () => {
+    // Palworld does not report players over A2S; Terraria, Factorio and
+    // Satisfactory each have a protocol of their own. Unsupported beats a wrong 0.
+    for (const id of ['palworld', 'terraria', 'factorio', 'satisfactory']) expect(getEgg(id)!.query, id).toBeUndefined();
+  });
+});

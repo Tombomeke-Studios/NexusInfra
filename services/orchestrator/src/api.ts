@@ -27,6 +27,7 @@ import { fetchEntitlements, ramChangeProblem, ramProblem, usageFor, type Entitle
 import { creditProblem, fetchStanding, type Standing } from './credit.js';
 import { bridgeFetch } from './bridge.js';
 import { committedRamMb } from './capacity.js';
+import { createQueryCache, emptyQuery, fromAgentAnswer, queryTargetFor, type QueryProtocol } from './playerQuery.js';
 import type { DeploymentDetail, NodeRecord, Repository, ServerConfigRecord, UpdateServerConfigInput } from './types.js';
 import type { ResourceLimits } from 'shared';
 
@@ -167,6 +168,23 @@ const defaultDiskUsage: DiskUsageFn = async (agentUrl, deploymentId) => {
   return body;
 };
 
+/**
+ * Ask the owning node to ask a game server how it is doing (#382). Resolves to
+ * the agent's answer as sent — `fromAgentAnswer` decides what it means — and
+ * rejects only when the node itself could not be asked.
+ */
+export type GameQueryFn = (agentUrl: string, protocol: QueryProtocol, hostPort: number) => Promise<unknown>;
+
+const defaultGameQuery: GameQueryFn = async (agentUrl, protocol, hostPort) => {
+  const query = new URLSearchParams({ protocol, port: String(hostPort) });
+  // The agent gives the game a couple of seconds; this only bounds a node that hangs.
+  const r = await agentFetch(`${agentUrl}/query?${query}`, { signal: AbortSignal.timeout(8_000) });
+  const body = (await r.json().catch(() => ({}))) as Record<string, unknown>;
+  if (r.status === 404) throw new Error('this node’s agent is too old to ask game servers — update it');
+  if (!r.ok) throw new Error(typeof body.error === 'string' ? body.error : `the node answered ${r.status}`);
+  return body;
+};
+
 /** Plan-quota check against the Billing Bridge (hosted). Fails open so billing outages never block infra. */
 export type QuotaResource = 'servers' | 'databases';
 export type CheckQuotaFn = (userId: string, resource: QuotaResource, current: number) => Promise<{ allowed: boolean; limit: number }>;
@@ -196,6 +214,9 @@ export interface ApiDeps {
   purgeDeploymentData?: PurgeDeploymentDataFn;
   imageStatus?: ImageStatusFn;
   diskUsage?: DiskUsageFn;
+  gameQuery?: GameQueryFn;
+  /** How long one game status answer is reused (#382); default 10 s. */
+  gameQueryTtlMs?: number;
   migrationTransport?: MigrationTransport;
   /** Runs a planned migration; tests await it, production lets it run in the background. */
   runMigration?: (run: () => Promise<void>) => void;
@@ -361,6 +382,8 @@ export function createApiRouter(deps: ApiDeps): Router {
   const purgeDeploymentData = deps.purgeDeploymentData ?? defaultPurgeDeploymentData;
   const imageStatus = deps.imageStatus ?? defaultImageStatus;
   const diskUsage = deps.diskUsage ?? defaultDiskUsage;
+  const gameQuery = deps.gameQuery ?? defaultGameQuery;
+  const gameQueryCache = createQueryCache({ ttlMs: deps.gameQueryTtlMs });
   const migrationTransport = deps.migrationTransport ?? defaultMigrationTransport;
   const runMigration =
     deps.runMigration ??
@@ -949,6 +972,26 @@ export function createApiRouter(deps: ApiDeps): Router {
     } catch (err) {
       return res.status(502).json({ error: err instanceof Error ? err.message : 'node agent unreachable' });
     }
+  });
+
+  // Is anybody on, and can anybody get on (#382) — players, version and MOTD,
+  // asked of the game itself by the node it runs on. Anyone who may see the
+  // server may see this: it is what the game tells any client that asks.
+  router.get('/deployments/:id/query', requirePermission('server.view'), async (req: Request, res: Response) => {
+    const { deployment } = accessOf(req);
+    const target = queryTargetFor(getEgg(deployment.type)?.query, deployment.ports);
+    if (!target) return res.json(emptyQuery('unsupported'));
+    if (!isRunning(deployment)) return res.json(emptyQuery('stopped', { protocol: target.protocol }));
+
+    const key = `${deployment.id}:${deployment.nodeId}:${target.protocol}:${target.hostPort}`;
+    const answer = await gameQueryCache(key, async () => {
+      try {
+        return fromAgentAnswer(target.protocol, await gameQuery(await agentUrlFor(deployment.nodeId), target.protocol, target.hostPort));
+      } catch (err) {
+        return emptyQuery('unknown', { protocol: target.protocol, error: err instanceof Error ? err.message : 'node agent unreachable' });
+      }
+    });
+    return res.json(answer);
   });
 
   router.get('/deployments/:id/image', requirePermission('server.view'), async (req: Request, res: Response) => {

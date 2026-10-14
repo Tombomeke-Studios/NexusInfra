@@ -70,6 +70,7 @@ import {
   ApiError,
 } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
+import { PlayerStatus } from '../components/PlayerStatus';
 import { useToast } from '../components/Toast';
 import { useDialog } from '../components/Dialog';
 import { InfoHint } from '../components/InfoHint';
@@ -198,6 +199,8 @@ export function ServerDetail() {
           <div className="mono" style={{ marginTop: 5, fontSize: '.85rem', color: 'var(--color-text-subtle)' }}>
             {isGame ? 'game server' : 'application'} · {d.dockerImage}
           </div>
+          {/* Who is on, and whether the game answers at all (#382). */}
+          {isGame && <PlayerStatus deploymentId={d.id} running={running} />}
           {d.migrating && (
             <p role="status" className="alert" style={{ margin: '10px 0 0', fontSize: '.84rem' }}>
               <span className="spinner" style={{ marginRight: 8 }} />
