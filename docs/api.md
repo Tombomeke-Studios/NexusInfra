@@ -306,6 +306,9 @@ breaks and other control characters: several images write the value straight int
 where a newline is a way to add lines of your own. The rules apply to what was typed — a blank answer
 still means the default, which is how an optional password (default `""`) stays optional.
 
+An egg may carry `query: { protocol, port }` (#382) — how to ask a running server of that kind for its
+players and version, on which **container** port. See `GET /deployments/:id/query`.
+
 ### `POST /deployments`
 
 Create and place a deployment.
@@ -680,6 +683,40 @@ it is not running, `502` if the node operation fails.
 
 The node caches its measurement for a minute: Docker walks every volume to take it. Nothing here
 limits anything — enforcing a cap is #278.
+
+### `GET /deployments/:id/query` — players and server status (#382)
+
+What the game itself says, asked by the node it runs on (`server.view`). Always `200`:
+
+```json
+{
+  "status": "online",
+  "protocol": "minecraft",
+  "players": { "online": 2, "max": 20 },
+  "version": "Paper 1.21.1",
+  "motd": "A NexusInfra server",
+  "name": null,
+  "map": null,
+  "latencyMs": 3,
+  "checkedAt": "2026-10-15T12:00:00.000Z"
+}
+```
+
+| `status` | Meaning |
+|---|---|
+| `online` | The game answered. `players` is `null` when the server hides its count — not `0`. |
+| `offline` | The server runs, but the game did not answer on its status port; `error` says how it failed. |
+| `stopped` | The server is not running, so nobody was asked. |
+| `unsupported` | This kind of server has no status protocol the panel speaks (a plain application, Palworld). |
+| `unknown` | The node could not be asked; `error` says why. |
+
+Only `online` carries figures. `protocol` is `minecraft` (Server List Ping), `bedrock` (RakNet ping) or
+`a2s` (Steam A2S_INFO), from the server's egg. `name` and `map` come from A2S; Bedrock reports its
+world as `map`. Answers are cached for 10 seconds per server (`checkedAt` says when the game was
+asked), so polling this cannot flood a game server.
+
+Proxied to the owning Node Agent's internal `GET /query?protocol=&port=` (host port), which answers
+`{ status: "online", … }` or `{ status: "offline", error }`.
 
 ### Image updates (#239)
 
