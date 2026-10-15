@@ -362,6 +362,7 @@ is the migrations directory.
 | `src/session.ts` | Token get/set/clear + `isAuthenticated` (single place that touches the token in localStorage) |
 | `src/edition.tsx` | `EditionProvider` + `useEdition()` — reads `GET /config`, exposes `edition`/`isHosted` so billing UI renders only in hosted |
 | `src/buildEdition.ts` | `BILLING_INCLUDED` — a **compile-time** constant (`__BUILD_EDITION__`, set in vite.config.ts). Distinct from `useEdition()`: this answers "is the code in the bundle?", that answers "is the server hosted?" (#190) |
+| `editionStubs.ts` | The hosted-only modules a community build swaps for a stub, and `stubPattern` — the alias matches the import **as written**, never a resolved path (#393). `vite.config.ts` builds its aliases from it; `src/editionStubs.test.ts` proves every import of a listed module is caught |
 | `scripts/verify-edition.mjs` | Greps the **built** bundle to prove a community build contains no billing code; run by the image build, so tree-shaking regressions fail the build (#190) |
 | `src/permissions.ts` | The panel's copy of the server permission matrix (#178) — `can`/`permissionsFor`/`ROLE_LABELS`. **Mirrors `orchestrator/src/access.ts`; change both together.** An absent role means full access, so an owner is never locked out of their own server |
 | `src/prefs.ts` | Persisted client preferences (localStorage): first-run intro flag + customisable New Deployment defaults (`getDeploymentDefaults`) |
@@ -480,11 +481,12 @@ is the migrations directory.
 - **An image's edition is fixed at build time and cannot be changed by `NEXUS_EDITION`** (#189). The
   variable still works when running from source. If a container exits complaining about the edition,
   the fix is to pull the other tag, not to set the variable harder.
-- **Anything hosted-only added to the dashboard must be excluded from the community build** — alias
-  it in `vite.config.ts` and add a marker to `verify-edition.mjs`, or the community bundle silently
-  starts shipping code it cannot run. **An alias matches the import as written** (`'../suspension'`),
-  before it is resolved, so a `find` that is an absolute path matches nothing — use a RegExp on the
-  specifier, and let the marker prove it (#380, #393).
+- **Anything hosted-only added to the dashboard must be excluded from the community build** — list
+  it in `dashboard/editionStubs.ts` (with a stub) and add a marker to `verify-edition.mjs`, or the
+  community bundle silently starts shipping code it cannot run. **An alias matches the import as
+  written** (`'../suspension'`), before it is resolved, so a `find` that is an absolute path matches
+  nothing — `stubPattern` matches the specifier, and `editionStubs.test.ts` checks every import of a
+  listed module is caught. Until #393 three aliases matched nothing and only `BILLING_INCLUDED` held.
 - **Every schema change is made three times (#241).** Edit `prisma/schema.prisma` (SQLite, the
   source), run `npm run db:sync-postgres` to regenerate `prisma/postgres/schema.prisma`, and add a
   migration for **each** database. `schemas.test.ts` fails when the PostgreSQL schema is stale or the

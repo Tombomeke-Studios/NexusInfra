@@ -1,7 +1,7 @@
 import type { DeploymentStatus } from './api';
 
 // A server billing stopped for lack of credit (#380) — hosted edition only. In a
-// community build this module is aliased to suspension.stub.ts (vite.config.ts):
+// community build this module is aliased to suspension.stub.ts (editionStubs.ts):
 // nothing there is ever suspended, and the words below belong to billing.
 //
 // The Orchestrator records the suspension with the server and clears it when it

@@ -302,8 +302,9 @@ would mean a half-enabled billing system rather than a working one. Running from
 unaffected: with no stamp, `NEXUS_EDITION` decides as it always has.
 
 **The community build genuinely does not contain the hosted code.** This matters most for the
-dashboard, which is served to a browser: the billing page is aliased to a stub at build time and its
-route is compiled out, and the image build runs `verify-edition.mjs` against the built bundle so a
+dashboard, which is served to a browser: every hosted-only module is aliased to a stub at build time (`dashboard/editionStubs.ts`, matched on
+the import as written, #393) and the billing routes are compiled out — each alone keeps the code
+out — and the image build runs `verify-edition.mjs` against the built bundle so a
 regression fails the build instead of shipping quietly. `billing-bridge` is built for hosted only —
 a community build of it would be a build of nothing.
 
