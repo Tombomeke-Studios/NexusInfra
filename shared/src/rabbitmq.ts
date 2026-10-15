@@ -29,6 +29,16 @@ export function redactUrl(raw: string): string {
   }
 }
 
+/**
+ * Whether a routine publish or consume of this event is worth a log line (#395).
+ * Heartbeats are not: one a second from every service and every node buried
+ * everything else in `docker compose logs`, and a missing heartbeat already shows
+ * as a status change in the Control Room. Failures are logged for every event.
+ */
+export function logsTraffic(eventType: string): boolean {
+  return !eventType.startsWith('heartbeat.');
+}
+
 let connection: any = null;
 let channel: any = null;
 
@@ -77,7 +87,7 @@ export async function publishRabbitEvent(routingKey: string, envelope: EventEnve
     const success = ch.publish(EXCHANGE, routingKey, message, { persistent: true });
 
     if (success) {
-      console.log(`[RabbitMQ Publish] Published ${envelope.event.type} with key: ${routingKey}`);
+      if (logsTraffic(envelope.event.type)) console.log(`[RabbitMQ Publish] Published ${envelope.event.type} with key: ${routingKey}`);
       return true;
     }
     console.error('[RabbitMQ Publish] Write buffer full, publish returned false.');
@@ -112,7 +122,7 @@ export async function consumeRabbitQueue(
       if (!msg) return;
       try {
         const envelope = JSON.parse(msg.content.toString()) as EventEnvelope;
-        console.log(`[RabbitMQ Consume] Processing ${envelope.event.type} from queue ${queueName}`);
+        if (logsTraffic(envelope.event.type)) console.log(`[RabbitMQ Consume] Processing ${envelope.event.type} from queue ${queueName}`);
         await onMessage(envelope);
         ch.ack(msg);
       } catch (error: any) {

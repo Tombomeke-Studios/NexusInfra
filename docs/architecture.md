@@ -76,6 +76,11 @@ Bridge binds queue `nexusinfra.billing-bridge` to `infra.deployment.created`, th
 `infra.server.*` report keys, `bank.payment.confirmed`/`.failed`, and `events.payment.confirmed`/`.failed`
 (#298).
 
+Every publish and consume is logged by event type, **except heartbeats** (`logsTraffic` in
+`shared/src/rabbitmq.ts`, #395): at one a second per service and per node they made the logs
+unreadable, and a missing heartbeat already shows as a status change in the Control Room. A failed
+publish or consume is logged for every event, heartbeats included.
+
 The monthly cycle runner (billing-bridge, hosted) publishes `billing.server.suspend` — the Orchestrator
 consumes it and stops the named deployments — and `invoice.generate` (→ FinVault). These are
 NexusInfra-only routing keys added in #145; the envelope/encryption contract is unchanged, and the

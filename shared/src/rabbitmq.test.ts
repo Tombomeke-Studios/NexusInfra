@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { redactUrl } from './rabbitmq.js';
+import { logsTraffic, redactUrl } from './rabbitmq.js';
 
 describe('redactUrl (#394)', () => {
   it('hides the password of a broker URL and keeps where it points', () => {
@@ -27,5 +27,18 @@ describe('redactUrl (#394)', () => {
     const logged = redactUrl('amqp://user:pa ss@[not-a-host');
     expect(logged).not.toContain('pa ss');
     expect(logged).toBe('amqp://user:***@[not-a-host');
+  });
+});
+
+describe('logsTraffic (#395)', () => {
+  it('keeps heartbeats out of the log', () => {
+    expect(logsTraffic('heartbeat.service')).toBe(false);
+    expect(logsTraffic('heartbeat.node')).toBe(false);
+  });
+
+  it('still logs every other event', () => {
+    for (const type of ['server.start', 'server.crashed', 'node.inventory', 'payment.request']) {
+      expect(logsTraffic(type)).toBe(true);
+    }
   });
 });

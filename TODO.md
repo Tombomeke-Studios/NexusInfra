@@ -295,7 +295,7 @@ scrolling log lines describing events that never happened.
 
 - [x] Every service prints the broker password to its log when it connects (#394) 🐛 — `redactUrl` (shared) replaces the password before the URL reaches a log line
 
-- [ ] Heartbeats flood every service's log twice a second (#395) 🐛
+- [x] Heartbeats flood every service's log twice a second (#395) 🐛 — routine heartbeat publishes and consumes are no longer logged (`logsTraffic`); failures still are
 
 - [ ] Local image builds send stale `dist/` and `node_modules` into the image (#396) 🐛
 
