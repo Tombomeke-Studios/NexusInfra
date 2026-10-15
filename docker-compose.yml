@@ -53,6 +53,16 @@ services:
       # Advertised on the heartbeat so the Orchestrator routes this node's
       # deployments to this agent (#171). Uses the compose service DNS name.
       - AGENT_URL=http://node-agent:9100
+      # Off-site backups (#232): every backup also copied to an S3-compatible
+      # bucket. Off unless the bucket and both keys are set.
+      - BACKUP_S3_BUCKET=${BACKUP_S3_BUCKET:-}
+      - BACKUP_S3_ACCESS_KEY_ID=${BACKUP_S3_ACCESS_KEY_ID:-}
+      - BACKUP_S3_SECRET_ACCESS_KEY=${BACKUP_S3_SECRET_ACCESS_KEY:-}
+      - BACKUP_S3_ENDPOINT=${BACKUP_S3_ENDPOINT:-}
+      - BACKUP_S3_REGION=${BACKUP_S3_REGION:-}
+      - BACKUP_S3_PREFIX=${BACKUP_S3_PREFIX:-nexusinfra-backups/}
+      - BACKUP_S3_PATH_STYLE=${BACKUP_S3_PATH_STYLE:-}
+      - MAX_UPLOAD_BYTES=${MAX_UPLOAD_BYTES:-64mb}
     # The agent drives the host Docker daemon, so it needs the socket mounted.
     # Game status queries (#382) reach a server's published port on the host,
     # which is not this container's loopback. On Docker Desktop the name exists
@@ -100,6 +110,16 @@ services:
       - SFTP_PUBLIC_PORT=${SFTP_PUBLIC_PORT:-2022}
       # Kept on the volume: a host key that changes on upgrade looks like an attack.
       - SFTP_HOST_KEY_PATH=/data/sftp_host_ed25519_key
+      # Mail (#236): notifications by email, and — with PANEL_URL — password
+      # reset (#344) and email verification (#367). Off while SMTP_URL is unset.
+      - SMTP_URL=${SMTP_URL:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - PANEL_URL=${PANEL_URL:-}
+      # Behind a reverse proxy you control (#245); see docs/deployment.md.
+      - TRUST_PROXY=${TRUST_PROXY:-}
+      # true = every account must enrol a second factor (#229).
+      - REQUIRE_TOTP=${REQUIRE_TOTP:-false}
+      - MAX_UPLOAD_BYTES=${MAX_UPLOAD_BYTES:-64mb}
     volumes:
       - orchestrator_data:/data
     depends_on:

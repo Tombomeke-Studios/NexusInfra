@@ -91,9 +91,11 @@ publish nothing else.
 | grafana `3000` (the `monitoring` profile, #355) | Behind the proxy if at all — it holds a password of its own. Prometheus is never published |
 | RabbitMQ `5672` / `15672` | No. Management UI least of all — it ships with `guest/guest` |
 
-The compose files publish ports on the host so a local install works out of the box. For an exposed
-host, bind the ones you are not proxying to localhost (`127.0.0.1:9200:9200`) so a stray firewall rule
-cannot turn them into an entry point.
+The release bundles already follow this table (#392): they publish the dashboard, SFTP and the gateway
+(`DASHBOARD_PORT`, `SFTP_PUBLIC_PORT`, `GATEWAY_PORT`), bind the orchestrator to `127.0.0.1`
+(`ORCHESTRATOR_PORT`) and do not publish the Control Room at all. The dev compose file at the repo root
+still publishes everything, for poking at services directly. For an exposed host, bind whatever you
+are not proxying to localhost so a stray firewall rule cannot turn it into an entry point.
 
 ### Caddy
 
@@ -149,8 +151,12 @@ server {
 
 Rate limiting (#225) keys on the caller's IP, and behind a proxy every request appears to come from
 the proxy — so one address would carry everyone's budget and lock the whole installation out
-together. Set `TRUST_PROXY=1` on the orchestrator so it reads `X-Forwarded-For`, and make sure the
-proxy sets that header.
+together. `TRUST_PROXY` tells the orchestrator how many proxies to believe `X-Forwarded-For` from, and
+make sure each one sets that header.
+
+Count the hops: the release bundles already default to `1` — the dashboard's own nginx — and the
+all-in-one image trusts its internal nginx itself (#401). **Put Caddy or nginx in front of a bundle
+and it is `2`**; with `1` every request would appear to come from your proxy again.
 
 Only do this behind a proxy you control. `X-Forwarded-For` is a request header like any other: if the
 orchestrator is reachable directly, a caller can set it themselves and choose which bucket to spend.

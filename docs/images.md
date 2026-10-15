@@ -125,7 +125,7 @@ scrape_configs:
 | `REQUIRE_TOTP` | no | `true` requires a second factor of every account (#229). Un-enrolled accounts can still sign in, but reach only enrolment — refusing the login would lock out everyone the moment it is switched on. |
 | `NODE_AGENT_URL` | no | Single-node fallback. Multi-node setups learn each agent's address from its heartbeat. |
 | `CONTROL_ROOM_URL` | no | For surfacing platform health in the panel. |
-| `TRUST_PROXY` | no | Number of reverse proxies in front (1 for the setup in [deployment.md](deployment.md#putting-it-behind-tls-245)). Makes per-IP rate limiting measure the caller rather than the proxy. Leave unset unless only the proxy can reach this process — `X-Forwarded-For` is caller-supplied. |
+| `TRUST_PROXY` | no | Number of proxies in front: `1` for the dashboard's own nginx (the bundles' default, #401), `2` with a reverse proxy in front of that ([deployment.md](deployment.md#putting-it-behind-tls-245)). Makes per-IP rate limiting measure the caller rather than the proxy. Leave unset unless only the proxy can reach this process — `X-Forwarded-For` is caller-supplied. |
 | `BILLING_BRIDGE_URL` | hosted | Where plan-quota checks go. |
 | `DATABASE_PUBLIC_HOST` | no | Hostname given to users connecting to a provisioned database. Defaults to `localhost`. |
 | `MAX_UPLOAD_BYTES` | no | Largest file upload through the panel, default `64mb`. The only limit: the dashboard's nginx sets none of its own (#389). Set the same value on the node agent. |

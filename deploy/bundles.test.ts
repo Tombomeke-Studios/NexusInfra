@@ -42,6 +42,39 @@ describe('the release bundles', () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
+  // #391: compose passes only what it lists. Every variable below was added
+  // after the bundles were written and documented in docs/images.md, and none
+  // reached its service — setting SMTP_URL in a bundle's .env did nothing.
+  const FORWARDED: Record<string, string[]> = {
+    orchestrator: ['SMTP_URL', 'SMTP_FROM', 'PANEL_URL', 'TRUST_PROXY', 'REQUIRE_TOTP', 'MAX_UPLOAD_BYTES'],
+    'node-agent': [
+      'BACKUP_S3_BUCKET', 'BACKUP_S3_ACCESS_KEY_ID', 'BACKUP_S3_SECRET_ACCESS_KEY', 'BACKUP_S3_ENDPOINT',
+      'BACKUP_S3_REGION', 'BACKUP_S3_PREFIX', 'BACKUP_S3_PATH_STYLE', 'MAX_UPLOAD_BYTES',
+    ],
+  };
+  it.each(COMPOSE_FILES)('forwards the optional settings from .env to the services that read them: %s', (file) => {
+    const compose = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+    for (const [service, vars] of Object.entries(FORWARDED)) {
+      const block = compose.match(new RegExp(`^ {2}${service}:\\n((?: {4}.*\\n|\\n)+)`, 'm'))?.[1];
+      expect(block, `could not read the ${service} service block`).toBeTruthy();
+      for (const name of vars) {
+        expect(block, `${service} does not receive ${name}`).toMatch(new RegExp(`^\\s*- ${name}=\\$\\{${name}:-`, 'm'));
+      }
+    }
+  });
+
+  // #392: the bundles published control-room on 0.0.0.0:9000 — which nothing
+  // outside needs, and which Portainer and MinIO already hold on a typical
+  // self-hosting box, so `up` failed before the panel started — and the
+  // orchestrator's API on every interface, against docs/deployment.md.
+  it.each(COMPOSE_FILES.slice(1))('publishes only what is meant to be reached: %s', (file) => {
+    const compose = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+    const block = (service: string) => compose.match(new RegExp(`^ {2}${service}:\\n((?: {4}.*\\n|\\n)+)`, 'm'))?.[1] ?? '';
+    expect(block('control-room')).not.toMatch(/^\s*ports:/m);
+    expect(block('node-agent')).not.toMatch(/^\s*ports:/m);
+    expect(block('orchestrator')).toMatch(/'127\.0\.0\.1:\$\{ORCHESTRATOR_PORT:-9200\}:9200'/);
+  });
+
   it('ships a billing-bridge in the hosted bundle and not in the community one', () => {
     const hosted = readFileSync(join(DEPLOY, 'hosted', 'docker-compose.yml'), 'utf8');
     const community = readFileSync(join(DEPLOY, 'community', 'docker-compose.yml'), 'utf8');
@@ -128,5 +161,22 @@ describe('the panel’s nginx', () => {
     const api = conf.match(/location \/api\/ \{([\s\S]*?)\n {2}\}/)?.[1];
     expect(api, 'could not read the /api/ location').toBeTruthy();
     expect(api).toMatch(/^\s*client_max_body_size 0;/m);
+  });
+
+  // #401: the login limiter keys on the caller's address. The all-in-one's
+  // nginx did not pass it on, so every request came from 127.0.0.1 and one
+  // person's typos locked everybody out.
+  it.each(CONFIGS)('tells the orchestrator who is calling: %s', (file) => {
+    const conf = readFileSync(file, 'utf8');
+    expect(conf).toMatch(/proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;/);
+  });
+
+  it.each(COMPOSE_FILES.slice(1))('believes the dashboard’s nginx about the caller by default: %s', (file) => {
+    expect(readFileSync(file, 'utf8')).toMatch(/- TRUST_PROXY=\$\{TRUST_PROXY:-1\}/);
+  });
+
+  it('has the all-in-one trust its own nginx', () => {
+    const init = readFileSync(join(ROOT, 'allinone', 'root', 'usr', 'local', 'bin', 'nexusinfra-init'), 'utf8');
+    expect(init).toMatch(/TRUST_PROXY=\$\{TRUST_PROXY:-1\}/);
   });
 });
