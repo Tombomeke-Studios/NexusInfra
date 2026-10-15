@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { EGGS, getEgg, buildEggDeployment, variableApplies, EggValidationError, type Egg } from './eggs.js';
+import { EGGS, getEgg, buildEggDeployment, variableApplies, EggValidationError, generateSecret, type Egg } from './eggs.js';
 
 // The egg catalogue is the single source of truth for how a kind of server runs
 // (#231). It lives here rather than in the browser so its rules hold for every
@@ -517,5 +517,65 @@ describe('status queries (#382)', () => {
     // Palworld does not report players over A2S; Terraria, Factorio and
     // Satisfactory each have a protocol of their own. Unsupported beats a wrong 0.
     for (const id of ['palworld', 'terraria', 'factorio', 'satisfactory']) expect(getEgg(id)!.query, id).toBeUndefined();
+  });
+});
+
+// A fixed default password is one everybody who has seen the panel knows, and
+// most servers keep it (#388). A blank answer now means "make one up".
+describe('generated passwords (#388)', () => {
+  const egg: Egg = {
+    id: 'g',
+    name: 'G',
+    description: '',
+    dockerImage: 'img',
+    ports: {},
+    dataPath: '/data',
+    variables: [
+      { key: 'ADMIN', label: 'Admin password', description: '', kind: 'string', default: '', generate: 'password' },
+      { key: 'SHORT', label: 'Short', description: '', kind: 'string', default: '', generate: 'password', maxLength: 8 },
+      { key: 'LONG', label: 'Long', description: '', kind: 'string', default: '', generate: 'password', minLength: 24 },
+      { key: 'JOIN', label: 'Join password', description: '', kind: 'string', default: '' },
+    ],
+  };
+
+  it('fills a blank answer with a fresh secret, and leaves an optional one blank', () => {
+    const { env } = buildEggDeployment(egg, {});
+    expect(env.ADMIN).toMatch(/^[A-Za-z0-9]{16}$/);
+    expect(env.JOIN).toBe('');
+  });
+
+  it('honours the variable’s own length rules', () => {
+    const { env } = buildEggDeployment(egg, {});
+    expect(env.SHORT).toHaveLength(8);
+    expect(env.LONG).toHaveLength(24);
+  });
+
+  it('makes a different one every time', () => {
+    expect(buildEggDeployment(egg, {}).env.ADMIN).not.toBe(buildEggDeployment(egg, {}).env.ADMIN);
+  });
+
+  it('keeps a password somebody chose, and one already stored', () => {
+    expect(buildEggDeployment(egg, { ADMIN: 'my-own-secret' }).env.ADMIN).toBe('my-own-secret');
+  });
+
+  it('uses the injected generator, so the result can be pinned', () => {
+    const { env } = buildEggDeployment(egg, {}, undefined, { generate: (length) => 'x'.repeat(length) });
+    expect(env.ADMIN).toBe('x'.repeat(16));
+  });
+
+  it('avoids characters that are easy to misread when read out', () => {
+    expect(generateSecret(2000)).not.toMatch(/[0O1lI]/);
+  });
+
+  it('ships no fixed password in any egg', () => {
+    for (const e of EGGS) {
+      for (const v of e.variables) {
+        expect(v.default, `${e.id}.${v.key}`).not.toMatch(/changeme/i);
+        if (/PASS/.test(v.key) && v.default === '' && !v.generate) {
+          // Only a password the game treats as optional may stay blank.
+          expect(v.description, `${e.id}.${v.key}`).toMatch(/empty|blank|optional|leave/i);
+        }
+      }
+    }
   });
 });

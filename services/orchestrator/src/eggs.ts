@@ -11,6 +11,8 @@
 // the only behaviour, both unit-tested. The API serves the catalogue so the panel
 // renders its form from it rather than carrying a second copy.
 
+import { randomInt } from 'node:crypto';
+
 export type EggVariableKind = 'string' | 'integer' | 'boolean' | 'choice' | 'version';
 
 /**
@@ -63,6 +65,29 @@ export interface EggVariable {
   optionsSource?: 'minecraft-versions';
   /** When this variable applies; always, when absent. */
   showWhen?: EggVariableCondition;
+  /**
+   * A blank answer is filled with a fresh random secret instead of a default
+   * (#388). A fixed default password is one everybody who has seen the panel
+   * knows, and most servers never change it. The value is stored like any other
+   * answer, so it is shown in Settings and survives later edits.
+   */
+  generate?: 'password';
+}
+
+/** No 0/O, 1/l/I: a server password gets read out over voice chat. */
+const SECRET_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+const SECRET_LENGTH = 16;
+
+/** A random secret of `length` characters, uniformly from an unambiguous alphabet. */
+export function generateSecret(length: number = SECRET_LENGTH): string {
+  let out = '';
+  for (let i = 0; i < length; i++) out += SECRET_ALPHABET[randomInt(SECRET_ALPHABET.length)];
+  return out;
+}
+
+/** The length a generated value gets: 16, moved inside the variable's own bounds. */
+function generatedLength(variable: EggVariable): number {
+  return Math.min(variable.maxLength ?? Infinity, Math.max(variable.minLength ?? 0, SECRET_LENGTH));
 }
 
 /** Whether `variable` applies, given the answers chosen so far (#311). */
@@ -229,7 +254,8 @@ const VALHEIM: Egg = {
       label: 'Password',
       description: 'Required to join. Valheim refuses to start a public server without one of at least 5 characters.',
       kind: 'string',
-      default: 'changeme',
+      default: '',
+      generate: 'password',
       minLength: 5,
     },
     { key: 'SERVER_PUBLIC', label: 'List publicly', description: 'Whether the server appears in the public browser.', kind: 'boolean', default: 'true' },
@@ -379,16 +405,18 @@ const PALWORLD: Egg = {
     {
       key: 'SERVER_PASSWORD',
       label: 'Password',
-      description: 'Required to join. Leave it as the default only on a server nobody outside your network can reach.',
+      description: 'Required to join. Left blank, a random one is made for you — it is shown in Settings once the server exists.',
       kind: 'string',
-      default: 'changeme',
+      default: '',
+      generate: 'password',
     },
     {
       key: 'ADMIN_PASSWORD',
       label: 'Admin password',
       description: 'Separate from the join password: it grants server commands, so it should not be the same one you hand to players.',
       kind: 'string',
-      default: 'changeme-admin',
+      default: '',
+      generate: 'password',
     },
     {
       key: 'PLAYERS',
@@ -609,7 +637,8 @@ const PROJECT_ZOMBOID: Egg = {
       description:
         'For the in-game account called admin. The server will not start the first time without one. The game prints it in its log on every start, so do not reuse a password you care about.',
       kind: 'string',
-      default: 'changeme-admin',
+      default: '',
+      generate: 'password',
     },
     {
       key: 'PASSWORD',
@@ -682,14 +711,16 @@ const ENSHROUDED: Egg = {
       label: 'Admin password',
       description: 'Joining with this one makes you an admin: kick, ban and change anything. Make it different from the friend password — the game cannot tell two roles apart by the same one.',
       kind: 'string',
-      default: 'changeme-admin',
+      default: '',
+      generate: 'password',
     },
     {
       key: 'SERVER_ROLE_1_PASSWORD',
       label: 'Friend password',
       description: 'The one to hand to players: they can build, extend bases and open chests, but not kick or ban.',
       kind: 'string',
-      default: 'changeme',
+      default: '',
+      generate: 'password',
     },
     {
       key: 'SERVER_SLOT_COUNT',
@@ -814,7 +845,8 @@ export interface EggDeployment {
 export function buildEggDeployment(
   egg: Egg,
   values: Record<string, string> = {},
-  portOverrides?: Record<string, string>
+  portOverrides?: Record<string, string>,
+  { generate = generateSecret }: { generate?: (length: number) => string } = {}
 ): EggDeployment {
   // Resolve in two passes: a condition may name a variable declared later, and
   // "which type did they choose" has to be settled before asking what depends on
@@ -824,7 +856,12 @@ export function buildEggDeployment(
   const answered: Record<string, string> = {};
   for (const variable of egg.variables) {
     const raw = values[variable.key];
-    answered[variable.key] = raw === undefined || String(raw).trim() === '' ? variable.default : coerce(variable, String(raw));
+    const blank = raw === undefined || String(raw).trim() === '';
+    answered[variable.key] = !blank
+      ? coerce(variable, String(raw))
+      : variable.generate === 'password'
+        ? generate(generatedLength(variable))
+        : variable.default;
   }
 
   const env: Record<string, string> = {};

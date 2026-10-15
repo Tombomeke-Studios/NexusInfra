@@ -298,6 +298,12 @@ another variable — `NEOFORGE_VERSION` only to `TYPE=NEOFORGE`. A variable that
 asked for **and not sent to the container**: irrelevant environment is noise at best, and where two
 mod loaders read near-identical names it is a way to install the wrong one.
 
+A variable with `generate: "password"` (#388) has no fixed default: a blank answer is filled with a
+random 16-character secret (moved inside its `minLength`/`maxLength`, from an alphabet without
+`0 O 1 l I`) when the server is created, or when the field is cleared in an edit. It is stored like
+any other answer, so `GET /deployments/:id` and the Settings tab show it, and later edits keep it.
+Every join and admin password in the catalogue works this way — none ships as `changeme`.
+
 A `string` variable may carry the rules its game imposes (#384): `minLength` / `maxLength` (Valheim
 will not start with a password under five characters) and `pattern` — a regular expression matched
 against the **whole** value — with `patternHint`, the words shown when it does not match (Project

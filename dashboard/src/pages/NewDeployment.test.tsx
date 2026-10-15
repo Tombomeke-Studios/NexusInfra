@@ -138,6 +138,34 @@ describe('NewDeployment', () => {
     expect(JSON.parse(call![1].body as string).eggValues).toMatchObject({ TYPE: 'PAPER', MAX_PLAYERS: '40' });
   });
 
+  // A password the API makes up when left blank (#388): the field says so, and
+  // an untouched one is not sent, which is what asks for the generated value.
+  it('leaves a generated password blank, saying it will be made up', async () => {
+    const VALHEIM = {
+      id: 'valheim', name: 'Valheim', description: '', dockerImage: 'img', ports: { '2456': '2456/udp' }, dataPath: '/config',
+      variables: [{ key: 'SERVER_PASS', label: 'Password', description: 'Required to join.', kind: 'string', default: '', generate: 'password', minLength: 5 }],
+    };
+    fetchMock.mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/placement')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: null }) } as Response);
+      if (path.includes('/nodes')) return Promise.resolve({ ok: true, status: 200, json: async () => [] } as Response);
+      if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [VALHEIM] } as Response);
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
+    });
+    renderForm();
+
+    await userEvent.click(screen.getByRole('button', { name: /Game server/ }));
+    await userEvent.type(screen.getByLabelText('Name'), 'vh');
+    const field = await screen.findByPlaceholderText('Generated if left blank');
+    expect(field).toHaveValue('');
+    expect(field).toHaveAttribute('placeholder', 'Generated if left blank');
+    await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+
+    expect(await screen.findByText('Servers page')).toBeInTheDocument();
+    const call = fetchMock.mock.calls.find(([u, o]) => typeof u === 'string' && u.includes('/deployments') && o?.method === 'POST');
+    expect(JSON.parse(call![1].body as string).eggValues?.SERVER_PASS).toBeUndefined();
+  });
+
   it('offers no free-form environment rows for an egg', async () => {
     // The egg owns its environment; arbitrary rows would defeat validating it.
     renderForm();
