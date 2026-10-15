@@ -242,6 +242,7 @@ scrolling log lines describing events that never happened.
 - [x] Add Minecraft Bedrock and Palworld eggs (#315)
 - [x] The Valheim egg pointed at an image the project no longer publishes from (#317)
 - [x] Add Terraria, Factorio, Satisfactory, Project Zomboid and Enshrouded eggs — with length/shape rules for string variables (#384)
+- [x] Generate a random default password per server instead of a fixed `changeme` in the eggs (#388)
 - [x] Import an existing server directory into the panel (#268)
 - [x] Backup retention, download, and off-site (S3) targets (#232)
 - [x] Port allocation management per node — pool, conflicts, primary port (#233)

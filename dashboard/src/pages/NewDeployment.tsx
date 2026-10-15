@@ -615,6 +615,8 @@ function EggField({ variable, value, onChange }: { variable: EggVariable; value:
           min={variable.min}
           max={variable.max}
           value={value}
+          // Blank is an answer here (#388): the API makes up a random secret.
+          placeholder={variable.generate === 'password' ? 'Generated if left blank' : undefined}
           onChange={(e) => onChange(e.target.value)}
         />
       )}

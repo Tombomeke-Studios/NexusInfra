@@ -144,6 +144,8 @@ export interface EggVariable {
   min?: number;
   max?: number;
   showWhen?: EggVariableCondition;
+  /** A blank answer is filled with a random secret by the API (#388). */
+  generate?: 'password';
 }
 
 /** Whether `variable` applies, given the answers so far. Mirrors eggs.ts (#311). */
