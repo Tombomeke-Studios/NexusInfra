@@ -299,6 +299,8 @@ scrolling log lines describing events that never happened.
 
 - [ ] Local image builds send stale `dist/` and `node_modules` into the image (#396) 🐛
 
+- [x] The panel answers 502 after the orchestrator container is recreated (#403) 🐛
+
 ### Panel — replace the browser's own dialogs
 
 - [x] Replace all 16 `window.confirm` / `window.prompt` calls with in-app dialogs (#299)
