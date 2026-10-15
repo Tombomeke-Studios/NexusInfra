@@ -41,6 +41,12 @@ Every service uses the same **multi-stage workspace build** (see
 `services/control-room/Dockerfile`): builder stage compiles `shared` then the service; runtime stage
 copies only `dist/` + production deps. Build context is always the **repo root**.
 
+The image builds everything itself, so the build context leaves out what a working tree collects:
+`.dockerignore` (and `dashboard/.dockerignore`, whose context is that directory) excludes
+`node_modules`, `dist`, `.env` files, local databases, `.git` and `.claude` (#396). Without it a
+local build copied the host's build output in — a community image built after `npm run build`
+contained, and started, the billing bridge. A new top-level directory with local state belongs there.
+
 The **Orchestrator** image is based on Debian slim (not Alpine) with `openssl` installed, because
 Prisma's query/schema engines require OpenSSL and do not run on Alpine/musl. It applies
 `prisma migrate deploy` on startup before serving. The **dashboard** builds to static assets served

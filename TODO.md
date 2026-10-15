@@ -297,7 +297,7 @@ scrolling log lines describing events that never happened.
 
 - [x] Heartbeats flood every service's log twice a second (#395) 🐛 — routine heartbeat publishes and consumes are no longer logged (`logsTraffic`); failures still are
 
-- [ ] Local image builds send stale `dist/` and `node_modules` into the image (#396) 🐛
+- [x] Local image builds send stale `dist/` and `node_modules` into the image (#396) 🐛 — `.dockerignore` at the root and in `dashboard/` keep build output, dependencies, `.env`, local databases and tooling metadata out of the context
 
 - [x] The panel answers 502 after the orchestrator container is recreated (#403) 🐛
 
