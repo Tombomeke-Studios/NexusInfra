@@ -32,7 +32,14 @@ Live monitoring snapshot of every heartbeat source seen on the bus.
 }
 ```
 
-`status` ∈ `healthy | degraded | offline` derived from last-seen age. `uptimePercent` (#165) is the
+`status` ∈ `healthy | degraded | offline` derived from last-seen age.
+
+The response also carries `deadLetters` (#243): `{ status: 'empty' | 'messages-waiting' | 'unknown',
+depth }`. Consumers `nack` without requeue on failure, so a message that cannot be processed lands in
+`finvault.events.dlq` — which nothing read and nothing reported on, meaning events could pile up
+unnoticed indefinitely. The depth is read passively (`checkQueue` consumes nothing), and a broker that
+cannot be asked reports `unknown` rather than `0`: not knowing and knowing nothing failed are
+different claims, and only one of them is safe to make without looking. `uptimePercent` (#165) is the
 share of observed time the source was healthy, since it was first seen.
 
 ### `GET /uptime`
@@ -85,10 +92,42 @@ Runtime config the dashboard reads before login to decide whether billing UI ren
 Contains no sensitive data.
 
 ```json
-{ "edition": "community" }
+{ "edition": "community", "passwordResetByEmail": false, "sftpPort": 2022 }
 ```
 
 `edition` ∈ `community | hosted`, resolved from the service's `NEXUS_EDITION` (default `community`).
+`passwordResetByEmail` says whether "Forgot your password?" can send a link (#344) — true only with
+`SMTP_URL` *and* `PANEL_URL` set; a yes/no, never the mail setup behind it.
+`sftpPort` is the port to connect to for SFTP (#235) — `SFTP_PUBLIC_PORT`, else `SFTP_PORT` — or `null`
+when SFTP is off.
+
+### `POST /auth/password-reset`  *(public)*
+
+Ask for a reset link by email (#344). Body `{ "email": "…" }` → `202` with the same body whether or
+not an account uses that address, and the mail is sent after the response, so neither the answer nor
+its timing says which. `429` (with `Retry-After`) past 5 requests an hour per address or per client;
+`404` where the installation cannot send one (the panel then says to ask an administrator).
+
+The mailed link is `PANEL_URL/reset-password?token=…` — built from configuration, never from the
+request's `Host` header. It works once, for 30 minutes, and a newer request supersedes it.
+
+### `POST /auth/password-reset/confirm`  *(public)*
+
+Body `{ "token": "…", "newPassword": "…" }` → `204`, and every session of the account ends. `400` for
+a password the rules refuse — checked *before* the link is spent, so a typo does not cost it — or for a
+link that is unknown, expired or already used (one message for all three).
+
+
+### Email confirmation (#367)
+
+- `POST /auth/verify-email/confirm` — public; body `{ token }` from the mailed link. `200
+  { status: "verified" }`, or `400` for a link that is unknown, expired or already used.
+- `POST /me/verify-email` — authenticated; mails the signed-in account a fresh link. `202 { status:
+  "sent", email }`; `200 { status: "verified" }` when there is nothing to confirm; `404` where the
+  installation cannot confirm addresses; `429` after five requests in an hour.
+
+`GET /config` carries `emailVerification` (whether this installation confirms addresses) and the
+account objects carry `emailVerified`.
 
 ### `POST /auth/login`  *(public)*
 
@@ -102,7 +141,16 @@ Exchange account credentials for a signed JWT (12h TTL, signed with `JWT_SECRET`
 ```
 
 `401` on bad credentials — deliberately the same response for an unknown account as for a wrong
-password. `400` when either field is missing. Send the token as `Authorization: Bearer <jwt>` on
+password. `400` when either field is missing.
+
+**Rate limited (#225)** per address *and* per account: the first stops one machine walking a password
+list, the second stops a botnet spreading the same list across many addresses, and neither alone is
+enough. Only failures count and a success clears the count, so normal use never meets the limit. A
+locked-out attempt answers **exactly the same 401** as a wrong password — a distinct "account locked"
+reply would confirm the account exists and is worth attacking — with a `Retry-After` header.
+Configure with `LOGIN_MAX_ATTEMPTS` (10), `LOGIN_WINDOW_MS` and `LOGIN_LOCKOUT_MS` (15 min each).
+
+Every successful login creates a **session** (#227) and the token names it. Send the token as `Authorization: Bearer <jwt>` on
 every other call. An install that predates accounts may also sign in with its legacy username.
 
 The first administrator is seeded from `ADMIN_EMAIL` / `ADMIN_PASSWORD` on first start.
@@ -128,11 +176,144 @@ The signed-in account (never including any credential material), and a password 
 the current password: `{ "currentPassword": "…", "newPassword": "…" }` → `204`, `401` if the current
 password is wrong.
 
+### `POST /users/:id/password`  *(platform administrators)*
+
+Set somebody's password without knowing the old one (#226) — the community edition's answer to a
+forgotten one, since there is no mail server to assume and accounts are created by an administrator
+anyway. Body `{ "newPassword": "…" }` → `204`.
+
+Two rules make this safe to give an `admin` rather than only an `owner`:
+
+- **You cannot reset an account that outranks you** (`403`), or any administrator an owner appoints
+  could lock the owner out and take the installation. Admin-resets-admin is allowed; they already hold
+  the same power, and refusing it makes the panel useless the moment one of two admins forgets a
+  password.
+- **Every session of that account ends** (#227). A reset is what you do when you suspect somebody else
+  is in the account, so leaving their existing token working would defeat the exercise.
+
+`400` on a password that fails the usual rules, `404` for an unknown account.
+
+### `GET /me/sessions` · `POST /auth/logout` · `DELETE /me/sessions/:id` · `DELETE /me/sessions`
+
+Where this account is signed in, and how to stop being (#227).
+
+A JWT is stateless, so before this a token stayed valid until it expired no matter what happened to
+the account behind it: signing out cleared it in the browser and nothing else, and there was no way to
+end somebody else's session. A token now names a session row, and `requireAuth` checks that row still
+exists — one indexed read per request, which is the price of the answer being true.
+
+- `GET /me/sessions` lists your own, each flagged `current` so you can tell which is you.
+- `POST /auth/logout` ends the session making the request; the token stops working immediately.
+- `DELETE /me/sessions/:id` ends one other — the "that wasn't me" button. A session that is not yours
+  answers `404`, not `403`, so ids cannot be probed (the same rule as servers, #175).
+- `DELETE /me/sessions` ends every session but the current one.
+
+Changing your password ends every **other** session, since that is how you respond to thinking
+somebody else has it — and leaves the one that made the change signed in, because being logged out of
+the page you just used is a punishment for doing the right thing. A token that names no session at all
+is refused: it cannot be revoked, which is the thing this replaced.
+
+### `GET /me/totp` · `POST /me/totp` · `POST /me/totp/verify` · `DELETE /me/totp`
+
+Two-factor authentication (#229), TOTP with recovery codes.
+
+| Method + path | Purpose |
+|---|---|
+| `GET /me/totp` | `{ enabled, enabledAt, recoveryCodesRemaining }` |
+| `POST /me/totp` | Begin enrolment → `201 { secret, otpauthUrl }`. Nothing is enforced yet |
+| `POST /me/totp/verify` | Body `{ code }` → `201 { recoveryCodes, token }` — the codes are shown once, and the token replaces the one that predates the factor |
+| `DELETE /me/totp` | Body `{ password }` → `204`. `409` where the installation requires 2FA |
+
+`POST /auth/login` then takes `{ email, password, code }`, where `code` is either a six-digit TOTP
+code or one of the recovery codes (spent on use). Without it the reply is `401 { totpRequired: true }`
+— which does confirm the password was right, unavoidably, since the person has to be told to reach for
+their phone; it is only ever returned to someone who already holds it. A missing or wrong code counts
+as a failed attempt against the login limiter (#225).
+
+With `REQUIRE_TOTP=true`, an un-enrolled account still signs in — the reply carries
+`mustEnrolTotp: true` — but every route except `/me`, `/me/totp*` and `/auth/logout` answers
+`403 { enrolmentRequired: true }` until enrolment finishes. Refusing the login instead would lock out
+everyone, the only administrator included, the moment the flag was turned on. API tokens are exempt:
+one was created by somebody who had already satisfied the requirement. A token cannot enrol, disenrol,
+or mint another token.
+
+### `GET /me/tokens` · `POST /me/tokens` · `DELETE /me/tokens/:id`
+
+API tokens for scripts and CI (#228). Automating anything used to mean storing a person's password in
+a script — a credential that opens the whole account, is indistinguishable from that person in a log,
+and cannot be withdrawn without locking them out too.
+
+A token is presented exactly like a JWT, as `Authorization: Bearer nxi_…`. It authenticates as the
+account that owns it, so per-server roles resolve exactly as they would for that person.
+
+| Method + path | Purpose |
+|---|---|
+| `GET /me/tokens` | Your tokens: name, scopes, created, last used, expiry. Never the secret or its digest |
+| `POST /me/tokens` | Mint one — body `{ name, scopes?, expiresAt? }` → `201` **including `secret`, the only time it is ever returned** |
+| `DELETE /me/tokens/:id` | Revoke → `204`, effective on the very next request |
+
+`scopes` is an array of `write` and/or `admin`:
+
+- **Reading is always allowed**; anything that changes state needs `write`. The rule is by HTTP
+  method, not by a table of paths — a path table is a second description of the API that has to be
+  kept in step with the first, and the day it falls behind is the day a new route is unscoped, only
+  for token callers.
+- **`admin` is separate** from the account's platform role. An administrator's CI token that deploys
+  should not also be able to create accounts, and whoever pastes it into a pipeline usually has no
+  idea it could.
+- A scope only ever narrows. A token can never do something its account cannot.
+
+Other rules worth stating:
+
+- **The secret is shown once.** Only its SHA-256 digest is stored, so a leaked database yields nothing
+  that can be presented at the door. (SHA-256, not bcrypt: the secret is 256 random bits, so there is
+  nothing to brute-force, and this runs on every request.)
+- **A token cannot mint tokens** (`403`) — one that could would not really be revocable, since its
+  offspring would outlive it.
+- **`expiresAt`** is optional; a token past it is refused without anyone deleting the row. A timestamp
+  already in the past is `400`.
+- Somebody else's token answers `404`, not `403`, so ids cannot be probed.
+- The token dies with its account, as a session does.
+- **The interactive terminal WebSocket does not accept API tokens** — it opens a root shell, the
+  handshake is a `GET`, and a script that needs to run a command has `POST /deployments/:id/exec`.
+
 ### `GET /users` · `POST /users`  *(platform administrators)*
 
 List accounts, and create one — the way people get access in the community edition. `POST` takes
 `{ email, password, displayName?, platformRole? }` and returns `201`. Both return `403` for
 non-administrators.
+
+### `GET /eggs`
+
+The catalogue the panel builds its form from: for each egg, the image, ports, data path and the
+variables a person may set, with kind, default, help text and validation.
+
+A `version` variable's `options` are **filled in when this is served** (#311) — the game versions come
+from Mojang's manifest, cached, with a baked fallback when the orchestrator has no internet. They are
+suggestions: a version is validated by *shape*, never against that list, so a stale or cold cache
+cannot refuse a version the image would happily install.
+
+A variable may carry `showWhen: { key, equals[] }`, meaning it only applies for certain answers to
+another variable — `NEOFORGE_VERSION` only to `TYPE=NEOFORGE`. A variable that does not apply is not
+asked for **and not sent to the container**: irrelevant environment is noise at best, and where two
+mod loaders read near-identical names it is a way to install the wrong one.
+
+A variable with `generate: "password"` (#388) has no fixed default: a blank answer is filled with a
+random 16-character secret (moved inside its `minLength`/`maxLength`, from an alphabet without
+`0 O 1 l I`) when the server is created, or when the field is cleared in an edit. It is stored like
+any other answer, so `GET /deployments/:id` and the Settings tab show it, and later edits keep it.
+Every join and admin password in the catalogue works this way — none ships as `changeme`.
+
+A `string` variable may carry the rules its game imposes (#384): `minLength` / `maxLength` (Valheim
+will not start with a password under five characters) and `pattern` — a regular expression matched
+against the **whole** value — with `patternHint`, the words shown when it does not match (Project
+Zomboid's server name becomes a file name and may not contain a space). Every string also refuses line
+breaks and other control characters: several images write the value straight into a config file,
+where a newline is a way to add lines of your own. The rules apply to what was typed — a blank answer
+still means the default, which is how an optional password (default `""`) stays optional.
+
+An egg may carry `query: { protocol, port }` (#382) — how to ask a running server of that kind for its
+players and version, on which **container** port. See `GET /deployments/:id/query`.
 
 ### `POST /deployments`
 
@@ -148,32 +329,275 @@ Request:
   "env": {},
   "type": "app",
   "autoRestart": true,
+  "nodeId": "node-rack-1",
   "resourceLimits": { "cpuPercent": 50, "ramPercent": 50, "diskPercent": 50, "swapPercent": 0, "ioPriority": "normal", "restartPolicy": "on-failure", "oomKill": false }
 }
 ```
 
+**Ports carry their protocol (#313).** The container side of a mapping may be written in Docker's own
+notation — `"2456": "2456/udp"`, or `"27015/tcp+udp"` for a port a game needs on both. A bare number
+means TCP, exactly as before, so existing deployments are untouched. This matters more than it looks:
+Docker also defaults to TCP, so publishing a UDP game as TCP publishes nothing usable — the container
+runs, the panel shows it healthy, and nobody can connect.
+
+**Resource limits accept either unit (#275).** `ramMb` and `cpuCores` (fractional allowed) set an
+absolute amount; `ramPercent` and `cpuPercent` set a share of the node. The absolute value wins when
+both are present — it is the more specific instruction, and it keeps meaning the same if the server is
+ever re-placed onto a node of a different size, which a percentage does not.
+
 `name` and `dockerImage` are required; the rest are optional and stored with the server config (#106) so
 a re-start reuses them. The limits ride on `server.start` and the Node Agent enforces them on the
-container — RAM/CPU caps, swap, block-I/O weight, restart policy and the OOM killer (#107). Responses:
-`201` with the deployment (including its event trail), `400` on missing fields, `503` when no healthy
+container — RAM/CPU caps, swap, block-I/O weight, restart policy and the OOM killer (#107).
+
+**From an egg (#231):** send `eggId` and `eggValues` instead of `dockerImage`/`env`. The egg decides
+the image, the environment and the default ports; anything the caller sends for those is **ignored,
+not merged** — an egg that could be overridden would be a suggestion rather than a recipe, and you
+could run any image at all while still being labelled a Minecraft server. Unknown variables are
+dropped rather than passed through as arbitrary container environment, missing ones take their
+default, and the egg's `fixedEnv` (such as Minecraft's `EULA=TRUE`) is applied last. `ports` is still
+honoured, as the host-side override. `400` for an unknown egg or an invalid answer, with the message
+naming the field as the person saw it ("Player slots must be a whole number").
+
+**Keeping data across restarts (#324):** the agent removes a container on every stop, so a server's
+data lives in **named volumes owned by the deployment** instead of in the container. Three sources
+decide which directories get one: the egg's `dataPath`, every `VOLUME` the image itself declares, and
+an optional `persistPaths` list — how a plain application (`nginx`, say) names its own. `persistPaths`
+must be absolute directories (not `/`, no `..`, no `:`), at most 10; `400` otherwise. The volumes are
+mounted again on every start and removed only when the server is deleted.
+
+**Importing an existing directory (#268):** send `dataPath` alongside an egg. The directory is
+bind-mounted at the egg's `dataPath`, so the server runs against files that are already on the node
+— an existing world, config and all.
+
+This is **platform-administrator only**, and it is the one place the panel hands out a host-escape
+primitive: a bind mount of the wrong directory into a container the user has a root shell in is the
+machine. So the *node* decides, not the orchestrator, which cannot see that filesystem: the path
+must resolve inside the node's `IMPORT_ROOT` (unset = importing is off), containment is checked on
+the **resolved real path** after symlinks, and the agent re-checks at start rather than trusting the
+event. `403` for a non-administrator, `400` when the node refuses the path or when no egg says where
+to mount it.
+
+**Memory (#271, #308):** an egg may name the variable that is its JVM heap. The container's `Memory`
+cap is `ramPercent%` of the node's total RAM and the kernel enforces it absolutely, while the JVM
+*commits* its heap — so a heap that does not fit is a container killed mid-save, not a slow server.
+
+**The heap is derived from the cap unless the request names one.** Asking for both is asking the same
+question twice in two different units, and the defaults collided: 50% of a 4 GB node is a 2048 MB cap
+against a `2G` heap default that needs ~2560 MB, so an untouched request was refused on a small node
+and accepted on a large one. Omitting the heap variable from `eggValues` yields the largest heap that
+leaves the JVM its overhead; sending one keeps that value. Note *omitting*, not blanking — an egg
+reads a blank value as "use my default", which is the constant this replaced.
+
+Deriving is skipped where there is nothing honest to derive from: an uncapped server, or a node that
+has never reported its RAM. A cap too small for any heap at all is refused with `400` saying exactly
+that, rather than suggesting a 0 MB heap.
+
+A create or edit whose heap plus the JVM's own overhead (a quarter of the heap, floor 512 MB) exceeds
+the cap is still refused with `400`, and the message is in MB: a percentage of a node you have not
+measured is not a number anyone can act on. The check is silent when anything is unknown — no cap, a
+node that has not reported its RAM, or a value that is not a memory size.
+
+`nodeId` pins the server to a specific node (#254); omit it to let the Orchestrator place it on the
+least-loaded healthy node. A pin is honoured or refused, never silently reassigned — `400` for an
+unknown node, `409` for one that is not healthy.
+
+Responses: `201` with the deployment (including its event trail), `400` on missing fields, `503` when no healthy
 node is available. In the hosted edition, `409` when the plan's `maxServers` quota is reached (checked
 against the Billing Bridge; community edition never limits). On success the Orchestrator emits
 `infra.server.start` for the chosen node.
 
+Each node also carries a `capacity` block (#275) with **three distinct numbers**, because they answer
+three different questions:
+
+- `ramTotalMb` / `cpuCoresTotal` — the hardware.
+- `ramCommittedMb` / `cpuCoresCommitted` — the sum of the caps already handed to servers placed here.
+- `ramUsedMb` / `cpuUsedPercent` — what is being consumed right now.
+
+`ramAvailableMb` / `cpuCoresAvailable` derive from **committed**, never from usage: four idle servers
+capped at a quarter of the RAM each leave nothing to give away, and a node running nothing reports
+most of its memory used because Linux spends spare RAM on page cache. `overCommitted` says when a node
+has been promised more than it has, which is possible and worth knowing.
+
+Nodes report `cpuCores` once their agent has beaten in (#261); it is `null` until then, and the
+panel shows nothing rather than a guess. `GET /deployments` rows carry their `resourceLimits`, which
+the Overview sums per node to show what is genuinely committed there.
+
+### `PATCH /nodes/:id/maintenance`  *(platform administrators)*
+
+Drain a node, or return it to the placement pool (#258). Body `{ "maintenance": true | false }` →
+`200` with the node and its health.
+
+Maintenance means **keep running what you have, take nothing new**: the Orchestrator excludes the
+node from placement, and a request that pins a server to it (see `nodeId` above) is refused with
+`409`. It deliberately does **not** stop the deployments already there — draining and shutting down
+are separate decisions. Heartbeats never clear the flag, so a node stays drained until somebody
+lifts it. `400` if the body is not a boolean, `403` for non-administrators, `404` for an unknown node.
+
 ### `GET /deployments`
 
-List all deployments (newest first), each joined with its config name/image and current status
-(`pending | running | stopped | crashed | failed`).
+One page of the deployments the caller may see, newest first, each joined with its config name/image,
+current status (`pending | running | stopped | crashed | failed`) and the caller's `role` on it.
+
+**Answers an envelope, not an array** (#237):
+
+```
+{ "items": [ … ], "total": 137, "limit": 25, "offset": 0 }
+```
+
+`total` is the count *after* filtering, so a caller can always tell there is more. A bare page of rows
+cannot say that, and a list that silently returns the first 25 of 200 is worse than the unbounded one
+it replaced — which is why this is an envelope rather than a truncated array.
+
+| Query | Effect |
+|---|---|
+| `q` | Case-insensitive substring of the name |
+| `status` | Exact status |
+| `nodeId` | Exact node id, or `unassigned` for servers that landed nowhere |
+| `ownerId` | Exact owner account id |
+| `limit` | Page size — default `25`, capped at `200`, applied whether or not it is given |
+| `offset` | Where the page starts |
+
+Filters combine as "and". An unrecognised parameter is ignored rather than refused, so a stale
+bookmark still shows somebody their servers. Ordering is total (created time, then id), so paging
+never shows one row twice and hides another.
+
+Filtering happens after the caller's visibility is resolved, so it can never widen what they see.
+
+Every row (and `GET /deployments/:id`) carries `suspendedAt` and `suspendedReason` (#380): set when
+billing stopped the server for lack of credit (hosted), `null` otherwise. They stay set while the
+server is stopped and are cleared when a start passes the credit check or the server reports
+started. The status stays `stopped` — the runtime state — so a filter on `status=stopped` still finds
+it; the panel shows it as *suspended*.
 
 ### `GET /deployments/:id`
 
-A single deployment with its full `events` audit trail. `404` if unknown.
+A single deployment with its full `events` audit trail **and the runtime configuration it was created
+with** — `ports`, `env`, `resourceLimits` and `autoRestart` — which the panel's Network and Startup
+tabs render. `404` if unknown (also when the caller has no access, so ids cannot be probed).
+
+### `GET /placement`
+
+Which node an automatically-placed server would land on right now → `{ "nodeId": "node-a" }`, or
+`{ "nodeId": null }` when nothing is eligible (#309).
+
+A **preview, not a reservation**: placement is decided again at creation, and the fleet can move in
+between. It exists so the panel can turn "50% of RAM" into a number of megabytes without
+reimplementing `selectNode` — its own version filtered neither unhealthy nor draining nodes, so with
+two or more nodes it could describe a machine the server was never going to land on.
+
+### `PATCH /deployments/:id`
+
+Change an existing server's configuration (#220). Body may carry any of `name`, `dockerImage`,
+`ports`, `env`, `resourceLimits`, `autoRestart`, `persistPaths` (#324); **an omitted field is left alone**, so a partial
+edit never blanks the rest. Requires `server.edit` (server admin and up — an operator may run a
+server but not redefine it).
+
+For a server built from an egg with a heap (#308), the heap is **re-derived from the memory limit on
+every write unless the request names one**. So raising the memory limit raises the heap with it,
+rather than being refused for a heap the person never chose — and an override has to be re-sent to
+survive, which keeps the intent in the request instead of in hidden state nobody can see or correct.
+
+A server created from an egg is edited **through that egg** (#272): send `eggValues` instead of
+`env`, and the same rules apply as at creation — unknown keys dropped, values validated by the name
+the person saw, `fixedEnv` untouchable. Answers are merged over what is stored, so an untouched
+variable keeps its value rather than reverting to the egg's default. The heap check (#271) runs on
+edit as well, since raising the heap is exactly how someone would break it later.
+
+The change is stored and **nothing is restarted**: it applies the next time the server starts. A
+settings form that silently bounced a running server would be a worse surprise than one that waits.
+Recorded in the audit trail as `config-updated`. `200` with the updated deployment, `400` on an
+empty name/image or a non-object `ports`/`env`/`resourceLimits`, `403` without the permission.
+
+### `GET /deployments/:id/events`
+
+The server's audit trail, **newest first** (#223) — creation, placement, start/stop/kill requests,
+crashes, restores. Written since the beginning and, until now, never readable: `?limit=` (default
+50, max 200) and `?offset=` paginate it, because a long-lived server accumulates these
+indefinitely. Requires `server.view`.
 
 ### `POST /deployments/:id/start`
 
-Start (or re-run) a deployment that is **not** currently running — re-places it on a healthy node and
-emits `infra.server.start` from the saved config. `202` while starting, `404` if unknown, `409` if it
-is already running/pending, `503` if no healthy node is available.
+Start (or re-run) a deployment that is **not** currently running — emits `infra.server.start` from the
+saved config. A server that has run before starts **on its own node**, because its data is there
+(#329, #324); if that node is offline or in maintenance the start is refused with `409` naming it,
+never quietly placed on a node without the data — moving a server is `POST …/migrate` (#234). A server
+with no node yet (or whose node was deregistered) is placed on the least-loaded healthy one. `202`
+while starting, `404` if unknown, `409` if it is already running/pending or its node is unavailable,
+`503` if no healthy node is available.
+
+### Notifications (#236)
+
+Where the signed-in account hears about events. Always the caller's own; another account's channel
+answers `404`.
+
+| Method + path | Purpose |
+|---|---|
+| `GET /me/notifications` | `{ channels, capabilities: { email, events } }` — `events` lists what this account may subscribe to |
+| `POST /me/notifications` | `{ kind: "webhook", target, format?, events }` or `{ kind: "email", events }` → `201`. A webhook's `secret` is in this response **only** |
+| `PATCH /me/notifications/:id` | `{ enabled?, events? }` |
+| `DELETE /me/notifications/:id` | Remove it and anything still queued for it → `204` |
+| `POST /me/notifications/:id/test` | Send a test now → `{ ok: true }`, or `502 { ok: false, error }` with what the receiver said |
+| `GET /me/notifications/:id/deliveries` | The last 20 deliveries: `status` (`pending`/`sent`/`failed`), `attempts`, `lastError`, `summary` |
+
+Events: `server.crashed` and `server.suspended` go to everyone with access to the server who
+subscribed (owner, shares, team); `node.offline` and `node.recovered` are for platform
+administrators. `credit.low` goes to the account alone, and exists only in the hosted edition — the
+community edition neither lists nor accepts it (#379). `format` is `json` (the whole notification, below), `discord` (`{ content }`) or
+`slack` (`{ text }`). Email needs `SMTP_URL` on the orchestrator and always goes to the account's
+own address.
+
+```json
+{ "event": "server.crashed", "occurredAt": "2026-09-25T03:00:00.000Z",
+  "summary": "survival crashed: exited with code 137 — killed by the OOM killer: it ran out of memory for its limit",
+  "server": { "id": "…", "name": "survival" }, "details": { "reason": "…" } }
+```
+
+Deliveries are rows, retried with backoff (30 s, 2 min, 10 min, 30 min, 2 h, 12 h) and then given
+up; a `4xx` other than `408`/`429` is not retried. Headers: `X-NexusInfra-Event`,
+`X-NexusInfra-Delivery` (stable across retries), `X-NexusInfra-Signature` — see security.md.
+
+### Host ports (#233)
+
+Two servers on one node can never hold the same host port. Every server's host ports are recorded
+per node, with a **unique (node, port)** constraint as the guard — so even two concurrent creates
+for one port cannot both succeed. A clash answers `409` naming the holder: *"port 25565 is already
+used by survival on this node"*. Checked on create, on a `ports` edit (`PATCH /deployments/:id`),
+on first placement, and on the target of a migration; released on delete.
+
+A node may have a **port range**. Then explicit ports must lie inside it (`400` otherwise), and a
+host port written as **`auto`** — `{ "ports": { "auto": "25565" } }` — takes the lowest free port in
+the range (`409` when the range is full). Without a range, any free port may be named and `auto` is
+refused.
+
+| Method + path | Purpose |
+|---|---|
+| `PATCH /nodes/:id/ports` | Platform admin. `{ range: { start, end } }`, or `{ range: null }` to remove it. Existing ports outside a new range are **kept**, not renumbered; the answer says how many (`outsideRange`). |
+| `GET /nodes/:id/ports` | Platform admin. `[{ port, deploymentId, name, primary }]` |
+| `PUT /deployments/:id/ports/primary` | `server.edit`. `{ port }` — which of the server's ports the Network tab shows first. `404` if it holds no such port. |
+
+`GET /deployments/:id` carries `portAllocations: [{ port, primary }]`. Servers created before this
+are recorded once at orchestrator start; of two old servers already sharing a port, the first keeps it.
+
+### `POST /deployments/:id/migrate`
+
+Move a **stopped** server to another node (#234) — body `{ nodeId }`. **Platform administrators only**:
+it moves data between machines, which is fleet management rather than a server role's call.
+
+Answers `202 { status: "migrating" }` once the move is validated, and runs in the background (a
+large world takes longer than a proxy holds a request open); `GET /deployments/:id` carries
+`migrating: true` meanwhile, and start, update and delete answer `409`. The order is the safety:
+
+1. each of the server's volumes is **streamed** from the source node into a new volume on the target
+   (nothing is buffered in the orchestrator), then each backup tar;
+2. only when all of it arrived does the server's node change (`migrated` in the audit trail);
+3. then the source is cleaned — best-effort, recorded as `migration-cleanup-incomplete` if not.
+
+A failure before step 2 removes **only what this migration created** on the target and leaves the
+server untouched on its node (`migration-failed`). The target refuses to import over a volume or
+backup it already has, so two agents sharing one Docker daemon cannot lose the source.
+
+`400` unknown / same node or no `nodeId`; `409` running, already moving, target unhealthy or in
+maintenance, source node offline, or an imported directory (#268), which exists only on its node.
 
 ### `GET /deployments/:id/logs`
 
@@ -200,10 +624,30 @@ form on the agent, and file operations run as argv arrays (no shell) so a path c
 |---|---|
 | `GET /deployments/:id/files?path=/dir` | List a directory — `[{ name, kind: 'file'\|'dir', size }]`, directories first |
 | `GET /deployments/:id/files/content?path=/f` | Read a text file — `{ path, content }` |
-| `PUT /deployments/:id/files/content` | Create/overwrite a file — body `{ path, content }` → `204` |
+| `PUT /deployments/:id/files/content` | Create/overwrite a text file — body `{ path, content }` → `204` |
+| `PUT /deployments/:id/files/binary?path=/f` | Upload raw bytes — `Content-Type: application/octet-stream`, body is the file → `204`. The binary-safe path (#263): text encoding destroys any byte that is not valid UTF-8, so uploads never travel as JSON. Capped by `MAX_UPLOAD_BYTES` (default `64mb`), over which the request is refused |
 | `POST /deployments/:id/files/dir` | Make a directory — body `{ path }` → `201` |
 | `POST /deployments/:id/files/rename` | Move/rename — body `{ from, to }` |
 | `DELETE /deployments/:id/files?path=/f` | Delete a file or directory (recursive) → `204` |
+
+### SFTP (#235)
+
+The same files over SFTP, served by the Orchestrator on `SFTP_PORT` (off when unset; the bundles use
+`2022`). It is a second door to the operations above, not a second set of rules:
+
+| | |
+|---|---|
+| User name | `<account email>.<server id>` — the full id, or its first eight characters (shown on the Files tab) |
+| Password | the account password, **or** an `nxi_` API token. An account with two-factor sign-in (or any account under `REQUIRE_TOTP`) must use a token |
+| Logs in | holders of `file.read` on that server (operator and up) |
+| Changes files | holders of `file.write` (admin and up), with a password or a token that has the `write` scope |
+| Operations | list, stat, download, upload (whole file, up to 64 MB), append, mkdir, rename, remove, rmdir (empty directories only). Setting times or modes is acknowledged and ignored; links are refused |
+
+Access and the running container are resolved again on every operation, so a revoked share, a lowered
+role or a stopped server takes effect inside an open session. Every login is recorded in the server's
+activity (`sftp-login`). Password and shell sessions are the only kinds offered: no shell, no exec, no
+port forwarding. Failed logins count against the same per-address and per-account budget as the
+panel's login.
 
 ### `POST /deployments/:id/exec`  *(running deployment)*
 
@@ -226,21 +670,93 @@ bad engine, `502` if provisioning on the agent fails.
 
 ### Backups  *(running deployment)*
 
-A backup is a tar snapshot of the server's data path (default `/data`), stored on the owning node and
-restorable back into the container (#110). `404` if the deployment/backup is unknown, `409` if it is
-not running, `502` if the node operation fails.
+A backup is a tar snapshot of the server's data directory, stored on the owning node and restorable
+back into the container (#110). The default path is the server's own data directory — the egg's, an
+imported one, or the first `persistPaths` entry (#324) — and `/data` only when none is known. When the
+node has an off-site bucket (#232), each backup is copied there too and `offsite` says whether that
+worked (`stored` / `failed`; `null` = no bucket). `404` if the deployment/backup is unknown, `409` if
+it is not running, `502` if the node operation fails.
 
 | Method + path | Purpose |
 |---|---|
-| `GET /deployments/:id/backups` | List the server's backups (newest first) — `{ name, path, sizeBytes, createdAt, … }` |
-| `POST /deployments/:id/backups` | Snapshot the data path → `201` with the backup record |
-| `POST /deployments/:id/backups/:backupId/restore` | Extract the snapshot back into the running container |
+| `GET /deployments/:id/backups` | List the server's backups (newest first) — `{ name, path, sizeBytes, createdAt, offsite, … }` |
+| `POST /deployments/:id/backups` | Snapshot the data path (body `{ path? }`; default: the server's own data directory) → `201` with the backup record plus `expired`, how many old ones retention removed. `404` when the container has nothing at that path (#342) — the panel then asks which directory to back up |
+| `PUT /deployments/:id/backups/retention` | Set `{ keepLast, keepDays }` (#232) — whole numbers ≥ 1, `null`/absent for no limit. Both are limits; the newest backup is never removed. Applied at once → `{ backupRetention, expired }` |
+| `GET /deployments/:id/backups/:backupId/download` | The tar, as an attachment (#232) — from the node, or from off-site when the node lost it. `404` when the archive is in neither place (#339) |
+| `POST /deployments/:id/backups/:backupId/restore` | Extract the snapshot back where it came from in the running container: files in the backup replace the current ones, files created since are kept. (Before #327 it nested the snapshot inside the directory and restored nothing.) `404` when the node no longer has the archive (#339) |
 | `DELETE /deployments/:id/backups/:backupId` | Delete the stored tar and drop the record → `204` |
+
+### Disk usage (#347)
+
+| Method + path | Purpose |
+|---|---|
+| `GET /deployments/:id/disk` | How much disk this server uses (`server.stats`): `{ measuredAt, volumesBytes, writableBytes, volumes: [{ name, path, bytes }] }` — its data volumes and its container's own layer, measured by the node that holds them. `null` is something Docker could not measure, never a 0. `502` when the node cannot answer |
+| `GET /nodes/:id/disk` | Every server on the node by disk use, largest first — platform administrators only. Each row also carries `name` and `known`; `known: false` is data whose server the panel no longer has |
+
+The node caches its measurement for a minute: Docker walks every volume to take it. Nothing here
+limits anything — enforcing a cap is #278.
+
+### `GET /deployments/:id/query` — players and server status (#382)
+
+What the game itself says, asked by the node it runs on (`server.view`). Always `200`:
+
+```json
+{
+  "status": "online",
+  "protocol": "minecraft",
+  "players": { "online": 2, "max": 20 },
+  "version": "Paper 1.21.1",
+  "motd": "A NexusInfra server",
+  "name": null,
+  "map": null,
+  "latencyMs": 3,
+  "checkedAt": "2026-10-15T12:00:00.000Z"
+}
+```
+
+| `status` | Meaning |
+|---|---|
+| `online` | The game answered. `players` is `null` when the server hides its count — not `0`. |
+| `offline` | The server runs, but the game did not answer on its status port; `error` says how it failed. |
+| `stopped` | The server is not running, so nobody was asked. |
+| `unsupported` | This kind of server has no status protocol the panel speaks — a plain application, Palworld, Terraria, Factorio, Satisfactory. |
+| `unknown` | The node could not be asked; `error` says why. |
+
+Only `online` carries figures. `protocol` is `minecraft` (Server List Ping), `bedrock` (RakNet ping) or
+`a2s` (Steam A2S_INFO), from the server's egg. `name` and `map` come from A2S; Bedrock reports its
+world as `map`. Answers are cached for 10 seconds per server (`checkedAt` says when the game was
+asked), so polling this cannot flood a game server.
+
+Proxied to the owning Node Agent's internal `GET /query?protocol=&port=` (host port), which answers
+`{ status: "online", … }` or `{ status: "offline", error }`.
+
+### Image updates (#239)
+
+| Method + path | Purpose |
+|---|---|
+| `GET /deployments/:id/image` | Ask the owning node whether the registry has a newer image for the server's tag. Needs `server.view`. |
+| `POST /deployments/:id/update` | Pull the tag afresh; a running server is **recreated** from the new image, a stopped one uses it on its next start. Needs `server.edit`. `202 { status: "updating", recreate }` |
+
+`GET …/image` answers `{ image, status, remoteDigest, localDigest, checkedAt }`, where `status` is:
+
+| `status` | Meaning |
+|---|---|
+| `current` | The registry, the node and the running container all agree |
+| `update-available` | The registry has a digest this node has never pulled |
+| `pulled-not-applied` | A newer image is on the node, but the container was created from an older one |
+| `unknown` | The registry could not be asked (offline, rate-limited, private) — **not** the same as current |
+
+`502` when the node cannot be reached. The update is a command over the bus (`infra.server.update`):
+the agent **pulls first** and recreates only if the pull succeeded, so a registry outage or a missing
+tag leaves a running server exactly as it was and records `update-failed` in the audit trail. The
+recreate keeps the server's data, which lives in its volumes (#324), and it stays on its node.
+`409` while the server is still being placed.
 
 ### Schedules
 
 Recurring tasks the Orchestrator runs on a 5-field cron (minute hour day-of-month month day-of-week, UTC);
-actions are `restart` or `backup` (#111). The scheduler polls once a minute. `404` if the deployment/schedule
+actions are `restart`, `backup` (#111) or `update` — pull the image afresh and recreate a running server
+from it (#239). The scheduler polls once a minute. `404` if the deployment/schedule
 is unknown, `400` on a bad cron or action.
 
 | Method + path | Purpose |
@@ -272,17 +788,67 @@ Inviting an address that already has an account binds and activates it immediate
 invitation is stored **pending** and grants nothing until that person registers or signs in with
 that address, at which point it is claimed automatically (#176).
 
+### `POST /deployments/:id/transfer` (#230)
+
+Hand a server to another account. Body `{ email, retainRole? }`, where `retainRole` ∈
+`viewer | operator | admin` or `null`/omitted for "the previous owner keeps nothing". Returns
+`{ deploymentId, ownerId, retainedRole }`.
+
+Requires `server.transfer`, which only the owner (or a platform administrator) holds: a server admin
+who could transfer could hand the server to themselves, which is the one thing their role withholds.
+
+- The recipient **must already have an account** (`404` otherwise). A per-server invitation may wait
+  for someone to sign up because it grants nothing meanwhile; a server with a pending owner is the
+  orphan this route exists to prevent.
+- Transferring to the current owner is `400`; asking the previous owner to retain `owner` is `400`,
+  since ownership is never a grant.
+- A share the recipient already held is dropped — they own the server now, and a leftover share would
+  read as though revoking it could take their access away.
+- If the previous owner's account no longer exists, the transfer still works (that is the case worth
+  rescuing) but asking for a retained role is `409` rather than silently ignored.
+- Recorded on the deployment's audit trail as `ownership-transferred`.
+- Hosted edition: usage accrues to whoever owns the server, so future charges follow the new owner.
+
 ### `POST /deployments/:id/stop`
 
 Request a running deployment be stopped — emits `infra.server.stop`; the agent stops **and removes**
 the container (freeing its name and host ports). `202` while stopping, `404` if unknown, `409` if the
 deployment is not running.
 
+### `POST /deployments/:id/kill`
+
+Force-terminate a running deployment (#253) — emits `infra.server.kill`; the agent sends SIGKILL and
+removes the container. For a container that ignores a graceful stop; unsaved state is lost. Requires
+the same `control.stop` permission as a stop, but is audited separately as `kill-requested`. `202`
+while killing, `404` if unknown, `409` if the deployment is not running.
+
 ### `POST /deployments/:id/restart`
 
 Request a running deployment be restarted — emits `infra.server.restart` with the stored container id;
 the agent restarts the container and reports `server.started`. `202` while restarting, `404` if
 unknown, `409` if the deployment is not running.
+
+### `POST /deployments/bulk`
+
+Send one control command to several servers at once (#238). Body:
+`{ "action": "start" | "stop" | "restart" | "kill", "ids": ["<deploymentId>", …] }` — at most 100 ids,
+duplicates counted once. Each id is authorized **on its own**, with the same resolver the per-server
+guard uses, and runs the same code as the single-server route above; they are processed in order so
+placement sees each start land before the next.
+
+Always `200` once the request is well-formed, because the answer is per server:
+
+```json
+{ "action": "stop", "succeeded": 1, "failed": 2, "results": [
+  { "id": "d1", "name": "web", "ok": true,  "status": 202 },
+  { "id": "d2", "name": "db",  "ok": false, "status": 409, "error": "deployment is not running" },
+  { "id": "d3",                "ok": false, "status": 404, "error": "deployment not found" }
+] }
+```
+
+A server the caller cannot see answers exactly like one that does not exist (`404`, no `name`), so the
+endpoint cannot be used to probe ids. One the caller can see but not control answers `403`. `400` for
+an unknown action or a missing, empty or oversized `ids` list.
 
 ### `WS /deployments/:id/terminal`
 
@@ -298,6 +864,9 @@ token, unknown/not-running deployment, or when the shell exits.
 Permanently delete a deployment. If it is running, the container is stopped first (emits
 `infra.server.stop`); any managed database containers are deprovisioned (best-effort); then the
 deployment and all its child records (events, databases, backups, schedules, subusers) are removed.
+The owning node is asked to remove the server's containers and **data volumes** (#324) — best-effort,
+so an unreachable node does not strand the record. Each of its **backup archives** is removed from the
+node and the off-site store the same way (#390). An imported host directory (#268) is never removed.
 `204` on success, `404` if unknown.
 
 ### `GET /nodes`
@@ -349,11 +918,49 @@ owner-level permission on it and membership of the target team.
 The dashboard's Billing page (#149) talks only to the Orchestrator, which proxies to the Billing Bridge
 and **injects the caller's authenticated userId** from the JWT (the client never sends a user id):
 
-- `GET /billing/wallet` · `GET /billing/usage` · `GET /billing/ledger` · `GET /billing/plan`
-- `POST /billing/topup` — body `{ amount }`
+- `GET /billing/wallet` · `GET /billing/usage` · `GET /billing/standing` · `GET /billing/ledger` · `GET /billing/plan`
+- `POST /billing/topup` — body `{ amount }`. The Orchestrator adds the signed-in account's own email
+  address as the payer; an address in the body is ignored (#351). `409` if the account has none; `403`
+  while the address is unconfirmed, where the installation confirms addresses (#367).
+
+Without an authenticated user these routes answer `401`.
+
+**Plans (#369, hosted only)** — about the caller's own account:
+
+- `GET /billing/plans` → `{ currentPlanId, plans }`: the plans on offer, plus the caller's own if it
+  has been retired. Each carries `problem` — why the caller's servers do not fit it, or `null`.
+- `PUT /billing/plan` — body `{ planId }`. `409` with the reason when the account holds more than the
+  plan allows (servers, databases, memory); `404` for an unknown plan.
+
+**The provider's view (#369, hosted only)** — platform administrators; `403` for anyone else:
+
+- `GET /billing/admin/plans` — every plan, retired ones included.
+- `POST /billing/admin/plans` — body `{ name, pricePerHour, freeHoursPerMonth?, maxServers,
+  maxDatabases, maxRamMb?, maxBackupsPerServer? }`. The id is made from the name and never changes;
+  `409` if it is taken.
+- `PUT /billing/admin/plans/:id` — any of the same fields, plus `active`. `active: false` retires a
+  plan: accounts on it stay on it, nobody new may choose it. The default plan cannot be retired (`409`).
+- `GET /billing/admin/accounts` — every account in the panel with its plan, balance, what is left to
+  spend, this cycle's usage, and servers (total and running).
+- `PUT /billing/admin/accounts/:userId/plan` — body `{ planId }`.
+- `POST /billing/admin/accounts/:userId/credit` — body `{ amount, reason }`; a negative amount removes
+  credit. Written to the customer's payment history with the administrator's address and the reason.
 
 Each forwards to the matching Billing Bridge route below for the authenticated user. `502` if the
 Billing Bridge is unreachable. These are inert in the community edition (no Billing Bridge running).
+
+### `GET /me/entitlements` — hosted edition
+
+Your plan and how much of it you have spent (#297): `{ entitlements, usage }`, where `entitlements` is
+the Billing Bridge answer below and `usage` is `{ servers, databases, ramMb, uncappedServers }` measured
+by the Orchestrator (memory in MB on each server's own node). `404` where no plan applies — the
+community edition, or a Billing Bridge that cannot answer (in which case nothing is enforced either).
+
+Enforced against the **server owner's** plan: `POST /deployments` and a `PATCH /deployments/:id` that
+raises `resourceLimits` answer `409` with a sentence naming the numbers when the memory does not fit
+(`this server needs 3 GB of memory, and your plan has 2 GB of its 3 GB left`), or when a server has no
+memory limit under a memory ceiling. Backups are never refused for the plan: past `maxBackupsPerServer`,
+the oldest goes.
 
 ## Billing Bridge (`:9300`) — hosted edition only
 
@@ -367,44 +974,97 @@ The user's prepaid credit balance: `{ userId, balance, currency }` (a zero walle
 
 ### `GET /billing/:userId/usage`
 
-Accrued runtime and projected cost this cycle: `{ hours, cost, plan }`. The plan's monthly free-hour
-grant is spent across the user's runtime intervals; billable hours are charged at each server's
-resource factor (derived from its CPU/RAM limits).
+Runtime and cost for the calendar month in progress, up to now: `{ hours, cost, plan }` — computed
+with the function the cycle runner charges with (#366). The plan's monthly free-hour grant is spent
+across the user's runtime intervals; billable hours are charged at each server's resource factor
+(derived from its CPU/RAM limits).
+
+### `GET /billing/:userId/standing`
+
+What the account has left and whether it may run servers (#365): `{ balance, accrued, available,
+freeHoursLeft, canRun, currency, hoursLeft, runsLow }`. `accrued` is usage not yet charged to the balance; `available` is
+`balance - accrued`. The Orchestrator asks before creating or starting a server and answers `402` when
+`canRun` is false.
+
+`hoursLeft` is how long what is left lasts at the rate the running servers spend it, free hours first
+(#379) — `null` when nothing is running or nothing running costs anything. `runsLow` is whether that is
+under `LOW_CREDIT_HOURS`.
 
 ### `GET /billing/:userId/ledger`
 
-The append-only credit ledger (top-ups + charges), newest first.
+The append-only credit ledger (top-ups + charges), newest first. A top-up's `status` is `pending`,
+`confirmed`, `failed`, or `expired` — FinVault did not answer within `TOPUP_TIMEOUT_MS` (#298). `expired`
+is not final: a late `payment.confirmed` still credits it. A failed top-up carries `failureReason`,
+FinVault's own words for why (declined, an unsupported currency, …) (#351).
 
 ### `GET /billing/:userId/plan`
 
 The user's pricing/quota plan (rate, free hours, `maxServers`, `maxDatabases`).
+
+### `GET /billing/:userId/entitlements`
+
+What the user's plan allows and how it charges (#297): `{ planId, planName, maxServers, maxDatabases,
+maxRamMb, maxBackupsPerServer, charging }`. `null` means no ceiling. `charging` is `{ basis:
+"runtime-hours", pricePerHour, currency, freeHoursPerMonth, sizeFactor: { standardCpuPercent,
+standardRamPercent, minimum } }` — the same constants the charge is computed with. The Orchestrator
+measures usage against it; see [billing.md](billing.md).
 
 ### `GET /billing/:userId/quota?resource=servers|databases&current=N`
 
 Quota check used by the Orchestrator (#148): `{ allowed, limit }` — whether creating one more of
 `resource` stays within the plan given the user already has `current`. `400` on a bad resource/count.
 
+### Plans and accounts (#369)
+
+`GET /plans` · `POST /plans` · `PUT /plans/:id` · `GET /accounts` · `PUT /billing/:userId/plan` ·
+`POST /billing/:userId/adjust` — the bridge's side of the routes above. Who may call them is decided
+by the Orchestrator; the bridge only checks the internal token (#372).
+
 ### `POST /billing/:userId/topup`
 
-Start a credit top-up funded via FinVault — body `{ amount, currency? }`. Records a **pending** ledger
-entry and emits `payment.request` to FinVault; credit is added only on `payment.confirmed`. `202` with
-`{ status: "pending", reference, entry }`; `400` on a non-positive amount.
+Start a credit top-up funded via FinVault — body `{ amount, email, currency? }`. `email` is the
+FinVault account that is asked to pay (#351). Records a **pending** ledger entry and emits
+`payment.request` to FinVault; credit is added only on `payment.confirmed`. `202` with
+`{ status: "pending", reference, entry, payerEmail }`.
+
+- `400` on a non-positive amount or a missing email.
+- `409` when the account already has three top-ups waiting in FinVault.
+- `503` when the request could not be handed to the broker — the entry is marked failed at once, since
+  FinVault will never see it.
 
 ## API Gateway (`:9400`)
 
 The single external entry point (#20). It applies **CORS**, **per-client rate limiting** (token bucket,
-per authenticated user or IP), and **JWT validation** on protected routes, then reverse-proxies to the
+per authenticated user or IP), and **token validation** on protected routes, then reverse-proxies to the
 backend (the Orchestrator, which itself fronts Billing Bridge + Control Room). Public routes (`/auth/*`,
-`/config`) skip auth; everything else requires a valid `Authorization: Bearer <jwt>`. The gateway
-forwards the token and adds `x-user-id`/`x-forwarded-for` for the backend.
+`/config`) skip auth; everything else requires `Authorization: Bearer <token>`. The gateway forwards the
+token and adds `x-user-id`/`x-forwarded-for` for the backend; an `x-user-id` sent by the caller is
+dropped, never forwarded.
 
+- A **JWT** is verified here (signature and expiry) before anything is proxied.
+- An **API token** (`nxi_…`, #228) is passed through unverified: it is an opaque secret whose hash only
+  the Orchestrator holds, so the Orchestrator is the one that accepts or refuses it (and enforces its
+  scope). Such callers are rate-limited by address, since an unverified token names nobody.
 - `GET /health` — the gateway's own liveness (not proxied).
 - Any other path → matched by longest prefix and proxied: `401` (missing/invalid token on a protected
   route), `404` (no route), `429` (rate limit exceeded), `502` (backend unreachable), else the backend's
   response verbatim.
 
-The WebSocket proxy for the interactive terminal (#69/#71) is not built yet. The dashboard currently
-calls the Orchestrator directly; routing it through the gateway is a follow-up.
+**Responses stream.** Nothing is buffered, so live logs and stats (`/deployments/:id/logs`, `/stats` —
+server-sent events) arrive as they happen and backup downloads keep their `content-disposition` and
+`content-length`. When the client disconnects, the request to the backend is aborted with it. Backend
+redirects are relayed, not followed.
+
+**WebSocket upgrades** (#69) pass the same gate — route, rate limit, token — and are then proxied byte
+for byte to the backend, so the interactive terminal works through the gateway:
+`ws://<gateway>/deployments/:id/terminal?token=<jwt>&cols=&rows=`. Browsers cannot set headers on a
+handshake, so the token rides in `?token=`; an `Authorization` header works too. A refused handshake is
+answered with its status (`401`, `404`, `429`) before the backend is dialed; a backend that refuses —
+the Orchestrator hangs up on a caller without console access, or on an API token — surfaces as `502`.
+Closing either side closes the other.
+
+The dashboard's nginx still calls the Orchestrator directly; the gateway is the entry point for
+scripts, `nexusctl` and anything else that should sit behind its rate limit.
 
 ## Event contract (bus API)
 
@@ -416,9 +1076,11 @@ truth. Summary:
 | `heartbeat.service` / `heartbeat.node` | any → control-room | 1s pulse; node variant carries a resources block |
 | `server.start` / `server.stopped` / `server.started` / `server.crashed` | orchestrator ↔ node-agent | container lifecycle |
 | `deployment.created` / `deployment.failed` | orchestrator → bus | audit; `deployment.created` also carries `resourceLimits` for billing tracking |
-| `payment.request` | billing-bridge → FinVault | credit top-up charge; payload shape matches FinVault's `payment.request` exactly |
+| `deployment.updated` | orchestrator → billing-bridge | a server was resized; carries the new `resourceLimits`, which later runtime is charged at (#364) |
+| `payment.request` | billing-bridge → FinVault | credit top-up charge; FinVault's `payment.request` shape plus `customerEmail`, which names the payer (#351) |
 | `payment.confirmed` / `payment.failed` | FinVault → billing-bridge | consumed to add / mark-failed a top-up's credit |
 | `billing.server.suspend` | billing-bridge → orchestrator | stop a user's servers when credit is exhausted (hosted; NexusInfra-only key) |
+| `billing.credit.low` | billing-bridge → orchestrator | `{ userId, hoursLeft, available, currency }` — the account's credit lasts less than `LOW_CREDIT_HOURS`; sent once per dip (hosted; NexusInfra-only key, #379) |
 | `invoice.generate` | billing-bridge → FinVault | monthly invoice record for a closed cycle (hosted; NexusInfra-only key) |
 
 Envelopes and encryption: see [architecture.md](architecture.md#event-bus). Payload shapes for the

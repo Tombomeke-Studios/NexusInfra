@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { readPayload, type EventEnvelope } from 'shared';
 import { InMemoryRepository } from './repository.js';
 import { createApiRouter } from './api.js';
 import { createUserService } from './users.js';
+import { FALLBACK_VERSIONS, offeredVersions } from './minecraftVersions.js';
 
 // API tests use a real Express app with the in-memory repo and a captured
 // publisher, so no broker or database is needed. The key assertion is that
@@ -15,6 +16,9 @@ import { createUserService } from './users.js';
 // call to an unreachable bridge whenever NEXUS_EDITION=hosted, so the suite sat
 // waiting on DNS failures for a minute in the hosted CI leg (#173).
 const allowQuota: Parameters<typeof createApiRouter>[0]['checkQuota'] = async () => ({ allowed: true, limit: Infinity });
+// The same for plan entitlements (#297): no plan unless a suite brings one.
+const noPlan: Parameters<typeof createApiRouter>[0]['getEntitlements'] = async () => null;
+const noStanding: Parameters<typeof createApiRouter>[0]['getStanding'] = async () => null;
 
 // Every route is now behind authentication and per-server authorization (#175),
 // so these suites run as a real account. `asPrincipal` stands in for requireAuth,
@@ -47,15 +51,21 @@ function buildApp(
   app.use(
     createApiRouter({
       repo,
-      checkQuota: allowQuota,
+      checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
       publish: async (key, envelope) => {
         published.push({ key, envelope });
         return true;
+      },
+      purgeDeploymentData: async (agentUrl, deploymentId) => {
+        purged.push({ agentUrl, deploymentId });
       },
     })
   );
   return app;
 }
+
+/** What delete asked the agent to remove (#324); reset per test by whoever reads it. */
+const purged: Array<{ agentUrl: string; deploymentId: string }> = [];
 
 async function seedHealthyNode(repo: InMemoryRepository, id = 'node-local') {
   await repo.upsertNode({ id, name: id, lastHeartbeat: new Date().toISOString(), cpuPercent: 10, ramUsedMb: 1000, ramTotalMb: 8000 });
@@ -136,10 +146,555 @@ describe('deployment API', () => {
     await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
 
     const list = await request(app).get('/deployments');
-    expect(list.body).toHaveLength(1);
+    expect(list.body.items).toHaveLength(1);
 
     const nodes = await request(app).get('/nodes');
     expect(nodes.body[0].health).toBe('healthy');
+  });
+
+  // The panel's Placement control let you pin a server to a node, and the choice
+  // was never sent — the orchestrator always picked the least-loaded node (#254).
+  describe('placement', () => {
+    it('honours a pinned node instead of picking one', async () => {
+      await seedHealthyNode(repo, 'node-busy');
+      await seedHealthyNode(repo, 'node-idle');
+      // Make node-busy the loaded one, so least-loaded would never choose it.
+      await repo.upsertNode({ id: 'node-busy', lastHeartbeat: new Date().toISOString(), cpuPercent: 90, ramUsedMb: 7000, ramTotalMb: 8000 });
+
+      const res = await request(app).post('/deployments').send({ name: 'pinned', dockerImage: 'nginx', nodeId: 'node-busy' });
+      expect(res.status).toBe(201);
+      expect(res.body.nodeId).toBe('node-busy');
+
+      const start = published.find((p) => p.key === 'infra.server.start');
+      expect((readPayload(start!.envelope.event) as Record<string, unknown>).nodeId).toBe('node-busy');
+    });
+
+    it('still picks the least-loaded node when none is pinned', async () => {
+      await seedHealthyNode(repo, 'node-idle');
+      const res = await request(app).post('/deployments').send({ name: 'auto', dockerImage: 'nginx' });
+      expect(res.status).toBe(201);
+      expect(res.body.nodeId).toBe('node-idle');
+    });
+
+    it('refuses an unknown pinned node rather than silently placing it elsewhere', async () => {
+      await seedHealthyNode(repo, 'node-idle');
+      const res = await request(app).post('/deployments').send({ name: 'pinned', dockerImage: 'nginx', nodeId: 'node-ghost' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/node/i);
+      // Nothing was created or commanded.
+      expect(await repo.listDeployments()).toHaveLength(0);
+      expect(published.some((p) => p.key === 'infra.server.start')).toBe(false);
+    });
+
+    it('refuses a pinned node that is not healthy', async () => {
+      await seedHealthyNode(repo, 'node-idle');
+      // Registered but never seen — reads offline.
+      await repo.registerNode({ id: 'node-down' });
+
+      const res = await request(app).post('/deployments').send({ name: 'pinned', dockerImage: 'nginx', nodeId: 'node-down' });
+      expect(res.status).toBe(409);
+      expect(res.body.error).toMatch(/not healthy|offline/i);
+    });
+  });
+
+  // Maintenance used to live in a browser tab: the panel relabelled the node and
+  // the orchestrator kept scheduling onto it (#258).
+  describe('node maintenance', () => {
+    // Draining the fleet is an administrator's job, like registering a node.
+    let adminApp: express.Express;
+    beforeEach(() => {
+      adminApp = buildApp(repo, published, PLATFORM_ADMIN);
+    });
+
+    it('is refused to a caller who is not a platform administrator', async () => {
+      await seedHealthyNode(repo, 'node-drain');
+      expect((await request(app).patch('/nodes/node-drain/maintenance').send({ maintenance: true })).status).toBe(403);
+    });
+
+    it('drains a node so nothing new is placed on it', async () => {
+      await seedHealthyNode(repo, 'node-drain');
+
+      const patch = await request(adminApp).patch('/nodes/node-drain/maintenance').send({ maintenance: true });
+      expect(patch.status).toBe(200);
+      expect(patch.body.maintenance).toBe(true);
+
+      // It is the only node, and it is draining — nothing can be placed.
+      const res = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+      expect(res.status).toBe(503);
+    });
+
+    it('refuses to pin a server to a draining node', async () => {
+      await seedHealthyNode(repo, 'node-drain');
+      await seedHealthyNode(repo, 'node-free');
+      await request(adminApp).patch('/nodes/node-drain/maintenance').send({ maintenance: true });
+
+      const res = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx', nodeId: 'node-drain' });
+      expect(res.status).toBe(409);
+      expect(res.body.error).toMatch(/maintenance/i);
+    });
+
+    it('survives the heartbeats that keep arriving while the node drains', async () => {
+      await seedHealthyNode(repo, 'node-drain');
+      await request(adminApp).patch('/nodes/node-drain/maintenance').send({ maintenance: true });
+
+      // The agent keeps beating every second; none of that is an instruction to
+      // put the node back in the pool.
+      await repo.upsertNode({ id: 'node-drain', lastHeartbeat: new Date().toISOString(), cpuPercent: 5 });
+
+      const nodes = await request(app).get('/nodes');
+      expect(nodes.body.find((n: { id: string }) => n.id === 'node-drain').maintenance).toBe(true);
+      expect((await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' })).status).toBe(503);
+    });
+
+    it('puts the node back in the pool when maintenance is lifted', async () => {
+      await seedHealthyNode(repo, 'node-drain');
+      await request(adminApp).patch('/nodes/node-drain/maintenance').send({ maintenance: true });
+      await request(adminApp).patch('/nodes/node-drain/maintenance').send({ maintenance: false });
+
+      const res = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+      expect(res.status).toBe(201);
+      expect(res.body.nodeId).toBe('node-drain');
+    });
+
+    it('404s an unknown node', async () => {
+      expect((await request(adminApp).patch('/nodes/nope/maintenance').send({ maintenance: true })).status).toBe(404);
+    });
+  });
+
+  // Every lifecycle change writes a DeploymentEvent and nothing ever read them
+  // back — the trail was write-only, useless exactly when you need it (#223).
+  describe('audit trail', () => {
+    it('returns the trail newest first', async () => {
+      await seedHealthyNode(repo);
+      const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+      await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'abc' });
+      await request(app).post(`/deployments/${created.body.id}/stop`);
+
+      const res = await request(app).get(`/deployments/${created.body.id}/events`);
+      expect(res.status).toBe(200);
+      // 'created' happened first, so newest-first puts 'stop-requested' on top.
+      expect(res.body[0].event).toBe('stop-requested');
+      expect(res.body.map((e: { event: string }) => e.event)).toContain('created');
+      expect(res.body[0]).toHaveProperty('timestamp');
+      expect(res.body[0]).toHaveProperty('message');
+    });
+
+    it('paginates so a long-lived server does not return everything', async () => {
+      await seedHealthyNode(repo);
+      const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+      for (let i = 0; i < 10; i++) await repo.appendDeploymentEvent(created.body.id, `e${i}`, `event ${i}`);
+
+      const res = await request(app).get(`/deployments/${created.body.id}/events`).query({ limit: 4 });
+      expect(res.body).toHaveLength(4);
+      expect(res.body[0].event).toBe('e9');
+
+      const next = await request(app).get(`/deployments/${created.body.id}/events`).query({ limit: 4, offset: 4 });
+      expect(next.body[0].event).toBe('e5');
+    });
+
+    it('is refused to someone with no access, as a 404', async () => {
+      await seedHealthyNode(repo);
+      const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+
+      const stranger = buildApp(repo, published, { id: 'user-nobody', platformRole: 'user' });
+      await repo.createUser({ id: 'user-nobody', email: 'nobody@example.com', displayName: 'n', passwordHash: '!', platformRole: 'user' });
+      expect((await request(stranger).get(`/deployments/${created.body.id}/events`)).status).toBe(404);
+    });
+  });
+
+  // A server's configuration was frozen at creation: fixing a typo in a name, or
+  // adding an environment variable, meant deleting the server and losing its
+  // databases, backups, schedules and subusers with it (#220).
+  describe('editing a server', () => {
+    async function makeServer() {
+      await seedHealthyNode(repo);
+      const created = await request(app)
+        .post('/deployments')
+        .send({ name: 'svc', dockerImage: 'nginx', ports: { '8080': '80' }, env: { A: '1' } });
+      return created.body.id as string;
+    }
+
+    it('updates the stored configuration', async () => {
+      const id = await makeServer();
+      const res = await request(app).patch(`/deployments/${id}`).send({
+        name: 'renamed',
+        dockerImage: 'nginx:alpine',
+        ports: { '9090': '80' },
+        env: { A: '2', B: 'new' },
+        autoRestart: true,
+        resourceLimits: { cpuPercent: 25 },
+      });
+
+      expect(res.status).toBe(200);
+      const config = await repo.getDeploymentConfig(id);
+      expect(config?.name).toBe('renamed');
+      expect(config?.dockerImage).toBe('nginx:alpine');
+      expect(config?.ports).toEqual({ '9090': '80' });
+      expect(config?.env).toEqual({ A: '2', B: 'new' });
+      expect(config?.autoRestart).toBe(true);
+      expect(config?.resourceLimits).toEqual({ cpuPercent: 25 });
+    });
+
+    // Billing charges by size (#364): a resize it never hears about is charged at the old one.
+    it('tells billing when a server is resized, and only then', async () => {
+      const id = await makeServer();
+      published.length = 0;
+      await request(app).patch(`/deployments/${id}`).send({ name: 'renamed' });
+      expect(published.filter((p) => p.key === 'infra.deployment.updated')).toEqual([]);
+
+      await request(app).patch(`/deployments/${id}`).send({ resourceLimits: { cpuPercent: 25 } });
+      const [event] = published.filter((p) => p.key === 'infra.deployment.updated');
+      expect(readPayload(event.envelope.event)).toMatchObject({ deploymentId: id, resourceLimits: { cpuPercent: 25 } });
+    });
+
+    it('leaves omitted fields alone', async () => {
+      const id = await makeServer();
+      await request(app).patch(`/deployments/${id}`).send({ name: 'renamed' });
+
+      const config = await repo.getDeploymentConfig(id);
+      expect(config?.name).toBe('renamed');
+      expect(config?.dockerImage).toBe('nginx'); // untouched
+      expect(config?.ports).toEqual({ '8080': '80' });
+    });
+
+    it('records the change in the audit trail', async () => {
+      const id = await makeServer();
+      await request(app).patch(`/deployments/${id}`).send({ name: 'renamed' });
+
+      const detail = await repo.getDeployment(id);
+      expect(detail?.events.map((e) => e.event)).toContain('config-updated');
+    });
+
+    // Changing config does not touch the running container: the panel says the
+    // change lands on the next start, and the API must not quietly restart it.
+    it('does not restart the server', async () => {
+      const id = await makeServer();
+      await repo.updateDeploymentStatus(id, { status: 'running', containerId: 'abc' });
+      published.length = 0;
+
+      await request(app).patch(`/deployments/${id}`).send({ dockerImage: 'nginx:alpine' });
+      expect(published.some((p) => p.key.startsWith('infra.server.'))).toBe(false);
+    });
+
+    it('rejects an empty name or image', async () => {
+      const id = await makeServer();
+      expect((await request(app).patch(`/deployments/${id}`).send({ name: '   ' })).status).toBe(400);
+      expect((await request(app).patch(`/deployments/${id}`).send({ dockerImage: '' })).status).toBe(400);
+    });
+
+    // A server created from an egg was edited as raw JSON: no labels, no
+    // validation, and nothing stopping you deleting EULA (#272).
+    describe('an egg server', () => {
+      async function makeMinecraft() {
+        await repo.upsertNode({ id: 'node-big', name: 'node-big', lastHeartbeat: new Date().toISOString(), cpuPercent: 5, ramUsedMb: 1000, ramTotalMb: 32768 });
+        const created = await request(app)
+          .post('/deployments')
+          .send({ name: 'mc', eggId: 'minecraft-java', eggValues: { MAX_PLAYERS: '20' } });
+        return created.body.id as string;
+      }
+
+      it('is edited through the egg, with the egg applying its rules', async () => {
+        const id = await makeMinecraft();
+        const res = await request(app).patch(`/deployments/${id}`).send({ eggValues: { MAX_PLAYERS: '40', TYPE: 'PAPER' } });
+
+        expect(res.status).toBe(200);
+        const config = await repo.getDeploymentConfig(id);
+        expect(config?.env.MAX_PLAYERS).toBe('40');
+        expect(config?.env.TYPE).toBe('PAPER');
+        // Untouched variables keep their value rather than reverting to default.
+        expect(config?.env.MOTD).toBe('A NexusInfra server');
+      });
+
+      it('refuses an invalid answer by the name the person saw', async () => {
+        const id = await makeMinecraft();
+        const res = await request(app).patch(`/deployments/${id}`).send({ eggValues: { MAX_PLAYERS: 'lots' } });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/Player slots/);
+      });
+
+      it('keeps the fixed environment no matter what is sent', async () => {
+        const id = await makeMinecraft();
+        await request(app).patch(`/deployments/${id}`).send({ eggValues: { EULA: 'FALSE' } });
+        expect((await repo.getDeploymentConfig(id))?.env.EULA).toBe('TRUE');
+      });
+
+      it('drops keys the egg does not define', async () => {
+        const id = await makeMinecraft();
+        await request(app).patch(`/deployments/${id}`).send({ eggValues: { LD_PRELOAD: '/tmp/x.so' } });
+        expect((await repo.getDeploymentConfig(id))?.env).not.toHaveProperty('LD_PRELOAD');
+      });
+
+      it('checks the heap against the cap on edit too', async () => {
+        // 4 GB node, 50% cap, and an edit that raises the heap past it (#271).
+        await repo.upsertNode({ id: 'node-small', name: 'node-small', lastHeartbeat: new Date().toISOString(), cpuPercent: 5, ramUsedMb: 500, ramTotalMb: 4096 });
+        const created = await request(app)
+          .post('/deployments')
+          .send({ name: 'mc', eggId: 'minecraft-java', eggValues: { MEMORY: '1G' }, resourceLimits: { ramPercent: 50 }, nodeId: 'node-small' });
+
+        const res = await request(app).patch(`/deployments/${created.body.id}`).send({ eggValues: { MEMORY: '4G' } });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/MB/);
+      });
+    });
+
+    it('is refused to an operator, who may run the server but not redefine it', async () => {
+      const id = await makeServer();
+      await repo.createUser({ id: 'user-op', email: 'op@example.com', displayName: 'op', passwordHash: '!', platformRole: 'user' });
+      await repo.createSubuser({ deploymentId: id, email: 'op@example.com', role: 'operator', userId: 'user-op', status: 'active' });
+
+      const opApp = buildApp(repo, published, { id: 'user-op', platformRole: 'user' });
+      expect((await request(opApp).patch(`/deployments/${id}`).send({ name: 'theirs' })).status).toBe(403);
+    });
+  });
+
+  // Deploying from an egg (#231): the recipe lives on the server, so its rules
+  // apply to every caller rather than only the one who used the form.
+  describe('eggs', () => {
+    it('serves the catalogue', async () => {
+      const res = await request(app).get('/eggs');
+      expect(res.status).toBe(200);
+      const minecraft = res.body.find((e: { id: string }) => e.id === 'minecraft-java');
+      expect(minecraft).toBeDefined();
+      expect(minecraft.variables.length).toBeGreaterThan(0);
+    });
+
+    it('creates a server from an egg, deriving image, ports and environment', async () => {
+      await seedHealthyNode(repo);
+      const res = await request(app)
+        .post('/deployments')
+        .send({ name: 'mc', eggId: 'minecraft-java', eggValues: { TYPE: 'PAPER', MAX_PLAYERS: '40' } });
+
+      expect(res.status).toBe(201);
+      const config = await repo.getDeploymentConfig(res.body.id);
+      expect(config?.dockerImage).toBe('itzg/minecraft-server');
+      expect(config?.ports).toEqual({ '25565': '25565' });
+      expect(config?.env).toMatchObject({ TYPE: 'PAPER', MAX_PLAYERS: '40', EULA: 'TRUE' });
+      expect(config?.type).toBe('minecraft-java');
+    });
+
+    it('ignores an image and environment sent alongside an egg', async () => {
+      await seedHealthyNode(repo);
+      // Otherwise the egg is advisory and a caller can run anything it likes
+      // while still being labelled a Minecraft server.
+      const res = await request(app)
+        .post('/deployments')
+        .send({ name: 'mc', eggId: 'minecraft-java', dockerImage: 'evil/image', env: { LD_PRELOAD: '/tmp/x.so' } });
+
+      const config = await repo.getDeploymentConfig(res.body.id);
+      expect(config?.dockerImage).toBe('itzg/minecraft-server');
+      expect(config?.env).not.toHaveProperty('LD_PRELOAD');
+    });
+
+    it('rejects an unknown egg', async () => {
+      await seedHealthyNode(repo);
+      const res = await request(app).post('/deployments').send({ name: 'x', eggId: 'not-an-egg' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/egg/i);
+    });
+
+    it('reports an invalid answer against the field a person saw', async () => {
+      await seedHealthyNode(repo);
+      const res = await request(app)
+        .post('/deployments')
+        .send({ name: 'mc', eggId: 'minecraft-java', eggValues: { MAX_PLAYERS: 'lots' } });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/Player slots/);
+      expect(await repo.listDeployments()).toHaveLength(0);
+    });
+
+    it('still accepts a plain image deployment with no egg', async () => {
+      await seedHealthyNode(repo);
+      const res = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+      expect(res.status).toBe(201);
+      expect((await repo.getDeploymentConfig(res.body.id))?.dockerImage).toBe('nginx');
+    });
+  });
+
+  // Importing an existing server directory (#268). The node decides whether a path
+  // is allowed; the orchestrator only asks, because it cannot see that filesystem.
+  describe('importing a directory', () => {
+    const okAgent = () =>
+      vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ path: '/mnt/data/import/mc' }) } as Response);
+
+    it('is refused to a caller who is not a platform administrator', async () => {
+      await seedHealthyNode(repo);
+      vi.stubGlobal('fetch', okAgent());
+      const res = await request(app)
+        .post('/deployments')
+        .send({ name: 'mc', eggId: 'minecraft-java', dataPath: '/srv/import/mc' });
+
+      // A bind mount is a host-escape primitive; it never follows a server role.
+      expect(res.status).toBe(403);
+      expect(await repo.listDeployments()).toHaveLength(0);
+      vi.unstubAllGlobals();
+    });
+
+    it('stores the path the node resolved, not the one that was asked for', async () => {
+      await seedHealthyNode(repo);
+      vi.stubGlobal('fetch', okAgent());
+      const adminApp = buildApp(repo, published, PLATFORM_ADMIN);
+
+      const res = await request(adminApp)
+        .post('/deployments')
+        .send({ name: 'mc', eggId: 'minecraft-java', dataPath: '/srv/import/mc' });
+
+      expect(res.status).toBe(201);
+      expect((await repo.getDeploymentConfig(res.body.id))?.dataPath).toBe('/mnt/data/import/mc');
+      vi.unstubAllGlobals();
+    });
+
+    it("sends the mount on server.start, at the egg's data path", async () => {
+      await seedHealthyNode(repo);
+      vi.stubGlobal('fetch', okAgent());
+      const adminApp = buildApp(repo, published, PLATFORM_ADMIN);
+
+      await request(adminApp).post('/deployments').send({ name: 'mc', eggId: 'minecraft-java', dataPath: '/srv/import/mc' });
+
+      const start = published.find((p) => p.key === 'infra.server.start');
+      const payload = readPayload(start!.envelope.event) as Record<string, unknown>;
+      expect(payload.dataMount).toEqual({ hostPath: '/mnt/data/import/mc', containerPath: '/data' });
+      vi.unstubAllGlobals();
+    });
+
+    it("passes the node's refusal through instead of creating the server", async () => {
+      await seedHealthyNode(repo);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: false, status: 400, json: async () => ({ error: '/etc is outside the import root /srv/import' }) } as Response)
+      );
+      const adminApp = buildApp(repo, published, PLATFORM_ADMIN);
+
+      const res = await request(adminApp).post('/deployments').send({ name: 'mc', eggId: 'minecraft-java', dataPath: '/etc' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/outside the import root/);
+      expect(await repo.listDeployments()).toHaveLength(0);
+      vi.unstubAllGlobals();
+    });
+
+    it('refuses an import without an egg, since nothing says where to mount it', async () => {
+      await seedHealthyNode(repo);
+      const adminApp = buildApp(repo, published, PLATFORM_ADMIN);
+      const res = await request(adminApp).post('/deployments').send({ name: 'x', dockerImage: 'nginx', dataPath: '/srv/import/mc' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/egg/i);
+    });
+  });
+
+  // The container cap and the JVM heap control the same physical RAM, and nothing
+  // used to relate them — so the defaults produced a 2G heap inside a 2048 MB cap
+  // and the kernel killed it mid-save (#271).
+  describe('memory budgeting', () => {
+    // 4 GB node: ramPercent 50 = a 2048 MB cap.
+    async function seed4gbNode() {
+      await repo.upsertNode({ id: 'node-small', name: 'node-small', lastHeartbeat: new Date().toISOString(), cpuPercent: 5, ramUsedMb: 1000, ramTotalMb: 4096 });
+    }
+
+    it('refuses a heap that cannot fit the cap, in MB', async () => {
+      await seed4gbNode();
+      const res = await request(app)
+        .post('/deployments')
+        .send({ name: 'mc', eggId: 'minecraft-java', eggValues: { MEMORY: '2G' }, resourceLimits: { ramPercent: 50 } });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/2048 MB/);
+      // Telling someone "50% is not enough" leaves them to work out 50% of what.
+      expect(res.body.error).not.toMatch(/%/);
+      expect(await repo.listDeployments()).toHaveLength(0);
+    });
+
+    it('accepts a heap with room for the JVM on top', async () => {
+      await seed4gbNode();
+      const res = await request(app)
+        .post('/deployments')
+        .send({ name: 'mc', eggId: 'minecraft-java', eggValues: { MEMORY: '1G' }, resourceLimits: { ramPercent: 50 } });
+
+      expect(res.status).toBe(201);
+      expect((await repo.getDeploymentConfig(res.body.id))?.env.MEMORY).toBe('1G');
+    });
+
+    it('lets the same heap through on a node with the RAM for it', async () => {
+      // The identical 2G heap and 50% limit are fine on a 32 GB machine — which is
+      // exactly why the check needs the node and not just the percentage.
+      await repo.upsertNode({ id: 'node-big', name: 'node-big', lastHeartbeat: new Date().toISOString(), cpuPercent: 5, ramUsedMb: 1000, ramTotalMb: 32768 });
+      const res = await request(app)
+        .post('/deployments')
+        .send({ name: 'mc', eggId: 'minecraft-java', eggValues: { MEMORY: '2G' }, resourceLimits: { ramPercent: 50 } });
+
+      expect(res.status).toBe(201);
+    });
+
+    it('does not object when there is no memory cap at all', async () => {
+      await seed4gbNode();
+      const res = await request(app).post('/deployments').send({ name: 'mc', eggId: 'minecraft-java', eggValues: { MEMORY: '2G' } });
+      expect(res.status).toBe(201);
+    });
+
+    it('ignores an egg with no heap variable', async () => {
+      await seed4gbNode();
+      const res = await request(app).post('/deployments').send({ name: 'v', eggId: 'valheim', resourceLimits: { ramPercent: 50 } });
+      expect(res.status).toBe(201);
+    });
+  });
+
+  // Total, committed and used are three different numbers (#275).
+  describe('node capacity', () => {
+    async function seedNode() {
+      await repo.upsertNode({
+        id: 'node-1',
+        name: 'node-1',
+        lastHeartbeat: new Date().toISOString(),
+        // Running nothing, yet most of the RAM reads "used" — Linux spends spare
+        // memory on page cache. All of it is still available to give away.
+        cpuPercent: 3,
+        cpuCores: 8,
+        ramUsedMb: 7000,
+        ramTotalMb: 8192,
+      });
+    }
+
+    it('reports total, committed and used separately', async () => {
+      await seedNode();
+      await request(app).post('/deployments').send({ name: 'a', dockerImage: 'nginx', resourceLimits: { ramMb: 2048, cpuCores: 2 } });
+
+      const node = (await request(app).get('/nodes')).body[0];
+      expect(node.capacity.ramTotalMb).toBe(8192);
+      expect(node.capacity.ramCommittedMb).toBe(2048);
+      expect(node.capacity.ramUsedMb).toBe(7000);
+      expect(node.capacity.cpuCoresTotal).toBe(8);
+      expect(node.capacity.cpuCoresCommitted).toBe(2);
+    });
+
+    it('reports what is available from committed, not from live usage', async () => {
+      await seedNode();
+      // 7000 MB of 8192 reads as used, and none of it is committed.
+      const node = (await request(app).get('/nodes')).body[0];
+      expect(node.capacity.ramAvailableMb).toBe(8192);
+      expect(node.capacity.cpuCoresAvailable).toBe(8);
+    });
+
+    it('counts idle servers against what is left', async () => {
+      await seedNode();
+      for (const n of ['a', 'b', 'c', 'd']) {
+        await request(app).post('/deployments').send({ name: n, dockerImage: 'nginx', resourceLimits: { ramMb: 2048 } });
+      }
+      const node = (await request(app).get('/nodes')).body[0];
+      expect(node.capacity.ramAvailableMb).toBe(0);
+    });
+
+    it('resolves a percentage limit into the same committed figure', async () => {
+      await seedNode();
+      await request(app).post('/deployments').send({ name: 'a', dockerImage: 'nginx', resourceLimits: { ramPercent: 25 } });
+      expect((await request(app).get('/nodes')).body[0].capacity.ramCommittedMb).toBe(2048);
+    });
+
+    it('says when a node has been promised more than it has', async () => {
+      await seedNode();
+      await request(app).post('/deployments').send({ name: 'a', dockerImage: 'nginx', resourceLimits: { ramMb: 16384 } });
+      const node = (await request(app).get('/nodes')).body[0];
+      expect(node.capacity.overCommitted).toBe(true);
+      expect(node.capacity.ramAvailableMb).toBe(0);
+    });
   });
 
   it('stops a running deployment by emitting server.stop', async () => {
@@ -161,6 +716,34 @@ describe('deployment API', () => {
     await seedHealthyNode(repo);
     const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
     const res = await request(app).post(`/deployments/${created.body.id}/stop`);
+    expect(res.status).toBe(409);
+  });
+
+  // Kill exists for the container that ignores a graceful stop (#253). It is a
+  // distinct command and a distinct audit entry, not a louder stop.
+  it('kills a running deployment by emitting server.kill', async () => {
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'abc123' });
+
+    const res = await request(app).post(`/deployments/${created.body.id}/kill`);
+    expect(res.status).toBe(202);
+
+    const kill = published.find((p) => p.key === 'infra.server.kill');
+    expect(kill).toBeDefined();
+    const payload = readPayload(kill!.envelope.event) as Record<string, unknown>;
+    expect(payload.containerId).toBe('abc123');
+
+    // The trail must distinguish a kill from a stop, or "who killed it" is unanswerable.
+    const detail = await repo.getDeployment(created.body.id);
+    expect(detail?.events.map((e) => e.event)).toContain('kill-requested');
+    expect(detail?.events.map((e) => e.event)).not.toContain('stop-requested');
+  });
+
+  it('refuses to kill a deployment that is not running', async () => {
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    const res = await request(app).post(`/deployments/${created.body.id}/kill`);
     expect(res.status).toBe(409);
   });
 
@@ -191,7 +774,30 @@ describe('deployment API', () => {
     expect(stop).toBeDefined();
     // …and the deployment is gone.
     expect(await repo.getDeployment(created.body.id)).toBeNull();
-    expect((await request(app).get('/deployments')).body).toHaveLength(0);
+    expect((await request(app).get('/deployments')).body.items).toHaveLength(0);
+  });
+
+  // #293: deleting a running server emits server.stop, and the agent's
+  // server.stopped comes back while the delete is still running. The lifecycle
+  // consumer then appends an event for the deployment being deleted. Against
+  // SQLite that reopened a foreign key the delete had just closed and took the
+  // process with it, so the delete must survive an event landing mid-flight.
+  it('survives a lifecycle event arriving while the delete is in progress', async () => {
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    const id = created.body.id as string;
+    await repo.updateDeploymentStatus(id, { status: 'running', containerId: 'abc123' });
+
+    const original = repo.deleteDeployment.bind(repo);
+    repo.deleteDeployment = async (target: string) => {
+      // The stopped report, racing the delete it caused.
+      await repo.appendDeploymentEvent(target, 'stopped', 'container stopped');
+      await original(target);
+    };
+
+    const res = await request(app).delete(`/deployments/${id}`);
+    expect(res.status).toBe(204);
+    expect(await repo.getDeployment(id)).toBeNull();
   });
 
   it('deletes a not-running deployment without a stop command', async () => {
@@ -292,7 +898,7 @@ describe('deployment API', () => {
     dbApp.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
         publish: async (key, envelope) => (published.push({ key, envelope }), true),
         provisionDatabase: async (req) => {
           provisioned.push({ engine: req.engine, name: req.name });
@@ -345,7 +951,7 @@ describe('deployment API', () => {
     bkApp.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
         publish: async (key, envelope) => (published.push({ key, envelope }), true),
         snapshotBackup: async (req) => (snapshots.push(req.containerId), { ref: 'bk_x', sizeBytes: 4096, path: '/data' }),
         restoreBackup: async (req) => void restores.push(req.ref),
@@ -372,6 +978,32 @@ describe('deployment API', () => {
     expect(del.status).toBe(204);
     expect(removes).toEqual(['bk_x']);
     expect((await request(bkApp).get(`/deployments/${created.body.id}/backups`)).body).toEqual([]);
+  });
+
+  it("answers 404, not 502, when the node no longer has a backup's archive (#339)", async () => {
+    const { BackupGoneError } = await import('./api.js');
+    const bkApp = express();
+    bkApp.use(express.json());
+    bkApp.use(asPrincipal());
+    bkApp.use(
+      createApiRouter({
+        repo,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
+        publish: async () => true,
+        snapshotBackup: async () => ({ ref: 'bk_x', sizeBytes: 1, path: '/data' }),
+        restoreBackup: async () => {
+          throw new BackupGoneError("this node no longer has the backup's archive");
+        },
+      })
+    );
+    await seedHealthyNode(repo);
+    const created = await request(bkApp).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'abc', nodeId: 'node-local' });
+    const make = await request(bkApp).post(`/deployments/${created.body.id}/backups`).send({});
+
+    const rest = await request(bkApp).post(`/deployments/${created.body.id}/backups/${make.body.id}/restore`);
+    expect(rest.status).toBe(404);
+    expect(rest.body.error).toMatch(/no longer has/);
   });
 
   it('gates creating a backup on the deployment being running', async () => {
@@ -440,7 +1072,7 @@ describe('deployment API', () => {
     schedApp.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
         publish: async (key, envelope) => (published.push({ key, envelope }), true),
         scheduleActions: { restart: async (id) => void ran.push(`restart:${id}`), backup: async (id) => void ran.push(`backup:${id}`) },
       })
@@ -472,6 +1104,388 @@ describe('deployment API', () => {
   });
 });
 
+describe('disk usage (#347)', () => {
+  function diskApp(repo: InMemoryRepository, principal = OWNER, asked: Array<string | undefined> = []) {
+    const app = express();
+    app.use(express.json());
+    app.use(asPrincipal(principal));
+    app.use(
+      createApiRouter({
+        repo,
+        publish: async () => true,
+        checkQuota: allowQuota,
+        getEntitlements: noPlan, getStanding: noStanding,
+        diskUsage: async (_agentUrl, deploymentId) => {
+          asked.push(deploymentId);
+          if (deploymentId) return { measuredAt: 't', deploymentId, volumesBytes: 2048, writableBytes: 10, volumes: [] };
+          return {
+            measuredAt: 't',
+            deployments: [
+              { deploymentId: 'gone-server', volumesBytes: 9000, writableBytes: null, volumes: [] },
+              { deploymentId: repo.lastCreatedId, volumesBytes: 2048, writableBytes: 10, volumes: [] },
+            ],
+          };
+        },
+      })
+    );
+    return app;
+  }
+
+  async function seed(repo: InMemoryRepository) {
+    await repo.upsertNode({ id: 'node-local', name: 'node-local', lastHeartbeat: new Date().toISOString(), cpuPercent: 5, ramUsedMb: 500, ramTotalMb: 8000 });
+    const created = await request(diskApp(repo)).post('/deployments').send({ name: 'world', dockerImage: 'nginx' });
+    (repo as InMemoryRepository & { lastCreatedId?: string }).lastCreatedId = created.body.id;
+    return created.body.id as string;
+  }
+
+  it("answers for one server from the node that holds it", async () => {
+    const repo = new InMemoryRepository() as InMemoryRepository & { lastCreatedId?: string };
+    const id = await seed(repo);
+    const asked: Array<string | undefined> = [];
+    const res = await request(diskApp(repo, OWNER, asked)).get(`/deployments/${id}/disk`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ volumesBytes: 2048, writableBytes: 10 });
+    expect(asked).toEqual([id]);
+  });
+
+  it('is not visible to somebody without access to the server', async () => {
+    const repo = new InMemoryRepository() as InMemoryRepository & { lastCreatedId?: string };
+    const id = await seed(repo);
+    const stranger = { id: 'user-stranger', email: 's@example.com', platformRole: 'user' as const };
+    expect((await request(diskApp(repo, stranger)).get(`/deployments/${id}/disk`)).status).toBe(404);
+  });
+
+  it('lists a node by server for administrators, naming data no server owns', async () => {
+    const repo = new InMemoryRepository() as InMemoryRepository & { lastCreatedId?: string };
+    await seed(repo);
+    const res = await request(diskApp(repo, PLATFORM_ADMIN)).get('/nodes/node-local/disk');
+    expect(res.status).toBe(200);
+    expect(res.body.deployments).toEqual([
+      expect.objectContaining({ deploymentId: 'gone-server', name: null, known: false }),
+      expect.objectContaining({ name: 'world', known: true }),
+    ]);
+    expect((await request(diskApp(repo)).get('/nodes/node-local/disk')).status).toBe(403);
+    expect((await request(diskApp(repo, PLATFORM_ADMIN)).get('/nodes/nope/disk')).status).toBe(404);
+  });
+
+  it('says so when the node cannot measure', async () => {
+    const repo = new InMemoryRepository() as InMemoryRepository & { lastCreatedId?: string };
+    const id = await seed(repo);
+    const app = express().use(express.json()).use(asPrincipal()).use(
+      createApiRouter({ repo, publish: async () => true, checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding, diskUsage: async () => { throw new Error('Docker could not measure disk use: timeout'); } })
+    );
+    const res = await request(app).get(`/deployments/${id}/disk`);
+    expect(res.status).toBe(502);
+    expect(res.body.error).toMatch(/could not measure/);
+  });
+});
+
+describe('game status queries (#382)', () => {
+  type Asked = Array<{ agentUrl: string; protocol: string; hostPort: number }>;
+
+  function queryApp(repo: InMemoryRepository, opts: { principal?: typeof OWNER; asked?: Asked; answer?: () => Promise<unknown> } = {}) {
+    const asked = opts.asked ?? [];
+    const app = express();
+    app.use(express.json());
+    app.use(asPrincipal(opts.principal ?? OWNER));
+    app.use(
+      createApiRouter({
+        repo,
+        publish: async () => true,
+        checkQuota: allowQuota,
+        getEntitlements: noPlan,
+        getStanding: noStanding,
+        gameQuery: async (agentUrl, protocol, hostPort) => {
+          asked.push({ agentUrl, protocol, hostPort });
+          return opts.answer ? opts.answer() : { status: 'online', protocol, players: { online: 3, max: 10 }, version: '0.219', name: 'Viking box', motd: null, map: null, latencyMs: 7 };
+        },
+      })
+    );
+    return app;
+  }
+
+  async function seed(repo: InMemoryRepository, body: Record<string, unknown>, running = true) {
+    await repo.upsertNode({ id: 'node-local', name: 'node-local', lastHeartbeat: new Date().toISOString(), cpuPercent: 5, ramUsedMb: 500, ramTotalMb: 8000 });
+    const created = await request(queryApp(repo)).post('/deployments').send(body);
+    expect(created.status).toBe(201);
+    if (running) await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'abc' });
+    return created.body.id as string;
+  }
+
+  it('asks the owning node on the host port the egg’s query port is published on', async () => {
+    const repo = new InMemoryRepository();
+    const id = await seed(repo, { name: 'vikings', eggId: 'valheim', ports: { '24560': '2456/udp', '24570': '2457/udp' } });
+    const asked: Asked = [];
+    const res = await request(queryApp(repo, { asked })).get(`/deployments/${id}/query`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ status: 'online', protocol: 'a2s', players: { online: 3, max: 10 }, name: 'Viking box', latencyMs: 7 });
+    expect(asked).toEqual([{ agentUrl: expect.any(String), protocol: 'a2s', hostPort: 24570 }]);
+  });
+
+  it('asks the game at most once per interval, however often the panel polls', async () => {
+    const repo = new InMemoryRepository();
+    const id = await seed(repo, { name: 'vikings', eggId: 'valheim' });
+    const asked: Asked = [];
+    const app = queryApp(repo, { asked });
+    for (let i = 0; i < 5; i++) expect((await request(app).get(`/deployments/${id}/query`)).status).toBe(200);
+    expect(asked).toHaveLength(1);
+  });
+
+  it('does not ask a stopped server, and says it is stopped rather than empty', async () => {
+    const repo = new InMemoryRepository();
+    const id = await seed(repo, { name: 'vikings', eggId: 'valheim' }, false);
+    await repo.updateDeploymentStatus(id, { status: 'stopped', containerId: null });
+    const asked: Asked = [];
+    const res = await request(queryApp(repo, { asked })).get(`/deployments/${id}/query`);
+    expect(res.body).toMatchObject({ status: 'stopped', players: null });
+    expect(asked).toHaveLength(0);
+  });
+
+  it('says a server with no status protocol is unsupported', async () => {
+    const repo = new InMemoryRepository();
+    const id = await seed(repo, { name: 'web', dockerImage: 'nginx' });
+    const asked: Asked = [];
+    const res = await request(queryApp(repo, { asked })).get(`/deployments/${id}/query`);
+    expect(res.body).toMatchObject({ status: 'unsupported', players: null });
+    expect(asked).toHaveLength(0);
+  });
+
+  it('passes on a game that does not answer as offline, with no player count', async () => {
+    const repo = new InMemoryRepository();
+    const id = await seed(repo, { name: 'vikings', eggId: 'valheim' });
+    const res = await request(queryApp(repo, { answer: async () => ({ status: 'offline', protocol: 'a2s', error: 'no answer within 2500 ms' }) })).get(
+      `/deployments/${id}/query`
+    );
+    expect(res.body).toMatchObject({ status: 'offline', players: null, error: 'no answer within 2500 ms' });
+  });
+
+  it('is unknown, not offline, when the node cannot be asked', async () => {
+    const repo = new InMemoryRepository();
+    const id = await seed(repo, { name: 'vikings', eggId: 'valheim' });
+    const res = await request(queryApp(repo, { answer: async () => Promise.reject(new Error('fetch failed')) })).get(`/deployments/${id}/query`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ status: 'unknown', players: null, error: 'fetch failed' });
+  });
+
+  it('is not visible to somebody without access to the server', async () => {
+    const repo = new InMemoryRepository();
+    const id = await seed(repo, { name: 'vikings', eggId: 'valheim' });
+    const stranger = { id: 'user-stranger', email: 's@example.com', platformRole: 'user' as const };
+    expect((await request(queryApp(repo, { principal: stranger })).get(`/deployments/${id}/query`)).status).toBe(404);
+  });
+});
+
+describe('plan entitlements (#297)', () => {
+  const plan = (maxRamMb: number | null, maxBackupsPerServer: number | null = null) => ({
+    planId: 'standard',
+    planName: 'Standard',
+    maxServers: 5,
+    maxDatabases: 5,
+    maxRamMb,
+    maxBackupsPerServer,
+    charging: { basis: 'runtime-hours' as const, pricePerHour: 0.02, currency: 'EUR', freeHoursPerMonth: 100, sizeFactor: { standardCpuPercent: 50, standardRamPercent: 50, minimum: 0.25 } },
+  });
+
+  function planApp(repo: InMemoryRepository, entitlements: ReturnType<typeof plan> | null, principal = OWNER, asked: string[] = []) {
+    const app = express();
+    app.use(express.json());
+    app.use(asPrincipal(principal));
+    app.use(
+      createApiRouter({
+        repo,
+        publish: async () => true,
+        checkQuota: allowQuota,
+        getEntitlements: async (userId) => (asked.push(userId), entitlements),
+        snapshotBackup: async () => ({ ref: `bk_${Math.random().toString(36).slice(2)}`, sizeBytes: 1, path: '/data' }),
+        removeBackup: async () => undefined,
+      })
+    );
+    return app;
+  }
+
+  async function seedNode(repo: InMemoryRepository) {
+    // 8 GB, so a percentage is easy to read in megabytes.
+    await repo.upsertNode({ id: 'node-local', name: 'node-local', lastHeartbeat: new Date().toISOString(), cpuPercent: 5, ramUsedMb: 500, ramTotalMb: 8192 });
+  }
+
+  it('creates a server that fits the plan', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const res = await request(planApp(repo, plan(4096))).post('/deployments').send({ name: 'a', dockerImage: 'nginx', resourceLimits: { ramMb: 2048 } });
+    expect(res.status).toBe(201);
+  });
+
+  it('refuses a server that does not fit what is left, naming the numbers', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const app = planApp(repo, plan(4096));
+    expect((await request(app).post('/deployments').send({ name: 'a', dockerImage: 'nginx', resourceLimits: { ramMb: 3072 } })).status).toBe(201);
+    // 25% of this node is 2048 MB, and 1024 MB is left.
+    const res = await request(app).post('/deployments').send({ name: 'b', dockerImage: 'nginx', resourceLimits: { ramPercent: 25 } });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('this server needs 2 GB of memory, and your plan has 1 GB of its 4 GB left');
+    expect((await repo.listDeployments()).map((d) => d.name)).toEqual(['a']);
+  });
+
+  it('refuses an uncapped server under a memory ceiling', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const res = await request(planApp(repo, plan(4096))).post('/deployments').send({ name: 'a', dockerImage: 'nginx' });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/needs a memory limit/);
+  });
+
+  it('applies nothing where there is no plan (community, or the bridge is down)', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const res = await request(planApp(repo, null)).post('/deployments').send({ name: 'a', dockerImage: 'nginx' });
+    expect(res.status).toBe(201);
+  });
+
+  it('refuses growing a server past the plan, and allows shrinking it', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const app = planApp(repo, plan(4096));
+    const created = await request(app).post('/deployments').send({ name: 'a', dockerImage: 'nginx', resourceLimits: { ramMb: 2048 } });
+    await request(app).post('/deployments').send({ name: 'b', dockerImage: 'nginx', resourceLimits: { ramMb: 1024 } });
+
+    const grow = await request(app).patch(`/deployments/${created.body.id}`).send({ resourceLimits: { ramMb: 4096 } });
+    expect(grow.status).toBe(409);
+    expect(grow.body.error).toMatch(/needs 4 GB.*3 GB of its 4 GB left/);
+
+    expect((await request(app).patch(`/deployments/${created.body.id}`).send({ resourceLimits: { ramMb: 3072 } })).status).toBe(200);
+    expect((await request(app).patch(`/deployments/${created.body.id}`).send({ resourceLimits: { ramMb: 512 } })).status).toBe(200);
+  });
+
+  it("measures an administrator's edit against the owner's plan, not their own", async () => {
+    // Resizing somebody's server spends that person's memory.
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const created = await request(planApp(repo, plan(4096))).post('/deployments').send({ name: 'a', dockerImage: 'nginx', resourceLimits: { ramMb: 1024 } });
+    const asked: string[] = [];
+    const admin = planApp(repo, plan(4096), PLATFORM_ADMIN, asked);
+    const res = await request(admin).patch(`/deployments/${created.body.id}`).send({ resourceLimits: { ramMb: 8192 } });
+    expect(res.status).toBe(409);
+    expect(asked).toEqual([OWNER.id]);
+  });
+
+  it('shows the plan and what is used of it', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const app = planApp(repo, plan(4096, 10));
+    await request(app).post('/deployments').send({ name: 'a', dockerImage: 'nginx', resourceLimits: { ramPercent: 25 } });
+    const res = await request(app).get('/me/entitlements');
+    expect(res.status).toBe(200);
+    expect(res.body.entitlements).toMatchObject({ planName: 'Standard', maxRamMb: 4096, maxBackupsPerServer: 10, charging: { basis: 'runtime-hours' } });
+    expect(res.body.usage).toEqual({ servers: 1, databases: 0, ramMb: 2048, uncappedServers: 0 });
+  });
+
+  it('answers 404 where no plan applies', async () => {
+    expect((await request(planApp(new InMemoryRepository(), null)).get('/me/entitlements')).status).toBe(404);
+  });
+
+  it("rotates backups at the plan's ceiling instead of refusing the next one", async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const app = planApp(repo, plan(null, 2));
+    const created = await request(app).post('/deployments').send({ name: 'a', dockerImage: 'nginx' });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'running', containerId: 'abc', nodeId: 'node-local' });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      for (let i = 0; i < 3; i++) {
+        vi.setSystemTime(Date.UTC(2026, 8, 1, 3, i));
+        expect((await request(app).post(`/deployments/${created.body.id}/backups`).send({})).status).toBe(201);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await repo.listBackups(created.body.id)).toHaveLength(2);
+  });
+});
+
+describe('prepaid credit (#365)', () => {
+  const BROKE = { balance: 0, accrued: 0, available: 0, freeHoursLeft: 0, canRun: false, currency: 'EUR' };
+  const FUNDED = { ...BROKE, balance: 10, available: 10, canRun: true };
+
+  function buildApp(repo: InMemoryRepository, getStanding: NonNullable<Parameters<typeof createApiRouter>[0]['getStanding']>) {
+    const app = express();
+    app.use(express.json());
+    app.use(asPrincipal());
+    app.use(createApiRouter({ repo, publish: async () => true, checkQuota: allowQuota, getEntitlements: noPlan, getStanding }));
+    return app;
+  }
+
+  async function seedNode(repo: InMemoryRepository) {
+    await repo.upsertNode({ id: 'node-local', name: 'node-local', lastHeartbeat: new Date().toISOString(), cpuPercent: 5, ramUsedMb: 500, ramTotalMb: 8000 });
+  }
+
+  it('refuses to create a server for an account with no credit, and says where to get some', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    const res = await request(buildApp(repo, async () => BROKE)).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    expect(res.status).toBe(402);
+    expect(res.body.error).toMatch(/Billing page/);
+    expect(await repo.listDeployments()).toEqual([]);
+  });
+
+  it('refuses to start a stopped server once the credit is gone, and allows it again after a top-up', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    let standing = FUNDED;
+    const asked: string[] = [];
+    const app = buildApp(repo, async (userId) => {
+      asked.push(userId);
+      return standing;
+    });
+    const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });
+    expect(created.status).toBe(201);
+    const id = created.body.id as string;
+    await repo.updateDeploymentStatus(id, { status: 'stopped', containerId: null });
+
+    standing = BROKE;
+    const refused = await request(app).post(`/deployments/${id}/start`);
+    expect(refused.status).toBe(402);
+    // The owner's credit is what counts.
+    expect(asked.at(-1)).toBe((await repo.getDeploymentConfig(id))?.userId);
+
+    standing = FUNDED;
+    expect((await request(app).post(`/deployments/${id}/start`)).status).toBe(202);
+  });
+
+  // #380: a suspended server says so until it is started again — and only a start that passes the credit check counts.
+  it('shows a billing suspension on the server until a start is accepted', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    await seedUser(repo);
+    let standing = FUNDED;
+    const app = buildApp(repo, async () => standing);
+    const id = (await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' })).body.id as string;
+    await repo.updateDeploymentStatus(id, { status: 'stopped', containerId: null, suspendedAt: '2026-10-15T00:00:00.000Z', suspendedReason: 'credit exhausted' });
+
+    expect((await request(app).get('/deployments')).body.items[0]).toMatchObject({ id, status: 'stopped', suspendedReason: 'credit exhausted' });
+    expect((await request(app).get(`/deployments/${id}`)).body).toMatchObject({ suspendedAt: '2026-10-15T00:00:00.000Z', suspendedReason: 'credit exhausted' });
+
+    standing = BROKE;
+    expect((await request(app).post(`/deployments/${id}/start`)).status).toBe(402);
+    expect((await repo.getDeployment(id))?.suspendedReason).toBe('credit exhausted');
+
+    standing = FUNDED;
+    expect((await request(app).post(`/deployments/${id}/start`)).status).toBe(202);
+    expect(await repo.getDeployment(id)).toMatchObject({ suspendedAt: null, suspendedReason: null });
+  });
+
+  it('never blocks stopping a server, whatever the balance', async () => {
+    const repo = new InMemoryRepository();
+    await seedNode(repo);
+    let standing = FUNDED;
+    const app = buildApp(repo, async () => standing);
+    const id = (await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' })).body.id as string;
+    await repo.updateDeploymentStatus(id, { status: 'running', containerId: 'c1' });
+    standing = BROKE;
+    expect((await request(app).post(`/deployments/${id}/stop`)).status).toBe(202);
+  });
+});
+
 describe('plan quota enforcement (#148)', () => {
   // A denying checkQuota stands in for the Billing Bridge in the hosted edition.
   function buildApp(repo: InMemoryRepository, checkQuota: Parameters<typeof createApiRouter>[0]['checkQuota']) {
@@ -479,7 +1493,7 @@ describe('plan quota enforcement (#148)', () => {
     app.use(express.json());
 
     app.use(asPrincipal());
-    app.use(createApiRouter({ repo, publish: async () => true, checkQuota, provisionDatabase: async () => ({ containerId: 'db-c', port: 5432 }) }));
+    app.use(createApiRouter({ repo, publish: async () => true, checkQuota, getEntitlements: noPlan, getStanding: noStanding, provisionDatabase: async () => ({ containerId: 'db-c', port: 5432 }) }));
     return app;
   }
 
@@ -535,7 +1549,7 @@ describe('multi-node agent routing (#171)', () => {
     app.use(
       createApiRouter({
         repo,
-        checkQuota: allowQuota,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
         publish: async () => true,
         provisionDatabase: async (req) => (calls.push(req.agentUrl), { containerId: 'db-1', port: 5432 }),
         snapshotBackup: async (req) => (calls.push(req.agentUrl), { ref: 'bk', sizeBytes: 1, path: '/data' }),
@@ -620,7 +1634,7 @@ describe('per-server authorization', () => {
 
   describe('someone with no access at all', () => {
     it('cannot see the server in their list', async () => {
-      expect((await request(guestApp).get('/deployments')).body).toEqual([]);
+      expect((await request(guestApp).get('/deployments')).body.items).toEqual([]);
     });
 
     it('gets 404 rather than 403, so ids cannot be probed for existence', async () => {
@@ -641,8 +1655,8 @@ describe('per-server authorization', () => {
 
     it('sees the server, with their role attached', async () => {
       const list = await request(guestApp).get('/deployments');
-      expect(list.body).toHaveLength(1);
-      expect(list.body[0]).toMatchObject({ id: deploymentId, role: 'viewer' });
+      expect(list.body.items).toHaveLength(1);
+      expect(list.body.items[0]).toMatchObject({ id: deploymentId, role: 'viewer' });
     });
 
     it('cannot start, stop or restart it', async () => {
@@ -708,7 +1722,7 @@ describe('per-server authorization', () => {
 
       await shareAs(null);
       expect((await request(guestApp).get(`/deployments/${deploymentId}`)).status).toBe(404);
-      expect((await request(guestApp).get('/deployments')).body).toEqual([]);
+      expect((await request(guestApp).get('/deployments')).body.items).toEqual([]);
       expect((await request(guestApp).post(`/deployments/${deploymentId}/stop`)).status).toBe(404);
     });
   });
@@ -716,7 +1730,7 @@ describe('per-server authorization', () => {
   describe('the owner', () => {
     it('keeps full control including deletion', async () => {
       const list = await request(ownerApp).get('/deployments');
-      expect(list.body[0]).toMatchObject({ role: 'owner' });
+      expect(list.body.items[0]).toMatchObject({ role: 'owner' });
       expect((await request(ownerApp).get(`/deployments/${deploymentId}/subusers`)).status).toBe(200);
       expect((await request(ownerApp).delete(`/deployments/${deploymentId}`)).status).toBe(204);
     });
@@ -726,8 +1740,8 @@ describe('per-server authorization', () => {
     it('sees and controls every server without needing a share', async () => {
       const adminApp = buildApp(repo, [], PLATFORM_ADMIN);
       const list = await request(adminApp).get('/deployments');
-      expect(list.body).toHaveLength(1);
-      expect(list.body[0]).toMatchObject({ role: 'owner' });
+      expect(list.body.items).toHaveLength(1);
+      expect(list.body.items[0]).toMatchObject({ role: 'owner' });
       expect((await request(adminApp).get(`/deployments/${deploymentId}`)).status).toBe(200);
     });
   });
@@ -779,7 +1793,7 @@ describe('server invitations', () => {
 
     const guestApp = buildApp(repo, [], NEWCOMER);
     expect((await request(guestApp).get(`/deployments/${deploymentId}`)).status).toBe(404);
-    expect((await request(guestApp).get('/deployments')).body).toEqual([]);
+    expect((await request(guestApp).get('/deployments')).body.items).toEqual([]);
   });
 
   it('is claimed when the invited person registers', async () => {
@@ -789,8 +1803,8 @@ describe('server invitations', () => {
 
     const guestApp = buildApp(repo, [], { id: registered.user.id, platformRole: 'user' });
     const list = await request(guestApp).get('/deployments');
-    expect(list.body).toHaveLength(1);
-    expect(list.body[0]).toMatchObject({ id: deploymentId, role: 'operator' });
+    expect(list.body.items).toHaveLength(1);
+    expect(list.body.items[0]).toMatchObject({ id: deploymentId, role: 'operator' });
   });
 
   it('is claimed when an existing account signs in for the first time after being invited', async () => {
@@ -816,5 +1830,983 @@ describe('server invitations', () => {
     await invite(NEWCOMER.email, 'viewer');
     const again = await invite(NEWCOMER.email, 'admin');
     expect(again.body).toMatchObject({ role: 'admin', status: 'active', userId: NEWCOMER.id });
+  });
+});
+
+describe('transferring ownership (#230)', () => {
+  const HEIR = { id: 'user-heir', email: 'heir@example.com', platformRole: 'user' as const };
+
+  let repo: InMemoryRepository;
+  let app: express.Express;
+  let deploymentId: string;
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    app = buildApp(repo, []);
+    await seedUser(repo);
+    await seedUser(repo, HEIR);
+    await seedHealthyNode(repo);
+    deploymentId = (await request(app).post('/deployments').send({ name: 'legacy', dockerImage: 'nginx' })).body.id;
+  });
+
+  const transfer = (body: Record<string, unknown>, as = app) =>
+    request(as).post(`/deployments/${deploymentId}/transfer`).send(body);
+
+  const roleOf = async (user: { id: string; platformRole: 'owner' | 'admin' | 'user' }) => {
+    const list = await request(buildApp(repo, [], user)).get('/deployments');
+    return (list.body.items as Array<{ id: string; role: string }>).find((d) => d.id === deploymentId)?.role ?? null;
+  };
+
+  it('makes the recipient the owner and takes the previous owner off entirely', async () => {
+    expect((await transfer({ email: HEIR.email })).status).toBe(200);
+    expect(await roleOf(HEIR)).toBe('owner');
+    // Not 'viewer', not a lingering share — no access at all, which the API
+    // answers as 404 rather than 403.
+    expect(await roleOf(OWNER)).toBeNull();
+    expect((await request(app).get(`/deployments/${deploymentId}`)).status).toBe(404);
+  });
+
+  it('leaves the previous owner with the role they asked to keep', async () => {
+    const res = await transfer({ email: HEIR.email, retainRole: 'admin' });
+    expect(res.body).toMatchObject({ ownerId: HEIR.id, retainedRole: 'admin' });
+    expect(await roleOf(OWNER)).toBe('admin');
+    // Stepped down for real: deleting is the owner's alone, and they are not it.
+    expect((await request(app).delete(`/deployments/${deploymentId}`)).status).toBe(403);
+  });
+
+  it('writes it to the audit trail', async () => {
+    await transfer({ email: HEIR.email, retainRole: 'viewer' });
+    const heirApp = buildApp(repo, [], HEIR);
+    const events = (await request(heirApp).get(`/deployments/${deploymentId}/events`)).body as Array<{ event: string; message: string }>;
+    const entry = events.find((e) => e.event === 'ownership-transferred');
+    expect(entry?.message).toContain(OWNER.email);
+    expect(entry?.message).toContain(HEIR.email);
+    expect(entry?.message).toContain('kept viewer');
+  });
+
+  it('refuses a server admin, who could otherwise hand the server to themselves', async () => {
+    await request(app).post(`/deployments/${deploymentId}/subusers`).send({ email: HEIR.email, role: 'admin' });
+    expect((await transfer({ email: HEIR.email }, buildApp(repo, [], HEIR))).status).toBe(403);
+  });
+
+  it('drops a share the recipient already held on their new server', async () => {
+    await request(app).post(`/deployments/${deploymentId}/subusers`).send({ email: HEIR.email, role: 'viewer' });
+    await transfer({ email: HEIR.email });
+    expect(await repo.getSubuserFor(deploymentId, HEIR.email)).toBeNull();
+    expect(await roleOf(HEIR)).toBe('owner');
+  });
+
+  it('needs an account that exists, and a valid address', async () => {
+    expect((await transfer({ email: 'nobody@example.com' })).status).toBe(404);
+    expect((await transfer({ email: 'not-an-address' })).status).toBe(400);
+    expect((await transfer({})).status).toBe(400);
+  });
+
+  it('refuses to hand the server to its current owner', async () => {
+    expect((await transfer({ email: OWNER.email })).status).toBe(400);
+  });
+});
+
+describe('listing servers: search, filter and paging (#237)', () => {
+  let repo: InMemoryRepository;
+  let app: express.Express;
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    app = buildApp(repo, []);
+    await seedUser(repo);
+    await seedHealthyNode(repo);
+    for (const name of ['web-one', 'web-two', 'db-primary', 'db-replica', 'cache']) {
+      await request(app).post('/deployments').send({ name, dockerImage: 'nginx' });
+    }
+  });
+
+  const list = (qs = '') => request(app).get(`/deployments${qs}`);
+
+  it('answers an envelope, so a page can say there is more', async () => {
+    // A bare array of 25 rows out of 200 cannot tell anyone it is a page.
+    const res = await list('?limit=2');
+    expect(res.body.items).toHaveLength(2);
+    expect(res.body).toMatchObject({ total: 5, limit: 2, offset: 0 });
+  });
+
+  it('searches the name, case-insensitively', async () => {
+    const res = await list('?q=WEB');
+    expect(res.body.total).toBe(2);
+    expect((res.body.items as Array<{ name: string }>).map((d) => d.name).sort()).toEqual(['web-one', 'web-two']);
+  });
+
+  it('filters by status', async () => {
+    const all = (await list()).body.items as Array<{ id: string }>;
+    await repo.updateDeploymentStatus(all[0].id, { status: 'running', containerId: 'c1', nodeId: 'node-local' });
+
+    expect((await list('?status=running')).body.total).toBe(1);
+    expect((await list('?status=pending')).body.total).toBe(4);
+  });
+
+  it('filters by node, including the servers that landed nowhere', async () => {
+    // Placement happens at creation, so all five start on the node; detaching one
+    // is the state somebody goes looking for when placement has failed.
+    const all = (await list()).body.items as Array<{ id: string }>;
+    await repo.updateDeploymentStatus(all[0].id, { nodeId: null });
+
+    expect((await list('?nodeId=node-local')).body.total).toBe(4);
+    expect((await list('?nodeId=unassigned')).body.total).toBe(1);
+  });
+
+  it('pages without repeating or losing a row', async () => {
+    const seen: string[] = [];
+    for (let offset = 0; offset < 5; offset += 2) {
+      seen.push(...((await list(`?limit=2&offset=${offset}`)).body.items as Array<{ id: string }>).map((d) => d.id));
+    }
+    expect(new Set(seen).size).toBe(5);
+  });
+
+  it('counts what matched, not what it returned', async () => {
+    const res = await list('?q=web&limit=1');
+    expect(res.body.items).toHaveLength(1);
+    expect(res.body.total).toBe(2);
+  });
+
+  it('bounds the page even when nobody asked it to', async () => {
+    expect((await list()).body.limit).toBe(25);
+    expect((await list('?limit=99999')).body.limit).toBe(200);
+  });
+
+  it('still carries the caller’s role on each row', async () => {
+    // Paging must not quietly drop what the panel gates its buttons on (#178).
+    const res = await list('?limit=1');
+    expect(res.body.items[0]).toMatchObject({ role: 'owner' });
+  });
+});
+
+describe('the Java heap follows the memory limit (#308)', () => {
+  let repo: InMemoryRepository;
+  let app: express.Express;
+
+  /** A node with a known amount of RAM, so a percentage means something. */
+  async function nodeWithRam(ramTotalMb: number, id = 'node-local') {
+    await repo.upsertNode({ id, name: id, lastHeartbeat: new Date().toISOString(), cpuPercent: 5, cpuCores: 4, ramUsedMb: 500, ramTotalMb });
+  }
+
+  const create = (body: Record<string, unknown>) =>
+    request(app).post('/deployments').send({ name: 'mc', eggId: 'minecraft-java', ...body });
+
+  const heapOf = async (id: string) => (await repo.getDeploymentConfig(id))?.env.MEMORY;
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    app = buildApp(repo, []);
+    await seedUser(repo);
+  });
+
+  it('derives the heap from the cap instead of asking for it twice', async () => {
+    await nodeWithRam(8192);
+    const res = await create({ resourceLimits: { ramPercent: 50 } });
+
+    expect(res.status).toBe(201);
+    // 50% of 8 GB is a 4096 MB cap; the biggest heap that leaves the JVM its
+    // overhead inside that is 3276 MB.
+    expect(await heapOf(res.body.id)).toBe('3276M');
+  });
+
+  it('accepts the defaults on a node too small for the old fixed 2G heap', async () => {
+    // This is the bug in one line: 50% of 4 GB is a 2048 MB cap, and the egg's
+    // `2G` default needs ~2560 MB. An untouched form used to be refused here and
+    // accepted on a bigger node — the same form, a different answer.
+    await nodeWithRam(4096);
+    const res = await create({ resourceLimits: { ramPercent: 50 } });
+
+    expect(res.status).toBe(201);
+    expect(await heapOf(res.body.id)).toBe('1536M');
+  });
+
+  it('moves the heap with the limit, both ways', async () => {
+    await nodeWithRam(16384);
+    const small = await create({ resourceLimits: { ramPercent: 10 } });
+    // Its own host port: two servers on one node cannot share 25565 (#233).
+    const large = await create({ name: 'mc2', resourceLimits: { ramPercent: 75 }, ports: { '25566': '25565' } });
+
+    expect(await heapOf(small.body.id)).toBe('1126M');
+    expect(await heapOf(large.body.id)).toBe('9830M');
+  });
+
+  it('honours a heap somebody asked for, and still refuses one that cannot fit', async () => {
+    await nodeWithRam(8192);
+    const chosen = await create({ resourceLimits: { ramPercent: 50 }, eggValues: { MEMORY: '1G' } });
+    expect(await heapOf(chosen.body.id)).toBe('1G');
+
+    const impossible = await create({ name: 'mc3', resourceLimits: { ramPercent: 10 }, eggValues: { MEMORY: '4G' } });
+    expect(impossible.status).toBe(400);
+    expect(impossible.body.error).toMatch(/heap/i);
+  });
+
+  it('leaves the egg default alone when there is no cap to derive from', async () => {
+    // An uncapped server: there is no number to derive from, and inventing one
+    // would be #250 again.
+    await nodeWithRam(8192);
+    const res = await create({ resourceLimits: {} });
+    expect(await heapOf(res.body.id)).toBe('2G');
+  });
+
+  it('refuses a limit too small for any Java server, saying so plainly', async () => {
+    await nodeWithRam(4096);
+    const res = await create({ resourceLimits: { ramMb: 256 } });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('too small for a Java server');
+  });
+
+  it('re-derives the heap when the limit is raised later', async () => {
+    // Raising the memory used to be refused for a heap the person never chose.
+    await nodeWithRam(8192);
+    const created = await create({ resourceLimits: { ramPercent: 25 } });
+    // A 2048 MB cap: below the crossover the flat 512 MB floor binds, not the 25%.
+    expect(await heapOf(created.body.id)).toBe('1536M');
+
+    const edit = await request(app)
+      .patch(`/deployments/${created.body.id}`)
+      .send({ resourceLimits: { ramPercent: 75 } });
+
+    expect(edit.status).toBe(200);
+    expect(await heapOf(created.body.id)).toBe('4915M');
+  });
+
+  it('still lets an edit name its own heap', async () => {
+    await nodeWithRam(8192);
+    const created = await create({ resourceLimits: { ramPercent: 50 } });
+
+    const edit = await request(app)
+      .patch(`/deployments/${created.body.id}`)
+      .send({ eggValues: { MEMORY: '2G' } });
+
+    expect(edit.status).toBe(200);
+    expect(await heapOf(created.body.id)).toBe('2G');
+  });
+});
+
+describe('placement preview (#309)', () => {
+  let repo: InMemoryRepository;
+  let app: express.Express;
+
+  const beat = (over: Record<string, unknown> = {}) => ({
+    lastHeartbeat: new Date().toISOString(),
+    cpuPercent: 10,
+    ramUsedMb: 1000,
+    ramTotalMb: 8192,
+    ...over,
+  });
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    app = buildApp(repo, []);
+    await seedUser(repo);
+  });
+
+  it('names the node a new server would land on', async () => {
+    await repo.upsertNode({ id: 'node-busy', name: 'node-busy', ...beat({ cpuPercent: 90, ramUsedMb: 7000 }) });
+    await repo.upsertNode({ id: 'node-quiet', name: 'node-quiet', ...beat({ cpuPercent: 5, ramUsedMb: 500 }) });
+
+    expect((await request(app).get('/placement')).body).toEqual({ nodeId: 'node-quiet' });
+  });
+
+  it('agrees with where the server actually lands', async () => {
+    // The whole point of the route: one implementation, so the preview and the
+    // placement cannot drift apart.
+    await repo.upsertNode({ id: 'node-busy', name: 'node-busy', ...beat({ cpuPercent: 90, ramUsedMb: 7000 }) });
+    await repo.upsertNode({ id: 'node-quiet', name: 'node-quiet', ...beat({ cpuPercent: 5, ramUsedMb: 500 }) });
+
+    const preview = (await request(app).get('/placement')).body.nodeId;
+    const created = await request(app).post('/deployments').send({ name: 'x', dockerImage: 'nginx' });
+    expect(created.body.nodeId).toBe(preview);
+  });
+
+  it('skips a draining node, which the form’s own rule did not', async () => {
+    // An emptied host is the *most* attractive candidate to a load-based score,
+    // so this is exactly where the two rules disagreed (#258).
+    await repo.upsertNode({ id: 'node-draining', name: 'node-draining', ...beat({ cpuPercent: 1, ramUsedMb: 100 }) });
+    await repo.upsertNode({ id: 'node-normal', name: 'node-normal', ...beat({ cpuPercent: 50, ramUsedMb: 4000 }) });
+    await repo.registerNode({ id: 'node-draining', name: 'node-draining', maintenance: true });
+
+    expect((await request(app).get('/placement')).body).toEqual({ nodeId: 'node-normal' });
+  });
+
+  it('says so when there is nowhere to place anything', async () => {
+    expect((await request(app).get('/placement')).body).toEqual({ nodeId: null });
+  });
+});
+
+describe('the egg catalogue fills in the version list (#311)', () => {
+  let repo: InMemoryRepository;
+
+  /** The version source is injected, so no test here reaches Mojang. */
+  function appWithVersions(versions: () => Promise<string[]>) {
+    const app = express();
+    app.use(express.json());
+    app.use(asPrincipal());
+    app.use(createApiRouter({ repo, checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding, publish: async () => true, minecraftVersions: versions }));
+    return app;
+  }
+
+  const versionVariable = async (app: express.Express) => {
+    const res = await request(app).get('/eggs');
+    const minecraft = (res.body as Array<{ id: string; variables: Array<{ key: string; kind: string; options?: string[] }> }>).find(
+      (e) => e.id === 'minecraft-java'
+    )!;
+    return minecraft.variables.find((v) => v.key === 'VERSION')!;
+  };
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    await seedUser(repo);
+  });
+
+  it('serves versions to choose from instead of a bare text field', async () => {
+    const app = appWithVersions(async () => ['LATEST', 'SNAPSHOT', '26.2', '1.21.11']);
+    const version = await versionVariable(app);
+
+    expect(version.kind).toBe('version');
+    expect(version.options).toEqual(['LATEST', 'SNAPSHOT', '26.2', '1.21.11']);
+  });
+
+  it('still serves a list when the version source falls back', async () => {
+    // No internet is a supported way to run this, not an error, so the field must
+    // not come back empty on a machine with no route out.
+    const app = appWithVersions(async () => offeredVersions(FALLBACK_VERSIONS));
+    expect((await versionVariable(app)).options).toContain('LATEST');
+  });
+
+  it('leaves the other variables exactly as the catalogue declares them', async () => {
+    const app = appWithVersions(async () => ['LATEST']);
+    const res = await request(app).get('/eggs');
+    const minecraft = (res.body as Array<{ id: string; variables: Array<{ key: string; options?: string[] }> }>).find(
+      (e) => e.id === 'minecraft-java'
+    )!;
+    expect(minecraft.variables.find((v) => v.key === 'TYPE')!.options).toContain('NEOFORGE');
+    // And nothing invented an options list for a variable that has none.
+    expect(minecraft.variables.find((v) => v.key === 'MOTD')!.options).toBeUndefined();
+  });
+});
+
+describe('bulk actions (#238)', () => {
+  const GUEST = { id: 'user-guest', email: 'guest@example.com', platformRole: 'user' as const };
+  const STRANGER = { id: 'user-stranger', email: 'stranger@example.com', platformRole: 'user' as const };
+
+  let repo: InMemoryRepository;
+  let published: Array<{ key: string; envelope: EventEnvelope }>;
+  let ownerApp: express.Express;
+  let ids: { running: string; runningToo: string; stopped: string };
+
+  async function create(name: string, status: 'running' | 'stopped') {
+    const res = await request(ownerApp).post('/deployments').send({ name, dockerImage: 'nginx' });
+    await repo.updateDeploymentStatus(res.body.id, status === 'running'
+      ? { status, containerId: `c-${name}`, nodeId: 'node-local' }
+      : { status, containerId: null });
+    return res.body.id as string;
+  }
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    published = [];
+    ownerApp = buildApp(repo, published);
+    await seedUser(repo);
+    await seedUser(repo, GUEST);
+    await seedUser(repo, STRANGER);
+    await seedHealthyNode(repo);
+    ids = { running: await create('a', 'running'), runningToo: await create('b', 'running'), stopped: await create('c', 'stopped') };
+    published.length = 0;
+  });
+
+  it('stops every server named and says so for each', async () => {
+    const res = await request(ownerApp).post('/deployments/bulk').send({ action: 'stop', ids: [ids.running, ids.runningToo] });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ action: 'stop', succeeded: 2, failed: 0 });
+    expect(res.body.results.map((r: { id: string; ok: boolean }) => [r.id, r.ok])).toEqual([[ids.running, true], [ids.runningToo, true]]);
+    // The same command the single route sends, once per server.
+    expect(published.filter((p) => p.key === 'infra.server.stop')).toHaveLength(2);
+  });
+
+  it('reports precisely which servers failed and why, and still acts on the rest', async () => {
+    const res = await request(ownerApp).post('/deployments/bulk').send({ action: 'stop', ids: [ids.running, ids.stopped, 'no-such-id'] });
+
+    expect(res.body).toMatchObject({ succeeded: 1, failed: 2 });
+    const byId = Object.fromEntries(res.body.results.map((r: { id: string }) => [r.id, r]));
+    expect(byId[ids.running]).toMatchObject({ ok: true, status: 202, name: 'a' });
+    expect(byId[ids.stopped]).toMatchObject({ ok: false, status: 409, error: 'deployment is not running', name: 'c' });
+    expect(byId['no-such-id']).toMatchObject({ ok: false, status: 404 });
+    expect(published.filter((p) => p.key === 'infra.server.stop')).toHaveLength(1);
+  });
+
+  it('starts stopped servers through the same placement as the single route', async () => {
+    const res = await request(ownerApp).post('/deployments/bulk').send({ action: 'start', ids: [ids.stopped] });
+    expect(res.body.succeeded).toBe(1);
+    expect((await repo.getDeployment(ids.stopped))?.status).toBe('pending');
+    expect(published.find((p) => p.key === 'infra.server.start')).toBeDefined();
+  });
+
+  it('authorizes each server on its own, with the role the guard would resolve', async () => {
+    // The guest may operate one server, view another, and has nothing on the third.
+    await repo.createSubuser({ deploymentId: ids.running, email: GUEST.email, role: 'operator', userId: GUEST.id, status: 'active' });
+    await repo.createSubuser({ deploymentId: ids.runningToo, email: GUEST.email, role: 'viewer', userId: GUEST.id, status: 'active' });
+    const guestApp = buildApp(repo, published, GUEST);
+
+    const res = await request(guestApp).post('/deployments/bulk').send({ action: 'restart', ids: [ids.running, ids.runningToo, ids.stopped] });
+
+    const byId = Object.fromEntries(res.body.results.map((r: { id: string }) => [r.id, r]));
+    expect(byId[ids.running]).toMatchObject({ ok: true });
+    expect(byId[ids.runningToo]).toMatchObject({ ok: false, status: 403 });
+    expect(byId[ids.stopped]).toMatchObject({ ok: false, status: 404 });
+    expect(published.filter((p) => p.key === 'infra.server.restart')).toHaveLength(1);
+  });
+
+  it('answers an unshared server exactly like a missing one, so bulk cannot probe ids', async () => {
+    const strangerApp = buildApp(repo, published, STRANGER);
+    const res = await request(strangerApp).post('/deployments/bulk').send({ action: 'stop', ids: [ids.running, 'no-such-id'] });
+
+    const [real, missing] = res.body.results;
+    expect({ ...real, id: undefined }).toEqual({ ...missing, id: undefined });
+    expect(real.name).toBeUndefined();
+    expect(published).toHaveLength(0);
+  });
+
+  it('counts a repeated id once', async () => {
+    const res = await request(ownerApp).post('/deployments/bulk').send({ action: 'stop', ids: [ids.running, ids.running] });
+    expect(res.body.results).toHaveLength(1);
+    expect(published.filter((p) => p.key === 'infra.server.stop')).toHaveLength(1);
+  });
+
+  it('refuses an unknown action, a missing list, and an oversized one', async () => {
+    await request(ownerApp).post('/deployments/bulk').send({ action: 'delete', ids: [ids.running] }).expect(400);
+    await request(ownerApp).post('/deployments/bulk').send({ action: 'stop' }).expect(400);
+    await request(ownerApp).post('/deployments/bulk').send({ action: 'stop', ids: [] }).expect(400);
+    await request(ownerApp).post('/deployments/bulk').send({ action: 'stop', ids: [1] }).expect(400);
+    const tooMany = Array.from({ length: 101 }, (_, i) => `id-${i}`);
+    await request(ownerApp).post('/deployments/bulk').send({ action: 'stop', ids: tooMany }).expect(400);
+    expect(published).toHaveLength(0);
+  });
+
+  it('is not mistaken for a server called "bulk"', async () => {
+    // The per-server guard would otherwise claim the path and answer 404.
+    const res = await request(ownerApp).post('/deployments/bulk').send({ action: 'kill', ids: [ids.running] });
+    expect(res.status).toBe(200);
+    expect(published.find((p) => p.key === 'infra.server.kill')).toBeDefined();
+  });
+});
+
+describe('a stopped server has no container to act on (#321)', () => {
+  it('refuses stop, kill and restart for a row still carrying a pre-fix stale id', async () => {
+    const repo = new InMemoryRepository();
+    const published: Array<{ key: string; envelope: EventEnvelope }> = [];
+    const app = buildApp(repo, published);
+    await seedUser(repo);
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'old', dockerImage: 'nginx' });
+    // What lifecycle.ts used to leave behind: stopped, but still naming the container.
+    await repo.updateDeploymentStatus(created.body.id, { status: 'stopped', containerId: 'gone', nodeId: 'node-local' });
+    published.length = 0;
+
+    for (const action of ['stop', 'kill', 'restart']) {
+      const res = await request(app).post(`/deployments/${created.body.id}/${action}`);
+      expect(res.status).toBe(409);
+    }
+    const bulk = await request(app).post('/deployments/bulk').send({ action: 'stop', ids: [created.body.id] });
+    expect(bulk.body).toMatchObject({ succeeded: 0, failed: 1 });
+    expect(published).toHaveLength(0);
+  });
+});
+
+describe('a server keeps its data across restarts (#324)', () => {
+  let repo: InMemoryRepository;
+  let published: Array<{ key: string; envelope: EventEnvelope }>;
+  let app: express.Express;
+
+  const startPayloads = () =>
+    published.filter((p) => p.key === 'infra.server.start').map((p) => readPayload(p.envelope.event) as Record<string, unknown>);
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    published = [];
+    purged.length = 0;
+    app = buildApp(repo, published);
+    await seedUser(repo);
+    await seedHealthyNode(repo);
+  });
+
+  it("tells the agent to persist an egg server's data directory", async () => {
+    const res = await request(app).post('/deployments').send({ name: 'mc', eggId: 'minecraft-java', eggValues: { EULA: 'TRUE' } });
+    expect(res.status).toBe(201);
+    expect(startPayloads()[0].persistPaths).toEqual(['/data']);
+  });
+
+  it('persists the directories a plain application names, and says so on the detail', async () => {
+    const res = await request(app).post('/deployments').send({ name: 'web', dockerImage: 'nginx', persistPaths: ['/usr/share/nginx/html/'] });
+    expect(res.status).toBe(201);
+    expect(res.body.persistPaths).toEqual(['/usr/share/nginx/html']);
+    expect(startPayloads()[0].persistPaths).toEqual(['/usr/share/nginx/html']);
+  });
+
+  it('refuses a directory that is not one', async () => {
+    const res = await request(app).post('/deployments').send({ name: 'web', dockerImage: 'nginx', persistPaths: ['/'] });
+    expect(res.status).toBe(400);
+    expect(startPayloads()).toHaveLength(0);
+  });
+
+  it('sends the same persistence again on every start, so the next container gets the same volumes', async () => {
+    const created = await request(app).post('/deployments').send({ name: 'web', dockerImage: 'nginx', persistPaths: ['/srv'] });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'stopped', containerId: null });
+
+    await request(app).post(`/deployments/${created.body.id}/start`).expect(202);
+    const [first, second] = startPayloads();
+    expect(second.persistPaths).toEqual(first.persistPaths);
+    expect(second.deploymentId).toBe(first.deploymentId);
+  });
+
+  it('can change what is persisted after creation', async () => {
+    const created = await request(app).post('/deployments').send({ name: 'web', dockerImage: 'nginx' });
+    const res = await request(app).patch(`/deployments/${created.body.id}`).send({ persistPaths: ['/var/lib/app'] });
+    expect(res.status).toBe(200);
+    expect(res.body.persistPaths).toEqual(['/var/lib/app']);
+    await request(app).patch(`/deployments/${created.body.id}`).send({ persistPaths: ['relative'] }).expect(400);
+  });
+
+  it("removes a deleted server's data from its node", async () => {
+    const created = await request(app).post('/deployments').send({ name: 'web', dockerImage: 'nginx' });
+    await request(app).delete(`/deployments/${created.body.id}`).expect(204);
+    expect(purged).toEqual([{ agentUrl: expect.any(String), deploymentId: created.body.id }]);
+  });
+
+  it('still deletes the record when the node cannot be reached', async () => {
+    const failing = express();
+    failing.use(express.json());
+    failing.use(asPrincipal());
+    failing.use(
+      createApiRouter({
+        repo,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
+        publish: async () => true,
+        purgeDeploymentData: async () => {
+          throw new Error('node agent unreachable');
+        },
+      })
+    );
+    const created = await request(failing).post('/deployments').send({ name: 'web', dockerImage: 'nginx' });
+    await request(failing).delete(`/deployments/${created.body.id}`).expect(204);
+    expect(await repo.getDeployment(created.body.id)).toBeNull();
+  });
+});
+
+describe('updating a server image (#239)', () => {
+  const OPERATOR = { id: 'user-op', email: 'op@example.com', platformRole: 'user' as const };
+  let repo: InMemoryRepository;
+  let published: Array<{ key: string; envelope: EventEnvelope }>;
+  let app: express.Express;
+  let id: string;
+
+  const updates = () => published.filter((p) => p.key === 'infra.server.update').map((p) => readPayload(p.envelope.event) as Record<string, unknown>);
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    published = [];
+    app = buildApp(repo, published);
+    await seedUser(repo);
+    await seedUser(repo, OPERATOR);
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'web', dockerImage: 'nginx:alpine', persistPaths: ['/srv'] });
+    id = created.body.id;
+    published.length = 0;
+  });
+
+  it('pulls and recreates a running server on the node it is on, keeping its volumes', async () => {
+    await repo.updateDeploymentStatus(id, { status: 'running', containerId: 'c1', nodeId: 'node-local' });
+    const res = await request(app).post(`/deployments/${id}/update`);
+
+    expect(res.status).toBe(202);
+    expect(res.body).toMatchObject({ status: 'updating', recreate: true });
+    expect(updates()).toEqual([expect.objectContaining({ deploymentId: id, nodeId: 'node-local', dockerImage: 'nginx:alpine', persistPaths: ['/srv'], recreate: true })]);
+    expect((await repo.getDeployment(id))?.events.map((e) => e.event)).toContain('update-requested');
+  });
+
+  it('only pulls for a stopped server — the new image applies on its next start', async () => {
+    await repo.updateDeploymentStatus(id, { status: 'stopped', containerId: null, nodeId: 'node-local' });
+    const res = await request(app).post(`/deployments/${id}/update`);
+    expect(res.body.recreate).toBe(false);
+    expect(updates()[0].recreate).toBe(false);
+  });
+
+  it('refuses while the server is still being placed', async () => {
+    await request(app).post(`/deployments/${id}/update`).expect(409);
+    expect(updates()).toHaveLength(0);
+  });
+
+  it('is a server admin decision, not an operator one', async () => {
+    await repo.updateDeploymentStatus(id, { status: 'running', containerId: 'c1' });
+    await repo.createSubuser({ deploymentId: id, email: OPERATOR.email, role: 'operator', userId: OPERATOR.id, status: 'active' });
+    await request(buildApp(repo, published, OPERATOR)).post(`/deployments/${id}/update`).expect(403);
+    expect(updates()).toHaveLength(0);
+  });
+
+  it("asks the owning node whether there is a newer image, naming the server's container", async () => {
+    await repo.updateDeploymentStatus(id, { status: 'running', containerId: 'c1', nodeId: 'node-local' });
+    const asked: unknown[] = [];
+    const statusApp = express();
+    statusApp.use(express.json());
+    statusApp.use(asPrincipal());
+    statusApp.use(
+      createApiRouter({
+        repo,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
+        publish: async () => true,
+        imageStatus: async (q) => {
+          asked.push(q);
+          return { status: 'update-available', remoteDigest: 'sha256:b' };
+        },
+      })
+    );
+    const res = await request(statusApp).get(`/deployments/${id}/image`);
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('update-available');
+    expect(asked).toEqual([{ agentUrl: expect.any(String), image: 'nginx:alpine', containerId: 'c1' }]);
+  });
+
+  it('says so when the node cannot be asked', async () => {
+    const statusApp = express();
+    statusApp.use(express.json());
+    statusApp.use(asPrincipal());
+    statusApp.use(
+      createApiRouter({
+        repo,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
+        publish: async () => true,
+        imageStatus: async () => {
+          throw new Error('node agent unreachable');
+        },
+      })
+    );
+    await request(statusApp).get(`/deployments/${id}/image`).expect(502);
+  });
+
+  it('can be scheduled', async () => {
+    const res = await request(app).post(`/deployments/${id}/schedules`).send({ name: 'weekly update', cron: '0 4 * * 1', action: 'update' });
+    expect(res.status).toBe(201);
+  });
+});
+
+describe('backup retention and download (#232)', () => {
+  let repo: InMemoryRepository;
+  let app: express.Express;
+  let id: string;
+  const removedRefs: string[] = [];
+  let n = 0;
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    removedRefs.length = 0;
+    app = express();
+    app.use(express.json());
+    app.use(asPrincipal());
+    app.use(
+      createApiRouter({
+        repo,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
+        publish: async () => true,
+        snapshotBackup: async ({ path }) => ({ ref: `bk_${++n}`, sizeBytes: 3, path: path ?? '/data', offsite: null }),
+        removeBackup: async (_url, ref) => void removedRefs.push(ref),
+        downloadBackup: async (_url, ref) =>
+          ref === 'bk_gone' ? new Response(JSON.stringify({ error: 'this backup is on neither the node nor the off-site store' }), { status: 404 }) : new Response(Buffer.from('TARBYTES'), { headers: { 'content-length': '8' } }),
+      })
+    );
+    await seedUser(repo);
+    await seedHealthyNode(repo);
+    const created = await request(app).post('/deployments').send({ name: 'My Web', dockerImage: 'nginx', persistPaths: ['/srv'] });
+    id = created.body.id;
+    await repo.updateDeploymentStatus(id, { status: 'running', containerId: 'c1', nodeId: 'node-local' });
+  });
+
+  it("backs up the server's own directory when none is named (#324)", async () => {
+    const res = await request(app).post(`/deployments/${id}/backups`).send({});
+    expect(res.status).toBe(201);
+    expect(res.body.path).toBe('/srv');
+  });
+
+  it("removes a deleted server's backup archives from its node (#390)", async () => {
+    await request(app).post(`/deployments/${id}/backups`).send({}).expect(201);
+    await request(app).post(`/deployments/${id}/backups`).send({}).expect(201);
+    const refs = (await repo.listBackups(id)).map((b) => b.ref);
+    expect(refs).toHaveLength(2);
+
+    await request(app).delete(`/deployments/${id}`).expect(204);
+
+    // The rows went with the server before this fix too; the archives did not,
+    // and with no row left nothing could ever reach them again.
+    expect(removedRefs.sort()).toEqual(refs.sort());
+  });
+
+  it('sets a policy, applies it at once, and says what it removed', async () => {
+    for (let i = 0; i < 3; i++) {
+      await request(app).post(`/deployments/${id}/backups`).send({});
+      await new Promise((r) => setTimeout(r, 2));
+    }
+    const res = await request(app).put(`/deployments/${id}/backups/retention`).send({ keepLast: 1 });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ backupRetention: { keepLast: 1 }, expired: 2 });
+    expect(await repo.listBackups(id)).toHaveLength(1);
+    expect((await request(app).get(`/deployments/${id}`)).body.backupRetention).toEqual({ keepLast: 1 });
+  });
+
+  it('refuses a policy that reads as "keep none"', async () => {
+    await request(app).put(`/deployments/${id}/backups/retention`).send({ keepLast: 0 }).expect(400);
+  });
+
+  it('downloads a backup as a named tar', async () => {
+    const made = await request(app).post(`/deployments/${id}/backups`).send({});
+    const res = await request(app).get(`/deployments/${id}/backups/${made.body.id}/download`).buffer(true).parse((r, cb) => {
+      const chunks: Buffer[] = [];
+      r.on('data', (c: Buffer) => chunks.push(c));
+      r.on('end', () => cb(null, Buffer.concat(chunks)));
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toBe('application/x-tar');
+    expect(res.headers['content-disposition']).toMatch(/^attachment; filename="My-Web-backup-.*\.tar"$/);
+    expect((res.body as Buffer).toString()).toBe('TARBYTES');
+  });
+
+  it("does not hand out another server's backup by id", async () => {
+    const other = await request(app).post('/deployments').send({ name: 'other', dockerImage: 'nginx' });
+    const made = await request(app).post(`/deployments/${id}/backups`).send({});
+    await request(app).get(`/deployments/${other.body.id}/backups/${made.body.id}/download`).expect(404);
+  });
+
+  it('passes on that a backup is gone from everywhere', async () => {
+    const b = await repo.createBackup({ deploymentId: id, name: 'x', path: '/srv', ref: 'bk_gone', sizeBytes: 1 });
+    const res = await request(app).get(`/deployments/${id}/backups/${b.id}/download`);
+    expect(res.status).toBe(404);
+    expect(res.body.error).toContain('neither the node nor the off-site store');
+  });
+});
+
+describe('a stopped server starts where its data is (#329)', () => {
+  let repo: InMemoryRepository;
+  let published: Array<{ key: string; envelope: EventEnvelope }>;
+  let app: express.Express;
+
+  const startNode = () => {
+    const start = published.filter((p) => p.key === 'infra.server.start').at(-1);
+    return start ? (readPayload(start.envelope.event) as Record<string, unknown>).nodeId : undefined;
+  };
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    published = [];
+    app = buildApp(repo, published);
+    await seedUser(repo);
+  });
+
+  async function stoppedOn(nodeId: string) {
+    const created = await request(app).post('/deployments').send({ name: 'world', dockerImage: 'nginx', nodeId });
+    await repo.updateDeploymentStatus(created.body.id, { status: 'stopped', containerId: null });
+    published.length = 0;
+    return created.body.id as string;
+  }
+
+  it('goes back to its own node even when another is emptier', async () => {
+    await seedHealthyNode(repo, 'node-a');
+    const id = await stoppedOn('node-a');
+    // A second, idle node appears: the least-loaded rule would pick it.
+    await repo.upsertNode({ id: 'node-b', name: 'node-b', lastHeartbeat: new Date().toISOString(), cpuPercent: 0, ramUsedMb: 0, ramTotalMb: 64000 });
+
+    await request(app).post(`/deployments/${id}/start`).expect(202);
+    expect(startNode()).toBe('node-a');
+  });
+
+  it('refuses, saying why, when its node is offline — rather than starting it empty elsewhere', async () => {
+    await seedHealthyNode(repo, 'node-a');
+    const id = await stoppedOn('node-a');
+    await repo.upsertNode({ id: 'node-a', lastHeartbeat: new Date(Date.now() - 60_000).toISOString() });
+    await seedHealthyNode(repo, 'node-b');
+
+    const res = await request(app).post(`/deployments/${id}/start`);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/node-a is offline.*migrate/);
+    expect(startNode()).toBeUndefined();
+  });
+
+  it('refuses while its node is in maintenance', async () => {
+    await seedHealthyNode(repo, 'node-a');
+    const id = await stoppedOn('node-a');
+    await repo.registerNode({ id: 'node-a', maintenance: true });
+    const res = await request(app).post(`/deployments/${id}/start`);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/maintenance/);
+  });
+
+  it('is placed afresh when its node was deregistered — nothing is waiting anywhere', async () => {
+    await seedHealthyNode(repo, 'node-a');
+    const id = await stoppedOn('node-a');
+    await repo.deleteNode('node-a');
+    await seedHealthyNode(repo, 'node-b');
+    await request(app).post(`/deployments/${id}/start`).expect(202);
+    expect(startNode()).toBe('node-b');
+  });
+});
+
+describe('POST /deployments/:id/migrate (#234)', () => {
+  let repo: InMemoryRepository;
+  let id: string;
+  let pending: Array<() => Promise<void>>;
+  let release: () => void;
+  let gate: Promise<void>;
+
+  function appFor(principal: { id: string; platformRole: 'owner' | 'admin' | 'user' }) {
+    const app = express();
+    app.use(express.json());
+    app.use(asPrincipal(principal));
+    app.use(
+      createApiRouter({
+        repo,
+        checkQuota: allowQuota, getEntitlements: noPlan, getStanding: noStanding,
+        publish: async () => true,
+        purgeDeploymentData: async () => undefined,
+        migrationTransport: {
+          listVolumes: async () => [{ path: '/data' }],
+          copyVolume: async () => {
+            await gate;
+          },
+          removeVolume: async () => undefined,
+          copyBackup: async () => undefined,
+          removeBackupFile: async () => undefined,
+          purge: async () => undefined,
+        },
+        runMigration: (run) => void pending.push(run),
+      })
+    );
+    return app;
+  }
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    pending = [];
+    gate = new Promise((r) => (release = r));
+    await seedUser(repo);
+    await seedUser(repo, PLATFORM_ADMIN);
+    await seedHealthyNode(repo, 'node-a');
+    await seedHealthyNode(repo, 'node-b');
+    const created = await request(appFor(OWNER)).post('/deployments').send({ name: 'world', dockerImage: 'nginx', nodeId: 'node-a' });
+    id = created.body.id;
+    await repo.updateDeploymentStatus(id, { status: 'stopped', containerId: null });
+  });
+
+  it('is for platform administrators, not server owners', async () => {
+    await request(appFor(OWNER)).post(`/deployments/${id}/migrate`).send({ nodeId: 'node-b' }).expect(403);
+  });
+
+  it('answers at once, moves in the background, and blocks start and delete meanwhile', async () => {
+    const admin = appFor(PLATFORM_ADMIN);
+    const res = await request(admin).post(`/deployments/${id}/migrate`).send({ nodeId: 'node-b' });
+    expect(res.status).toBe(202);
+    expect((await request(admin).get(`/deployments/${id}`)).body.migrating).toBe(true);
+
+    const running = pending[0]();
+    expect((await request(admin).post(`/deployments/${id}/start`)).status).toBe(409);
+    expect((await request(admin).delete(`/deployments/${id}`)).status).toBe(409);
+
+    release();
+    await running;
+    const after = await request(admin).get(`/deployments/${id}`);
+    expect(after.body).toMatchObject({ nodeId: 'node-b', migrating: false });
+  });
+
+  it('passes a refusal straight back', async () => {
+    const res = await request(appFor(PLATFORM_ADMIN)).post(`/deployments/${id}/migrate`).send({ nodeId: 'node-a' });
+    expect(res.status).toBe(400);
+    expect(pending).toHaveLength(0);
+    await request(appFor(PLATFORM_ADMIN)).post(`/deployments/${id}/migrate`).send({}).expect(400);
+  });
+});
+
+describe('host ports per node (#233)', () => {
+  let repo: InMemoryRepository;
+  let app: express.Express;
+  let admin: express.Express;
+
+  beforeEach(async () => {
+    repo = new InMemoryRepository();
+    app = buildApp(repo, []);
+    admin = buildApp(repo, [], PLATFORM_ADMIN);
+    await seedUser(repo);
+    await seedUser(repo, PLATFORM_ADMIN);
+    await seedHealthyNode(repo, 'node-a');
+  });
+
+  const create = (name: string, ports: Record<string, string>, extra: Record<string, unknown> = {}) =>
+    request(app).post('/deployments').send({ name, dockerImage: 'nginx', ports, nodeId: 'node-a', ...extra });
+
+  it('refuses a second server on a port the first already holds, naming it', async () => {
+    await create('first', { '8080': '80' }).expect(201);
+    const res = await create('second', { '8080': '80' });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('port 8080 is already used by first on this node');
+    expect((await repo.listDeployments()).map((d) => d.name)).toEqual(['first']);
+  });
+
+  it('gives the same port on another node without complaint', async () => {
+    await seedHealthyNode(repo, 'node-b');
+    await create('first', { '8080': '80' }).expect(201);
+    await request(app).post('/deployments').send({ name: 'second', dockerImage: 'nginx', ports: { '8080': '80' }, nodeId: 'node-b' }).expect(201);
+  });
+
+  it('frees the ports when the server is deleted', async () => {
+    const first = await create('first', { '8080': '80' });
+    await request(app).delete(`/deployments/${first.body.id}`).expect(204);
+    await create('second', { '8080': '80' }).expect(201);
+  });
+
+  it('takes "auto" from the node\'s pool, and records the port it chose', async () => {
+    await request(admin).patch('/nodes/node-a/ports').send({ range: { start: 30000, end: 30010 } }).expect(200);
+    const one = await create('one', { auto: '80' });
+    const two = await create('two', { auto: '80' });
+    expect(one.body.ports).toEqual({ '30000': '80' });
+    expect(two.body.ports).toEqual({ '30001': '80' });
+    expect((await request(app).get(`/deployments/${one.body.id}`)).body.portAllocations).toEqual([{ port: 30000, primary: true }]);
+  });
+
+  it('holds explicit ports to the pool once the node has one', async () => {
+    await request(admin).patch('/nodes/node-a/ports').send({ range: { start: 30000, end: 30010 } });
+    const res = await create('x', { '8080': '80' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/outside this node's port range/);
+  });
+
+  it('checks an edit against the other servers, and moves the claim with it', async () => {
+    const first = await create('first', { '8080': '80' });
+    const second = await create('second', { '9090': '80' });
+    await request(app).patch(`/deployments/${second.body.id}`).send({ ports: { '8080': '80' } }).expect(409);
+    await request(app).patch(`/deployments/${first.body.id}`).send({ ports: { '8081': '80' } }).expect(200);
+    await request(app).patch(`/deployments/${second.body.id}`).send({ ports: { '8080': '80' } }).expect(200);
+  });
+
+  it('lets the owner pick which port is the primary one', async () => {
+    const s = await create('game', { '27015': '27015/udp', '27016': '27016/tcp' });
+    await request(app).put(`/deployments/${s.body.id}/ports/primary`).send({ port: 27016 }).expect(200);
+    expect((await request(app).get(`/deployments/${s.body.id}`)).body.portAllocations).toEqual([
+      { port: 27015, primary: false },
+      { port: 27016, primary: true },
+    ]);
+    await request(app).put(`/deployments/${s.body.id}/ports/primary`).send({ port: 1 }).expect(404);
+  });
+
+  it('lets only administrators see or change a node\'s pool', async () => {
+    await request(app).patch('/nodes/node-a/ports').send({ range: { start: 1, end: 2 } }).expect(403);
+    await request(app).get('/nodes/node-a/ports').expect(403);
+    await create('first', { '8080': '80' });
+    const res = await request(admin).get('/nodes/node-a/ports');
+    expect(res.body).toEqual([{ port: 8080, deploymentId: expect.any(String), name: 'first', primary: true }]);
+  });
+
+  it('says how many existing ports a new range leaves outside it, without renumbering them', async () => {
+    await create('first', { '8080': '80' });
+    const res = await request(admin).patch('/nodes/node-a/ports').send({ range: { start: 30000, end: 30010 } });
+    expect(res.body.outsideRange).toBe(1);
+    expect((await repo.listPortAllocations({ nodeId: 'node-a' })).map((a) => a.port)).toEqual([8080]);
   });
 });

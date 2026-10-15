@@ -25,6 +25,7 @@ interface NodeHeartbeatPayload {
   agentUrl?: string;
   resources?: {
     cpuPercent?: number;
+    cpuCores?: number;
     ramUsedMb?: number;
     ramTotalMb?: number;
     diskUsedGb?: number;
@@ -60,6 +61,7 @@ export function createNodeRegistry(repo: Repository): NodeRegistry {
       // isn't cleared by an older agent that doesn't report one.
       agentUrl: payload.agentUrl,
       cpuPercent: r?.cpuPercent,
+      cpuCores: r?.cpuCores,
       ramUsedMb: r?.ramUsedMb,
       ramTotalMb: r?.ramTotalMb,
       diskUsedGb: r?.diskUsedGb,

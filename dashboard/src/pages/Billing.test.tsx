@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Billing } from './Billing';
+import { act } from '@testing-library/react';
+import { Billing, approvalHint, leftToSpendNote, newlyConfirmed, refreshInterval, runwayNote, sentence, statusLabel, POLL_MS, PENDING_POLL_MS } from './Billing';
+import type { LedgerEntry } from '../api';
 import { ToastProvider } from '../components/Toast';
+import { DialogProvider } from '../components/Dialog';
 
 // Fetch is stubbed per-URL to stand in for the orchestrator billing proxy.
 const plan = { id: 'standard', name: 'Standard', pricePerHour: 0.02, currency: 'EUR', freeHoursPerMonth: 100, maxServers: 5, maxDatabases: 5 };
@@ -16,6 +19,14 @@ function routeFetch(url: string) {
   if (url.endsWith('/billing/usage')) return Promise.resolve(jsonResponse({ hours: 3.5, cost: 0, plan }));
   if (url.endsWith('/billing/ledger')) return Promise.resolve(jsonResponse([]));
   if (url.endsWith('/billing/topup')) return Promise.resolve(jsonResponse({ status: 'pending', reference: 'r1' }, 202));
+  if (url.endsWith('/me/entitlements')) {
+    return Promise.resolve(
+      jsonResponse({
+        entitlements: { ...plan, planId: 'standard', planName: 'Standard', maxRamMb: 8192, maxBackupsPerServer: 10, charging: { basis: 'runtime-hours', pricePerHour: 0.02, currency: 'EUR', freeHoursPerMonth: 100, sizeFactor: { standardCpuPercent: 50, standardRamPercent: 50, minimum: 0.25 } } },
+        usage: { servers: 0, databases: 0, ramMb: 0, uncappedServers: 0 },
+      })
+    );
+  }
   return Promise.resolve(jsonResponse({}));
 }
 
@@ -33,6 +44,74 @@ describe('Billing page', () => {
     vi.stubGlobal('fetch', vi.fn((url: string) => routeFetch(String(url))));
   });
   afterEach(() => vi.unstubAllGlobals());
+
+  // #297: a customer who cannot predict the bill reads "nothing was charged when
+  // I created a server" as a bug rather than as the model.
+  it('says how the plan charges', async () => {
+    renderBilling();
+    expect(await screen.findByText(/for each hour a server runs/)).toBeInTheDocument();
+    expect(screen.getByText(/first 100 hours each month are free, shared across all your servers/)).toBeInTheDocument();
+  });
+
+  it('tells an account that has run out that its servers will not run (#365)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        String(url).endsWith('/billing/standing')
+          ? Promise.resolve(jsonResponse({ balance: 1, accrued: 3, available: -2, freeHoursLeft: 0, canRun: false, currency: 'EUR' }))
+          : routeFetch(String(url))
+      )
+    );
+    renderBilling();
+    expect(await screen.findByText(/You owe .*2[.,]00/)).toBeInTheDocument();
+    expect(screen.getByText(/Servers cannot be started/)).toBeInTheDocument();
+  });
+
+  // #379: an amount does not say how long it lasts.
+  it('says how long the credit lasts, and warns when that is short', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        String(url).endsWith('/billing/standing')
+          ? Promise.resolve(jsonResponse({ balance: 5, accrued: 1, available: 4, freeHoursLeft: 0, canRun: true, currency: 'EUR', hoursLeft: 8, runsLow: true }))
+          : routeFetch(String(url))
+      )
+    );
+    renderBilling();
+    expect(await screen.findByText(/Lasts about 8 hours at the current rate/)).toBeInTheDocument();
+    expect(screen.getByText(/Your credit runs out in about 8 hours/)).toHaveAttribute('role', 'status');
+  });
+
+  // #369: found by looking at the page — after a switch it went on quoting the old plan's rate.
+  it('re-reads how the plan charges after the plan is changed', async () => {
+    let onPro = false;
+    const charging = (pricePerHour: number) => ({ basis: 'runtime-hours', pricePerHour, currency: 'EUR', freeHoursPerMonth: 0, sizeFactor: { standardCpuPercent: 50, standardRamPercent: 50, minimum: 0.25 } });
+    const option = (id: string, name: string) => ({ id, name, pricePerHour: 0.02, currency: 'EUR', freeHoursPerMonth: 0, maxServers: 5, maxDatabases: 5, maxRamMb: null, maxBackupsPerServer: null, active: true, problem: null });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        const u = String(url);
+        if (u.endsWith('/billing/plans')) return Promise.resolve(jsonResponse({ currentPlanId: onPro ? 'pro' : 'standard', plans: [option('standard', 'Standard'), option('pro', 'Pro')] }));
+        if (u.endsWith('/billing/plan') && init?.method === 'PUT') {
+          onPro = true;
+          return Promise.resolve(jsonResponse(option('pro', 'Pro')));
+        }
+        if (u.endsWith('/me/entitlements')) return Promise.resolve(jsonResponse({ entitlements: { charging: charging(onPro ? 0.07 : 0.02) }, usage: {} }));
+        return routeFetch(u);
+      })
+    );
+    render(
+      <ToastProvider>
+        <DialogProvider>
+          <Billing />
+        </DialogProvider>
+      </ToastProvider>
+    );
+    expect(await screen.findByText(/0[.,]02 for each hour a server runs/)).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole('button', { name: 'Switch to Pro' }));
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Switch to Pro' }));
+    expect(await screen.findByText(/0[.,]07 for each hour a server runs/)).toBeInTheDocument();
+  });
 
   it('shows the credit balance and plan', async () => {
     renderBilling();
@@ -52,6 +131,133 @@ describe('Billing page', () => {
       const topup = calls.find((c: unknown[]) => String(c[0]).endsWith('/billing/topup'));
       expect(topup).toBeTruthy();
       expect(JSON.parse((topup![1] as RequestInit).body as string)).toEqual({ amount: 10 });
+    });
+  });
+
+  describe('keeping the balance current (#296)', () => {
+    const entry = (over: Partial<LedgerEntry>): LedgerEntry =>
+      ({ id: 'l1', type: 'topup', amount: 10, currency: 'EUR', status: 'pending', description: 'Top-up', createdAt: new Date().toISOString(), ...over }) as LedgerEntry;
+
+    it('polls faster while a top-up is waiting on FinVault', () => {
+      expect(refreshInterval([])).toBe(POLL_MS);
+      expect(refreshInterval([entry({ status: 'confirmed' })])).toBe(POLL_MS);
+      expect(refreshInterval([entry({ status: 'pending' })])).toBe(PENDING_POLL_MS);
+      // A pending *charge* is not something the person is watching for.
+      expect(refreshInterval([entry({ type: 'charge', status: 'pending' })])).toBe(POLL_MS);
+    });
+
+    // #298: a top-up FinVault never answered is no longer "pending" forever.
+    it('shows an expired top-up as not confirmed, and still notices a late confirmation', () => {
+      expect(statusLabel('expired')).toBe('Not confirmed');
+      expect(newlyConfirmed([entry({ id: 'x', status: 'expired' })], [entry({ id: 'x', status: 'confirmed' })]).map((e) => e.id)).toEqual(['x']);
+    });
+
+    // #351: asking is not paying — the next step is in another product.
+    it('says where a requested top-up has to be approved', () => {
+      expect(approvalHint('€20.00', 'me@example.com')).toContain('the FinVault account of me@example.com');
+      expect(approvalHint('€20.00')).toContain('your FinVault account');
+    });
+
+    // #365: the balance overstates what is left — usage is charged to it later.
+    it('says where "left to spend" comes from', () => {
+      const standing = { balance: 10, accrued: 4, available: 6, freeHoursLeft: 0, canRun: true, currency: 'EUR' };
+      expect(leftToSpendNote(standing)).toMatch(/balance less .*4[.,]00 used this cycle/);
+      expect(leftToSpendNote({ ...standing, freeHoursLeft: 12.5 })).toContain('12.5 free hours left');
+    });
+
+    // #379: what the amount means in time.
+    it('says how long what is left lasts, or that nothing is spending it', () => {
+      const standing = { balance: 10, accrued: 4, available: 6, freeHoursLeft: 0, canRun: true, currency: 'EUR', hoursLeft: 30, runsLow: false };
+      expect(runwayNote(standing)).toBe('Lasts about 30 hours at the current rate');
+      expect(runwayNote({ ...standing, hoursLeft: 100 })).toBe('Lasts about 4 days at the current rate');
+      expect(runwayNote({ ...standing, hoursLeft: 0.3 })).toBe('Lasts less than an hour at the current rate');
+      expect(runwayNote({ ...standing, hoursLeft: null })).toBe('No server is running, so nothing is being spent');
+      // An older bridge does not report it at all.
+      expect(runwayNote({ ...standing, hoursLeft: undefined })).toBeNull();
+    });
+
+    it('shows a reason from FinVault as a sentence', () => {
+      expect(sentence('the customer declined the request')).toBe('The customer declined the request.');
+      expect(sentence('Already a sentence.')).toBe('Already a sentence.');
+      expect(sentence('  ')).toBe('');
+    });
+
+    it('explains an unconfirmed top-up above the ledger', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((url: string) => (url.endsWith('/billing/ledger') ? Promise.resolve(jsonResponse([entry({ status: 'expired' })])) : routeFetch(url)))
+      );
+      renderBilling();
+      expect(await screen.findByText('Not confirmed')).toBeInTheDocument();
+      expect(screen.getByText(/not confirmed by FinVault in time, so no credit was added/)).toHaveAttribute('role', 'status');
+    });
+
+    it('notices a top-up that went from pending to confirmed', () => {
+      const before = [entry({ id: 'a' }), entry({ id: 'b', status: 'confirmed' })];
+      const after = [entry({ id: 'a', status: 'confirmed' }), entry({ id: 'b', status: 'confirmed' }), entry({ id: 'c', status: 'confirmed' })];
+      expect(newlyConfirmed(before, after).map((e) => e.id)).toEqual(['a']);
+      expect(newlyConfirmed(after, after)).toEqual([]);
+    });
+
+    it('refreshes on its own, and a confirmed top-up moves the balance without a reload', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        let balance = 12.5;
+        let ledger: LedgerEntry[] = [entry({ id: 't1' })];
+        vi.stubGlobal(
+          'fetch',
+          vi.fn((url: string) => {
+            if (url.endsWith('/billing/wallet')) return Promise.resolve(jsonResponse({ userId: 'u1', balance, currency: 'EUR' }));
+            if (url.endsWith('/billing/ledger')) return Promise.resolve(jsonResponse(ledger));
+            return routeFetch(url);
+          })
+        );
+        renderBilling();
+        expect(await screen.findByText(/12[.,]50/)).toBeInTheDocument();
+
+        // FinVault confirms while the person is looking at the page.
+        balance = 22.5;
+        ledger = [entry({ id: 't1', status: 'confirmed' })];
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(PENDING_POLL_MS + 50);
+        });
+
+        expect(await screen.findByText(/22[.,]50/)).toBeInTheDocument();
+        expect(await screen.findByText(/credit has been added/i)).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('says when the figures were read', async () => {
+      renderBilling();
+      await screen.findByText(/12[.,]50/);
+      expect(screen.getByText(/Updated/)).toBeInTheDocument();
+    });
+
+    it('keeps the last figures but says plainly when a refresh fails', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        let failing = false;
+        vi.stubGlobal(
+          'fetch',
+          vi.fn((url: string) => (failing ? Promise.resolve(jsonResponse({ error: 'bridge down' }, 502)) : routeFetch(url)))
+        );
+        renderBilling();
+        await screen.findByText(/12[.,]50/);
+
+        failing = true;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(POLL_MS + 50);
+        });
+
+        // The balance stays on screen — it is the last known value — but it is
+        // no longer presented as current.
+        expect(screen.getByText(/12[.,]50/)).toBeInTheDocument();
+        expect(await screen.findByText(/Could not refresh/)).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

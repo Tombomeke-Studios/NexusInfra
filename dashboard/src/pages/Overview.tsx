@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { listNodes, listDeployments, registerNode, deregisterNode, getMonitoring, type NodeView, type DeploymentView, type MonitoringSnapshot } from '../api';
+import { listNodes, listAllDeployments, registerNode, deregisterNode, setNodeMaintenance, getMonitoring, type NodeView, type DeploymentView, type MonitoringSnapshot, type DeadLetterSnapshot } from '../api';
 import { CountUp } from '../components/CountUp';
 import { useToast } from '../components/Toast';
+import { useDialog } from '../components/Dialog';
 import { InfoHint } from '../components/InfoHint';
 import { formatRelative } from '../format';
 
 // Overview — ported from the redesign: stat cards, a fleet-utilization card, a
-// grid of rich node cards (+ an add-node form, UI-only for now), and a recent
-// activity feed. Real values come from the API; extras are derived/mock and get
-// wired up later.
+// grid of rich node cards (+ an add-node form) and a recent activity feed. The
+// stats, node health and maintenance state all come from the API; maintenance is
+// a real persisted drain that stops the orchestrator placing here (#258).
 const meterColor = (pct: number) =>
   pct >= 85 ? 'var(--color-danger)' : pct >= 70 ? 'var(--color-warning)' : 'var(--color-primary)';
 
@@ -26,13 +27,13 @@ export function Overview() {
   const [monitoring, setMonitoring] = useState<MonitoringSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [addingNode, setAddingNode] = useState(false);
-  const [maint, setMaint] = useState<string[]>([]);
   const { toast } = useToast();
+  const { confirm } = useDialog();
   const navigate = useNavigate();
 
   const refresh = useCallback(
     (first = false) =>
-      Promise.all([listNodes(), listDeployments()])
+      Promise.all([listNodes(), listAllDeployments()])
         .then(([n, d]) => {
           setNodes(n);
           setDeployments(d);
@@ -71,7 +72,7 @@ export function Overview() {
   const addNode = async (cfg: { name: string; location: string; maint: boolean }) => {
     try {
       const node = await registerNode({ name: cfg.name.trim() || undefined, location: cfg.location.trim() || undefined });
-      if (cfg.maint) setMaint((m) => [...m, node.id]);
+      if (cfg.maint) await setNodeMaintenance(node.id, true);
       setAddingNode(false);
       toast(`${node.name} registered — start its agent with NODE_ID=${node.id}`, 'success', 'Node');
       await refresh();
@@ -80,7 +81,13 @@ export function Overview() {
     }
   };
   const removeNode = async (id: string, name: string) => {
-    if (!window.confirm(`Deregister ${name}? Its record is removed (the machine itself is untouched).`)) return;
+    const ok = await confirm({
+      title: `Deregister ${name}?`,
+      message: 'Its record is removed from the panel. The machine itself is untouched, and it will reappear if its agent keeps sending heartbeats.',
+      confirmLabel: 'Deregister',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await deregisterNode(id);
       toast(`${name} deregistered`, 'error', 'Node');
@@ -89,10 +96,20 @@ export function Overview() {
       toast(e instanceof Error ? e.message : 'Deregister failed', 'error', 'Node');
     }
   };
-  const toggleMaint = (id: string, name: string) => {
-    const on = !maint.includes(id);
-    setMaint((m) => (on ? [...m, id] : m.filter((x) => x !== id)));
-    toast(on ? `${name} entered maintenance` : `${name} back online`, on ? 'info' : 'success', 'Node');
+  // Maintenance is a real, persisted drain (#258): the orchestrator stops placing
+  // new servers here. It deliberately leaves what already runs alone, so say so.
+  const toggleMaint = async (id: string, name: string, on: boolean) => {
+    try {
+      await setNodeMaintenance(id, on);
+      toast(
+        on ? `${name} is draining — no new servers will be placed here` : `${name} is back in the placement pool`,
+        on ? 'info' : 'success',
+        'Node'
+      );
+      await refresh();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not change maintenance', 'error', 'Node');
+    }
   };
   const running = ds.filter((d) => d.status === 'running').length;
   const healthy = ns.filter((n) => n.health === 'healthy').length;
@@ -180,19 +197,44 @@ export function Overview() {
       </div>
 
       {/* Nodes */}
-      <h3 style={{ marginBottom: 16 }}>Nodes</h3>
+      <h2 style={{ marginBottom: 16, fontSize: '1.17em' }}>Nodes</h2>
       <div className="stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(240px,1fr))', gap: 16 }}>
         {ns.map((n, i) => {
-          const inMaint = maint.includes(n.id);
+          const inMaint = Boolean(n.maintenance);
           const hs = inMaint ? { color: 'var(--color-warning)', soft: 'var(--color-warning-soft)' } : healthStyle(n.health);
           const healthLabel = inMaint ? 'maintenance' : n.health;
           const cpu = cpuOf(n);
           const ram = ramOf(n);
-          const svCount = ds.filter((d) => d.nodeId === n.id).length;
+          const here = ds.filter((d) => d.nodeId === n.id);
+          const svCount = here.length;
           const memGB = n.ramTotalMb ? Math.round(n.ramTotalMb / 1024) : 0;
-          const cores = Math.max(1, Math.round((n.ramTotalMb ?? 4096) / 2048));
-          const allocCpu = Math.min(100, svCount * 22);
-          const allocRam = Math.min(100, svCount * 18);
+          // Real numbers only (#261). The core count used to be inferred from RAM,
+          // and "committed" from the server count times an arbitrary constant.
+          // Committed is now the sum of the caps those servers were actually given;
+          // servers deployed without a cap contribute nothing, which is the truth —
+          // they are uncapped, not free.
+          //
+          // The node's own committed figure comes first (#383): it counts caps set
+          // in MB and cores as well as percentages, where summing `ramPercent`
+          // here counted a server sized in MB as nothing. The sum stays only for
+          // a response without `capacity`.
+          const cap = n.capacity;
+          const committedCpu = Math.min(
+            100,
+            Math.round(
+              cap?.cpuCoresTotal
+                ? (cap.cpuCoresCommitted / cap.cpuCoresTotal) * 100
+                : here.reduce((a, d) => a + (d.resourceLimits?.cpuPercent ?? 0), 0)
+            )
+          );
+          const committedRam = Math.min(
+            100,
+            Math.round(
+              cap?.ramTotalMb
+                ? (cap.ramCommittedMb / cap.ramTotalMb) * 100
+                : here.reduce((a, d) => a + (d.resourceLimits?.ramPercent ?? 0), 0)
+            )
+          );
           return (
             <article key={n.id} className="card node-card spotlight" data-spotlight style={{ ['--i']: i } as CSSProperties}>
               <div style={{ padding: 20 }}>
@@ -230,7 +272,9 @@ export function Overview() {
                   </span>
                 </div>
                 <div style={{ display: 'flex', gap: 12, fontSize: '.76rem', color: 'var(--color-text-subtle)', fontFamily: 'var(--font-mono)', marginBottom: 14, flexWrap: 'wrap' }}>
-                  <span>{cores} vCPU</span><span>·</span><span>{memGB} GB</span><span>·</span><span>{svCount} servers</span>
+                  {n.cpuCores != null && (<><span>{n.cpuCores} vCPU</span><span>·</span></>)}
+                  {memGB > 0 && (<><span>{memGB} GB</span><span>·</span></>)}
+                  <span>{svCount} servers</span>
                   {n.location && (<><span>·</span><span>📍 {n.location}</span></>)}
                 </div>
                 <NodeMeter label="Live CPU" pct={cpu} />
@@ -238,14 +282,14 @@ export function Overview() {
                 <div style={{ paddingTop: 12, borderTop: '1px solid var(--color-border)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
                     <span style={{ fontSize: '.72rem', textTransform: 'uppercase', letterSpacing: '.04em', color: 'var(--color-text-subtle)' }}>Committed</span>
-                    <span className="tnum mono" style={{ fontSize: '.76rem', color: 'var(--color-text-subtle)' }}>cpu {allocCpu}% · ram {allocRam}%</span>
+                    <span className="tnum mono" style={{ fontSize: '.76rem', color: 'var(--color-text-subtle)' }}>cpu {committedCpu}% · ram {committedRam}%</span>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    <div className="meter" style={{ flex: 1, height: 5 }}><div className="meter__fill" style={{ width: `${allocCpu}%` }} /></div>
-                    <div className="meter" style={{ flex: 1, height: 5 }}><div className="meter__fill" style={{ width: `${allocRam}%`, background: 'oklch(0.72 0.13 180)' }} /></div>
+                    <div className="meter" style={{ flex: 1, height: 5 }}><div className="meter__fill" style={{ width: `${committedCpu}%` }} /></div>
+                    <div className="meter" style={{ flex: 1, height: 5 }}><div className="meter__fill" style={{ width: `${committedRam}%`, background: 'oklch(0.72 0.13 180)' }} /></div>
                   </div>
                 </div>
-                <button className="btn btn--secondary btn--sm" data-ripple style={{ marginTop: 14, width: '100%' }} onClick={() => toggleMaint(n.id, n.name)}>
+                <button className="btn btn--secondary btn--sm" data-ripple style={{ marginTop: 14, width: '100%' }} onClick={() => void toggleMaint(n.id, n.name, !inMaint)}>
                   {inMaint ? 'Exit maintenance' : 'Enter maintenance'}
                 </button>
               </div>
@@ -264,7 +308,7 @@ export function Overview() {
       </div>
 
       {/* Recent activity */}
-      <h3 style={{ margin: '30px 0 16px' }}>Recent activity</h3>
+      <h2 style={{ margin: '30px 0 16px', fontSize: '1.17em' }}>Recent activity</h2>
       <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
         {activity.length === 0 ? (
           <div className="empty">No recent activity.</div>
@@ -328,6 +372,41 @@ function ServicesStrip({ monitoring }: { monitoring: MonitoringSnapshot | null }
             </span>
           ))}
         </div>
+      )}
+      <DeadLetters snapshot={monitoring?.deadLetters} />
+    </div>
+  );
+}
+
+/**
+ * Whether any event failed to process (#243).
+ *
+ * Consumers dead-letter on error and nothing read that queue, so events could
+ * pile up unnoticed indefinitely. Shown only when there is something to say:
+ * a healthy queue does not need a line of its own, but a stuck one is the kind
+ * of quiet failure that otherwise goes unfound for weeks.
+ */
+function DeadLetters({ snapshot }: { snapshot?: DeadLetterSnapshot }) {
+  if (!snapshot || snapshot.status === 'empty') return null;
+
+  const unknown = snapshot.status === 'unknown';
+  return (
+    <div
+      style={{
+        marginTop: 12,
+        paddingTop: 12,
+        borderTop: '1px solid var(--color-border)',
+        fontSize: '.84rem',
+        color: unknown ? 'var(--color-text-subtle)' : 'var(--color-warning)',
+      }}
+    >
+      {unknown ? (
+        <>Could not read the dead-letter queue, so whether any event failed is unknown.</>
+      ) : (
+        <>
+          <strong>{snapshot.depth}</strong> {snapshot.depth === 1 ? 'event' : 'events'} could not be processed and{' '}
+          {snapshot.depth === 1 ? 'is' : 'are'} waiting in the dead-letter queue.
+        </>
       )}
     </div>
   );

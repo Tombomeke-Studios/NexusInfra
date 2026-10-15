@@ -14,6 +14,8 @@ const MEMBER = { id: 'user-member', email: 'member@example.com', platformRole: '
 const OUTSIDER = { id: 'user-outsider', email: 'outsider@example.com', platformRole: 'user' as const };
 
 const allowQuota: Parameters<typeof createApiRouter>[0]['checkQuota'] = async () => ({ allowed: true, limit: Infinity });
+// The same for plan entitlements (#297): no plan unless a suite brings one.
+const noPlan: Parameters<typeof createApiRouter>[0]['getEntitlements'] = async () => null;
 
 function appFor(repo: InMemoryRepository, principal: { id: string; platformRole: 'owner' | 'admin' | 'user' }) {
   const app = express();
@@ -24,7 +26,7 @@ function appFor(repo: InMemoryRepository, principal: { id: string; platformRole:
     next();
   });
   app.use(createTeamRouter({ repo }));
-  app.use(createApiRouter({ repo, checkQuota: allowQuota, publish: async () => true }));
+  app.use(createApiRouter({ repo, checkQuota: allowQuota, getEntitlements: noPlan, publish: async () => true }));
   return app;
 }
 
@@ -93,6 +95,28 @@ describe('teams', () => {
       expect((await request(memberApp).delete(`/teams/${teamId}/members/${OUTSIDER.id}`)).status).toBe(403);
     });
 
+    it('hides an unknown or invisible team behind 404 on every route (#224)', async () => {
+      // The guard runs before the handlers, so this holds for routes nobody has
+      // written yet as much as for these — which is the point of moving it there.
+      const routes = [
+        () => request(outsiderApp).get(`/teams/${teamId}`),
+        () => request(outsiderApp).delete(`/teams/${teamId}`),
+        () => request(outsiderApp).post(`/teams/${teamId}/members`).send({ email: MEMBER.email, role: 'viewer' }),
+        () => request(outsiderApp).patch(`/teams/${teamId}/members/${MEMBER.id}`).send({ role: 'viewer' }),
+        () => request(outsiderApp).delete(`/teams/${teamId}/members/${OUTSIDER.id}`),
+      ];
+      for (const call of routes) expect((await call()).status).toBe(404);
+      expect((await request(leadApp).get('/teams/no-such-team')).status).toBe(404);
+    });
+
+    it('refuses a member before the handler validates anything (#224)', async () => {
+      await addMember();
+      // A nonsense role would be a 400 if the request got as far as validation;
+      // authorization is settled first, so it never does.
+      const res = await request(memberApp).post(`/teams/${teamId}/members`).send({ email: OUTSIDER.email, role: 'nonsense' });
+      expect(res.status).toBe(403);
+    });
+
     it('lets a member remove themselves', async () => {
       await addMember();
       expect((await request(memberApp).delete(`/teams/${teamId}/members/${MEMBER.id}`)).status).toBe(204);
@@ -106,8 +130,8 @@ describe('teams', () => {
       await shareWithTeam();
 
       const list = await request(memberApp).get('/deployments');
-      expect(list.body).toHaveLength(1);
-      expect(list.body[0]).toMatchObject({ id: deploymentId, role: 'operator' });
+      expect(list.body.items).toHaveLength(1);
+      expect(list.body.items[0]).toMatchObject({ id: deploymentId, role: 'operator' });
       expect((await request(memberApp).post(`/deployments/${deploymentId}/restart`)).status).toBe(202);
       // Still an operator, so the limits of that role hold.
       expect((await request(memberApp).get(`/deployments/${deploymentId}/backups`)).status).toBe(403);
@@ -133,7 +157,7 @@ describe('teams', () => {
       await shareWithTeam();
       await request(leadApp).delete(`/teams/${teamId}/members/${MEMBER.id}`);
       expect((await request(memberApp).get(`/deployments/${deploymentId}`)).status).toBe(404);
-      expect((await request(memberApp).get('/deployments')).body).toEqual([]);
+      expect((await request(memberApp).get('/deployments')).body.items).toEqual([]);
     });
 
     it('takes the stronger of a direct share and team membership', async () => {
@@ -142,7 +166,7 @@ describe('teams', () => {
       await request(leadApp).post(`/deployments/${deploymentId}/subusers`).send({ email: MEMBER.email, role: 'admin' });
 
       const list = await request(memberApp).get('/deployments');
-      expect(list.body[0].role).toBe('admin');
+      expect(list.body.items[0].role).toBe('admin');
       expect((await request(memberApp).get(`/deployments/${deploymentId}/backups`)).status).toBe(200);
     });
 

@@ -1,12 +1,6 @@
 import express from 'express';
-import {
-  assertEditionIsRunnable,
-  buildInfo,
-  consumeRabbitQueue,
-  startHeartbeat,
-  readPayload,
-  type EventEnvelope,
-} from 'shared';
+import { readDlq, type QueueProbe } from './dlq.js';
+import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, startHeartbeat, readPayload, connectRabbitMQ, type EventEnvelope, MetricsRegistry, registerBuildInfo, httpMetrics, metricsHandler } from 'shared';
 import { DEGRADED_MS, Monitor, OFFLINE_MS } from './monitor.js';
 
 // ── Control Room ──────────────────────────────────────────────────────────────
@@ -33,14 +27,42 @@ const monitor = new Monitor();
 // ── HTTP: health + live status view ───────────────────────────────────────────
 const app = express();
 
+// Prometheus metrics (#246). Registered before the routes, so every request is
+// measured.
+const metrics = new MetricsRegistry();
+registerBuildInfo(metrics, 'control-room', buildInfo());
+app.use(httpMetrics(metrics, 'control-room'));
+metrics.gauge('nexusinfra_monitored_sources', 'Heartbeat sources, by derived status.', ['status'], () => {
+  const counts = { healthy: 0, degraded: 0, offline: 0 };
+  for (const s of monitor.snapshot(Date.now())) counts[s.status as keyof typeof counts]++;
+  return Object.entries(counts).map(([status, value]) => ({ labels: { status }, value }));
+});
+// Left out of a scrape when the broker cannot be asked, rather than reported as
+// zero — the same rule as /status (#243): not knowing is not "nothing failed".
+metrics.gauge('nexusinfra_dead_letters', 'Messages waiting in the dead-letter queue.', [], async () => {
+  const dlq = await readDlq(probe);
+  if (dlq.depth === null) throw new Error(dlq.error ?? 'unknown');
+  return dlq.depth;
+});
+
+app.get('/metrics', metricsHandler(metrics));
+
 app.get('/health', (_req, res) => {
   res.json({ service: 'control-room', status: 'healthy', ...buildInfo(), uptimeSec: Math.round(process.uptime()) });
 });
 
 // Live snapshot: one entry per heartbeat source with its derived status and
 // uptime %. Shape is backward-compatible — `uptimePercent` was added (#165).
-app.get('/status', (_req, res) => {
-  res.json({ monitored: monitor.snapshot(Date.now()), thresholds: { degradedMs: DEGRADED_MS, offlineMs: OFFLINE_MS } });
+app.get('/status', async (_req, res) => {
+  res.json({
+    monitored: monitor.snapshot(Date.now()),
+    thresholds: { degradedMs: DEGRADED_MS, offlineMs: OFFLINE_MS },
+    // Whether anything failed to process (#243). Consumers dead-letter on error
+    // and nothing used to read that queue, so events could pile up unnoticed
+    // indefinitely — the Control Room already answers "is everything alive", and
+    // this is the same question about the messages.
+    deadLetters: await readDlq(probe),
+  });
 });
 
 // Reliability detail: cumulative uptime plus recent status transitions per source.
@@ -49,6 +71,11 @@ app.get('/uptime', (_req, res) => {
 });
 
 app.listen(PORT, () => console.log(`[Control Room] HTTP listening on http://localhost:${PORT}`));
+
+// The channel, once connected, used only to ask the dead-letter queue's depth
+// (#243). Null until then, which `readDlq` reports as unknown rather than as
+// "nothing failed" — a claim nobody should make without having looked.
+let probe: QueueProbe | null = null;
 
 // ── Event bus: consume heartbeats, emit our own ───────────────────────────────
 async function start() {
@@ -69,6 +96,12 @@ async function start() {
         monitor.heartbeat(source, Date.now());
       }
     );
+
+    // One channel, kept for passive queue inspection. checkQueue consumes
+    // nothing: these messages are evidence, and reading them properly would mean
+    // requeueing and mutating their redelivery state.
+    const { channel } = await connectRabbitMQ();
+    probe = channel as QueueProbe;
 
     // Emit our own heartbeat so the Control Room appears in its own status view.
     startHeartbeat('control-room', 1000);

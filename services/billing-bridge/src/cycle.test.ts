@@ -69,10 +69,31 @@ describe('runBillingCycle', () => {
     expect(outcome.cost).toBe(10);
     expect(outcome.status).toBe('paid');
     expect((await repo.getWallet('u1')).balance).toBe(90);
+    // Shown to the customer: a month's name, not two timestamps.
+    expect((await repo.listLedger('u1'))[0].description).toBe('Usage for July 2026');
     const invoice = published.find((p) => p.key === 'invoice.generate');
     expect(invoice).toBeTruthy();
     expect(readPayload(invoice!.envelope.event).amount).toBe(10);
     expect(published.some((p) => p.key === 'billing.server.suspend')).toBe(false);
+  });
+
+  // #375: FinVault files the statement under the customer's account, found by address.
+  it('says whose statement it is, by the address the account topped up with', async () => {
+    await repo.setBalance('u1', 100);
+    await repo.setWalletEmail('u1', 'ada@example.com');
+    await repo.openInterval({ userId: 'u1', deploymentId: 'd1', planId: DEFAULT_PLAN.id, limits: {}, startedAt: '2026-07-01T00:00:00.000Z' });
+    await repo.closeInterval('d1', '2026-07-01T10:00:00.000Z');
+    await run();
+    const invoice = published.find((p) => p.key === 'invoice.generate');
+    expect(readPayload(invoice!.envelope.event)).toMatchObject({ customerEmail: 'ada@example.com', userId: 'u1', amount: 10 });
+  });
+
+  it('sends the statement without an address for an account that never topped up', async () => {
+    await repo.openInterval({ userId: 'u1', deploymentId: 'd1', planId: DEFAULT_PLAN.id, limits: {}, startedAt: '2026-07-01T00:00:00.000Z' });
+    await repo.closeInterval('d1', '2026-07-01T10:00:00.000Z');
+    await run();
+    const invoice = published.find((p) => p.key === 'invoice.generate');
+    expect(readPayload(invoice!.envelope.event)).not.toHaveProperty('customerEmail');
   });
 
   it('suspends running servers when the balance cannot cover the charge', async () => {

@@ -20,11 +20,37 @@ export interface NodeView {
   location?: string; // free-form label for a self-hosted node (e.g. "home-server")
   lastHeartbeat: string;
   cpuPercent: number | null;
+  /** The node's real CPU count; null until its agent reports one (#261). */
+  cpuCores?: number | null;
   ramUsedMb: number | null;
   ramTotalMb: number | null;
   diskUsedGb: number | null;
   diskTotalGb: number | null;
   health: NodeHealth;
+  /** Drained on purpose (#258): still running, but taking nothing new. */
+  /** The node's host-port pool (#233); null for none. */
+  portRangeStart?: number | null;
+  portRangeEnd?: number | null;
+  maintenance?: boolean;
+  /**
+   * What the node has, what it has already promised, and what it is using (#275).
+   * Three different numbers: "how much can I still give away" is answered by
+   * `ramAvailableMb` / `cpuCoresAvailable`, which come from *committed*, never
+   * from live usage.
+   */
+  capacity?: NodeCapacity;
+}
+
+export interface NodeCapacity {
+  ramTotalMb: number | null;
+  ramCommittedMb: number;
+  ramUsedMb: number | null;
+  ramAvailableMb: number | null;
+  cpuCoresTotal: number | null;
+  cpuCoresCommitted: number;
+  cpuUsedPercent: number | null;
+  cpuCoresAvailable: number | null;
+  overCommitted: boolean;
 }
 
 export interface DeploymentView {
@@ -40,10 +66,15 @@ export interface DeploymentView {
   role?: 'owner' | 'admin' | 'operator' | 'viewer';
   nodeId: string | null;
   containerId: string | null;
+  /** The caps this server was given — summed per node for "committed" (#261). */
+  resourceLimits?: ResourceLimits;
   status: DeploymentStatus;
   startedAt: string | null;
   stoppedAt: string | null;
   createdAt: string;
+  /** When billing stopped it for lack of credit, and why (#380); cleared when it next starts. */
+  suspendedAt?: string | null;
+  suspendedReason?: string | null;
 }
 
 export interface DeploymentEvent {
@@ -55,9 +86,31 @@ export interface DeploymentEvent {
 
 export interface DeploymentDetail extends DeploymentView {
   events: DeploymentEvent[];
+  /** Host port → container port, as configured at creation (#217). */
+  ports: Record<string, string>;
+  /** The server's own environment variables (#218). */
+  env: Record<string, string>;
+  resourceLimits: ResourceLimits;
+  autoRestart: boolean;
+  /**
+   * Extra directories kept across restarts (#324). The egg's data directory and
+   * any `VOLUME` the image declares are kept as well, without being listed here.
+   * Absent on older responses.
+   */
+  persistPaths?: string[];
+  /** Absent on older responses. */
+  backupRetention?: BackupRetention;
+  /** True while the server is being moved to another node (#234). */
+  migrating?: boolean;
+  /** The host ports this server holds on its node, and which is primary (#233). */
+  portAllocations?: Array<{ port: number; primary: boolean }>;
 }
 
 export interface ResourceLimits {
+  /** Absolute memory in MB; preferred over ramPercent and wins when both are set (#275). */
+  ramMb?: number;
+  /** Absolute CPU in cores, fractional allowed. Preferred over cpuPercent. */
+  cpuCores?: number;
   cpuPercent?: number;
   ramPercent?: number;
   diskPercent?: number;
@@ -67,21 +120,101 @@ export interface ResourceLimits {
   oomKill?: boolean;
 }
 
-export interface CreateDeploymentInput {
+// ── Eggs (#231) — the recipes a server can be created from ────────────────────
+export type EggVariableKind = 'string' | 'integer' | 'boolean' | 'choice' | 'version';
+
+/** When a variable applies at all — `NEOFORGE_VERSION` only to NeoForge (#311). */
+export interface EggVariableCondition {
+  key: string;
+  equals: string[];
+}
+
+export interface EggVariable {
+  key: string;
+  label: string;
+  description: string;
+  kind: EggVariableKind;
+  default: string;
+  /**
+   * For `choice`, the allowed values. For `version`, the *suggestions* the
+   * orchestrator resolved — never a closed set, since the list can be stale or
+   * come from the offline fallback (#311).
+   */
+  options?: string[];
+  min?: number;
+  max?: number;
+  showWhen?: EggVariableCondition;
+  /** A blank answer is filled with a random secret by the API (#388). */
+  generate?: 'password';
+}
+
+/** Whether `variable` applies, given the answers so far. Mirrors eggs.ts (#311). */
+export function variableApplies(variable: EggVariable, values: Record<string, string>): boolean {
+  if (!variable.showWhen) return true;
+  return variable.showWhen.equals.includes(values[variable.showWhen.key] ?? '');
+}
+
+export interface Egg {
+  id: string;
   name: string;
+  description: string;
   dockerImage: string;
+  ports: Record<string, string>;
+  dataPath: string;
+  variables: EggVariable[];
+  /** Which variable is the JVM heap, when this server has one (#271). */
+  memoryVariable?: string;
+}
+
+/**
+ * The egg catalogue. Fetched rather than bundled: the orchestrator owns the
+ * recipes and validates against them, so the panel renders whatever it is told
+ * about instead of keeping a copy that could drift.
+ */
+export function listEggs(): Promise<Egg[]> {
+  return request('/eggs');
+}
+
+/**
+ * Creating a server is one of two things, and the types say so: an egg decides
+ * its own image (#231), or you name an image yourself. Requiring both would let
+ * a caller send an image that is then ignored.
+ */
+export type CreateDeploymentInput = CreateDeploymentBase &
+  ({
+    eggId: string;
+    eggValues?: Record<string, string>;
+    dockerImage?: never;
+    /** Import an existing directory on the node as this server's data (#268). */
+    dataPath?: string;
+  } | { dockerImage: string; eggId?: never });
+
+interface CreateDeploymentBase {
+  name: string;
   ports?: Record<string, string>;
   env?: Record<string, string>;
   resourceLimits?: ResourceLimits;
   autoRestart?: boolean;
   type?: string;
+  /** Pin the server to a node; omit to let the orchestrator pick the emptiest (#254). */
+  nodeId?: string;
+  /** Container directories to keep across restarts, beyond the egg's own (#324). */
+  persistPaths?: string[];
 }
 
 /** Thrown when the API responds with a non-2xx status; carries the HTTP status. */
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
-    message: string
+    message: string,
+    /**
+     * The parsed error body, when there was one.
+     *
+     * Some refusals carry a flag as well as a message — `totpRequired` (#229),
+     * `enrolmentRequired` — and the panel has to act on them rather than only
+     * display the sentence.
+     */
+    public readonly body: Record<string, unknown> | null = null
   ) {
     super(message);
     this.name = 'ApiError';
@@ -101,13 +234,14 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     let message = res.statusText;
+    let parsed: Record<string, unknown> | null = null;
     try {
-      const body = (await res.json()) as { error?: string };
-      if (body?.error) message = body.error;
+      parsed = (await res.json()) as Record<string, unknown>;
+      if (typeof parsed?.error === 'string') message = parsed.error;
     } catch {
       // non-JSON error body; keep the status text
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, parsed);
   }
 
   if (res.status === 204) return undefined as T;
@@ -129,11 +263,47 @@ export interface CurrentUser {
   displayName: string;
   platformRole: PlatformRole;
   createdAt: string;
+  /** Whether this account has a second factor confirmed (#229). */
+  twoFactorEnabled?: boolean;
+  /** Whether the address has been confirmed by a mailed link (#367). */
+  emailVerified?: boolean;
 }
 
-/** Accepts an email, or the legacy username for installs that predate accounts. */
-export function login(email: string, password: string): Promise<{ token: string }> {
-  return request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+/**
+ * Accepts an email, or the legacy username for installs that predate accounts.
+ *
+ * `code` is a six-digit TOTP code or a recovery code (#229) — one field, because
+ * the server tells them apart and asking someone which kind they are holding is
+ * a question about our implementation, not theirs.
+ */
+export function login(email: string, password: string, code?: string): Promise<{ token: string; mustEnrolTotp?: boolean }> {
+  return request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password, ...(code ? { code } : {}) }) });
+}
+
+// ── Two-factor authentication (#229) ────────────────────────────────────────
+export interface TotpStatus {
+  enabled: boolean;
+  enabledAt: string | null;
+  recoveryCodesRemaining: number;
+}
+
+export function getTotpStatus(): Promise<TotpStatus> {
+  return request('/me/totp');
+}
+
+/** Begin enrolment. Nothing is enforced until a code proves the secret was scanned. */
+export function startTotpEnrolment(): Promise<{ secret: string; otpauthUrl: string }> {
+  return request('/me/totp', { method: 'POST', body: JSON.stringify({}) });
+}
+
+/** Finish it. The recovery codes are shown once; the token replaces the current one. */
+export function confirmTotpEnrolment(code: string): Promise<{ recoveryCodes: string[]; token: string }> {
+  return request('/me/totp/verify', { method: 'POST', body: JSON.stringify({ code }) });
+}
+
+/** Turn it off. The password is required — a session alone is not enough. */
+export function disableTotp(password: string): Promise<void> {
+  return request('/me/totp', { method: 'DELETE', body: JSON.stringify({ password }) });
 }
 
 /** Self-registration — only reachable in the hosted edition; 403 otherwise. */
@@ -145,6 +315,66 @@ export function getCurrentUser(): Promise<CurrentUser> {
   return request('/me');
 }
 
+// ── Sessions (#227) — where you are signed in, and ending it ─────────────────
+export interface SessionView {
+  id: string;
+  createdAt: string;
+  lastSeenAt: string;
+  userAgent: string | null;
+  ipAddress: string | null;
+  /** The session making this request. Never offered for removal as "another". */
+  current: boolean;
+}
+
+export function listSessions(): Promise<SessionView[]> {
+  return request('/me/sessions');
+}
+
+/** End one other session — the "that wasn't me" button. */
+export function endSession(id: string): Promise<void> {
+  return request(`/me/sessions/${id}`, { method: 'DELETE' });
+}
+
+/** End every session but this one. */
+export function endOtherSessions(): Promise<void> {
+  return request('/me/sessions', { method: 'DELETE' });
+}
+
+// ── API tokens (#228) — a credential a script can hold ──────────────────────
+/** `write` covers anything that changes state; `admin` covers the panel itself. */
+export type ApiScope = 'write' | 'admin';
+
+export interface ApiTokenView {
+  id: string;
+  name: string;
+  scopes: ApiScope[];
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+}
+
+/** The one response that carries the secret. It is not recoverable afterwards. */
+export interface CreatedApiToken extends ApiTokenView {
+  secret: string;
+}
+
+export function listApiTokens(): Promise<ApiTokenView[]> {
+  return request('/me/tokens');
+}
+
+export function createApiToken(name: string, scopes: ApiScope[], expiresAt?: string | null): Promise<CreatedApiToken> {
+  return request('/me/tokens', { method: 'POST', body: JSON.stringify({ name, scopes, expiresAt: expiresAt ?? null }) });
+}
+
+export function revokeApiToken(id: string): Promise<void> {
+  return request(`/me/tokens/${id}`, { method: 'DELETE' });
+}
+
+/** End this session server-side, so the token stops working immediately. */
+export function logoutSession(): Promise<void> {
+  return request('/auth/logout', { method: 'POST' });
+}
+
 export function changePassword(currentPassword: string, newPassword: string): Promise<void> {
   return request('/me/password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) });
 }
@@ -152,6 +382,14 @@ export function changePassword(currentPassword: string, newPassword: string): Pr
 /** Administrator-only account list — how a panel admin sees who has access. */
 export function listUsers(): Promise<CurrentUser[]> {
   return request('/users');
+}
+
+/**
+ * Set somebody's password without their old one (#226) — the community edition's
+ * answer to a forgotten password. Ends every session that account has.
+ */
+export function resetUserPassword(id: string, newPassword: string): Promise<void> {
+  return request(`/users/${id}/password`, { method: 'POST', body: JSON.stringify({ newPassword }) });
 }
 
 /** Administrator-created account: the way in when self-registration is closed. */
@@ -164,6 +402,71 @@ export type Edition = 'community' | 'hosted';
 
 export interface AppConfig {
   edition: Edition;
+  /** Whether a forgotten password can be reset by email here (#344). */
+  passwordResetByEmail?: boolean;
+  /** The port SFTP listens on (#235), or null when it is off. */
+  sftpPort?: number | null;
+  /** Whether this installation confirms email addresses (#367); a top-up then needs a confirmed one. */
+  emailVerification?: boolean;
+}
+
+/** One server's disk use (#347); a null is something the node could not measure. */
+export interface DeploymentDisk {
+  deploymentId: string;
+  measuredAt: string;
+  volumesBytes: number | null;
+  writableBytes: number | null;
+  volumes: Array<{ name: string; path: string | null; bytes: number | null }>;
+}
+
+export function getDeploymentDisk(id: string): Promise<DeploymentDisk> {
+  return request(`/deployments/${id}/disk`);
+}
+
+/**
+ * What a game server says about itself (#382). Only `online` carries figures;
+ * `players` is null when the server hides its count, which is not zero.
+ */
+export interface ServerQuery {
+  status: 'online' | 'offline' | 'stopped' | 'unsupported' | 'unknown';
+  protocol: 'minecraft' | 'bedrock' | 'a2s' | null;
+  players: { online: number; max: number } | null;
+  version: string | null;
+  motd: string | null;
+  name: string | null;
+  map: string | null;
+  latencyMs: number | null;
+  checkedAt: string;
+  error?: string;
+}
+
+export function getServerQuery(id: string): Promise<ServerQuery> {
+  return request(`/deployments/${id}/query`);
+}
+
+/** Every server on a node by disk use, largest first — administrators only (#347). */
+export function getNodeDisk(nodeId: string): Promise<{ measuredAt: string; deployments: Array<Omit<DeploymentDisk, 'measuredAt'> & { name: string | null; known: boolean }> }> {
+  return request(`/nodes/${encodeURIComponent(nodeId)}/disk`);
+}
+
+/** Ask for a reset link (#344). The answer is the same whether or not the account exists. */
+export function requestPasswordReset(email: string): Promise<{ status: string; message: string }> {
+  return request('/auth/password-reset', { method: 'POST', body: JSON.stringify({ email }) });
+}
+
+/** Set a new password with the token from the mailed link (#344). */
+export function confirmPasswordReset(token: string, newPassword: string): Promise<void> {
+  return request('/auth/password-reset/confirm', { method: 'POST', body: JSON.stringify({ token, newPassword }) });
+}
+
+/** Spend the link from the confirmation mail (#367). Public: no session needed. */
+export function confirmEmail(token: string): Promise<{ status: string }> {
+  return request('/auth/verify-email/confirm', { method: 'POST', body: JSON.stringify({ token }) });
+}
+
+/** Ask for the confirmation mail again, for the signed-in account. */
+export function requestEmailVerification(): Promise<{ status: 'sent' | 'verified'; email?: string }> {
+  return request('/me/verify-email', { method: 'POST' });
 }
 
 /** Public config — read before login to decide whether billing UI renders (#144). */
@@ -188,6 +491,38 @@ export interface BillingPlan {
   maxDatabases: number;
 }
 
+/** How a hosted plan charges (#297) — the same constants the Billing Bridge computes with. */
+export interface ChargingModel {
+  basis: 'runtime-hours';
+  pricePerHour: number;
+  currency: string;
+  freeHoursPerMonth: number;
+  sizeFactor: { standardCpuPercent: number; standardRamPercent: number; minimum: number };
+}
+
+/** What a hosted plan allows; null means no ceiling. */
+export interface Entitlements {
+  planId: string;
+  planName: string;
+  maxServers: number | null;
+  maxDatabases: number | null;
+  maxRamMb: number | null;
+  maxBackupsPerServer: number | null;
+  charging: ChargingModel;
+}
+
+export interface EntitlementUsage {
+  servers: number;
+  databases: number;
+  ramMb: number;
+  uncappedServers: number;
+}
+
+/** Your plan and how much of it is spent (hosted, #297). 404 where no plan applies. */
+export function getEntitlements(): Promise<{ entitlements: Entitlements; usage: EntitlementUsage }> {
+  return request('/me/entitlements');
+}
+
 export interface BillingUsage {
   hours: number;
   cost: number;
@@ -201,8 +536,11 @@ export interface LedgerEntry {
   amount: number;
   currency: string;
   reference: string;
-  status: 'pending' | 'confirmed' | 'failed';
+  /** `expired`: FinVault did not confirm it in time (#298) — not final; a late confirmation still credits. */
+  status: 'pending' | 'confirmed' | 'failed' | 'expired';
   description: string;
+  /** Why a top-up failed, in FinVault's words (#351). */
+  failureReason?: string | null;
   createdAt: string;
 }
 
@@ -214,16 +552,124 @@ export function getUsage(): Promise<BillingUsage> {
   return request('/billing/usage');
 }
 
-export function getBillingPlan(): Promise<BillingPlan> {
-  return request('/billing/plan');
+// ── Plans and the provider's view (#369, hosted) ────────────────────────────
+
+/** A plan in the catalogue. */
+export interface BillingPlanOption {
+  id: string;
+  name: string;
+  pricePerHour: number;
+  currency: string;
+  freeHoursPerMonth: number;
+  maxServers: number;
+  maxDatabases: number;
+  maxRamMb: number | null;
+  maxBackupsPerServer: number | null;
+  /** False once retired: accounts on it keep it, nobody new may choose it. */
+  active: boolean;
+}
+
+export interface PlanOptions {
+  currentPlanId: string;
+  /** `problem` says why this account's servers do not fit the plan, or is null. */
+  plans: Array<BillingPlanOption & { problem: string | null }>;
+}
+
+export function getPlanOptions(): Promise<PlanOptions> {
+  return request('/billing/plans');
+}
+
+export function choosePlan(planId: string): Promise<BillingPlanOption> {
+  return request('/billing/plan', { method: 'PUT', body: JSON.stringify({ planId }) });
+}
+
+/** One account as the provider sees it. */
+export interface BillingAccount {
+  userId: string;
+  email: string;
+  displayName: string;
+  platformRole: PlatformRole;
+  createdAt: string;
+  servers: number;
+  runningServers: number;
+  planId: string | null;
+  planName: string | null;
+  balance: number;
+  /** Balance less usage not yet charged. */
+  available: number;
+  /** Null when billing has never heard of the account. */
+  canRun: boolean | null;
+  currency: string;
+  hours: number;
+  cost: number;
+}
+
+type PlanFields = Pick<BillingPlanOption, 'name' | 'pricePerHour' | 'freeHoursPerMonth' | 'maxServers' | 'maxDatabases' | 'maxRamMb' | 'maxBackupsPerServer'>;
+
+export function adminListPlans(): Promise<BillingPlanOption[]> {
+  return request('/billing/admin/plans');
+}
+
+export function adminCreatePlan(plan: PlanFields): Promise<BillingPlanOption> {
+  return request('/billing/admin/plans', { method: 'POST', body: JSON.stringify(plan) });
+}
+
+export function adminUpdatePlan(id: string, changes: Partial<PlanFields> & { active?: boolean }): Promise<BillingPlanOption> {
+  return request(`/billing/admin/plans/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(changes) });
+}
+
+export function adminListAccounts(): Promise<BillingAccount[]> {
+  return request('/billing/admin/accounts');
+}
+
+export function adminSetAccountPlan(userId: string, planId: string): Promise<BillingPlanOption> {
+  return request(`/billing/admin/accounts/${encodeURIComponent(userId)}/plan`, { method: 'PUT', body: JSON.stringify({ planId }) });
+}
+
+/** A negative amount removes credit. The reason is shown to the customer. */
+export function adminAdjustCredit(userId: string, amount: number, reason: string): Promise<{ wallet: CreditWallet }> {
+  return request(`/billing/admin/accounts/${encodeURIComponent(userId)}/credit`, { method: 'POST', body: JSON.stringify({ amount, reason }) });
+}
+
+/** What an account has left to spend, and whether it may run servers (#365). */
+export interface CreditStanding {
+  balance: number;
+  /** Used this cycle and not yet charged to the balance. */
+  accrued: number;
+  available: number;
+  freeHoursLeft: number;
+  canRun: boolean;
+  currency: string;
+  /** Hours what is left lasts at the running servers' rate (#379); null when nothing is running. Absent from an older bridge. */
+  hoursLeft?: number | null;
+  /** Whether that is under the installation's warning threshold. */
+  runsLow?: boolean;
+}
+
+export function getStanding(): Promise<CreditStanding> {
+  return request('/billing/standing');
 }
 
 export function getLedger(): Promise<LedgerEntry[]> {
   return request('/billing/ledger');
 }
 
-export function topUp(amount: number): Promise<{ status: string; reference: string }> {
+/** `payerEmail` is the FinVault account that was asked to pay — where the customer goes to approve it (#351). */
+export function topUp(amount: number): Promise<{ status: string; reference: string; payerEmail?: string }> {
   return request('/billing/topup', { method: 'POST', body: JSON.stringify({ amount }) });
+}
+
+/**
+ * Which node an automatically-placed server would land on right now (#309).
+ *
+ * Asked rather than worked out here: the form used to reimplement the rule and
+ * got it wrong — it filtered neither unhealthy nor draining nodes — so with two
+ * or more nodes it could describe a machine the server never lands on.
+ *
+ * A preview, not a reservation: placement is decided again at creation.
+ */
+export function getPlacement(): Promise<{ nodeId: string | null }> {
+  return request('/placement');
 }
 
 export function listNodes(): Promise<NodeView[]> {
@@ -242,6 +688,14 @@ export interface MonitoredService {
 export interface MonitoringSnapshot {
   monitored: MonitoredService[];
   reachable: boolean;
+  /** Whether any event failed to process and is sitting in the DLQ (#243). */
+  deadLetters?: DeadLetterSnapshot;
+}
+
+export interface DeadLetterSnapshot {
+  status: 'empty' | 'messages-waiting' | 'unknown';
+  depth: number | null;
+  error?: string;
 }
 
 /** The Control Room's live view of every service/node heartbeat on the bus. */
@@ -254,12 +708,65 @@ export function registerNode(input: { id?: string; name?: string; location?: str
   return request('/nodes', { method: 'POST', body: JSON.stringify(input) });
 }
 
+/** Drain a node, or put it back in the placement pool (#258). Platform admins only. */
+export function setNodeMaintenance(id: string, maintenance: boolean): Promise<NodeView> {
+  return request(`/nodes/${id}/maintenance`, { method: 'PATCH', body: JSON.stringify({ maintenance }) });
+}
+
 export function deregisterNode(id: string): Promise<void> {
   return request(`/nodes/${id}`, { method: 'DELETE' });
 }
 
-export function listDeployments(): Promise<DeploymentView[]> {
-  return request('/deployments');
+/** Filtering and paging for the server list (#237). */
+export interface DeploymentQuery {
+  /** Case-insensitive substring of the name. */
+  q?: string;
+  status?: string;
+  /** A node id, or `unassigned` for servers not placed anywhere. */
+  nodeId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface Page<T> {
+  items: T[];
+  /** How many match the filter in total — not how many are in `items`. */
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/**
+ * One page of the servers this account can see.
+ *
+ * The envelope is deliberate: a page of rows with no count beside it cannot tell
+ * anyone there is more, and a list that silently shows the first 25 of 200 is
+ * worse than the unbounded one it replaced.
+ */
+export function listDeployments(query: DeploymentQuery = {}): Promise<Page<DeploymentView>> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== '') params.set(key, String(value));
+  }
+  const qs = params.toString();
+  return request(`/deployments${qs ? `?${qs}` : ''}`);
+}
+
+/**
+ * Every server the caller can see, for the places that genuinely need all of
+ * them — the overview's counts, a node's hosted list.
+ *
+ * Named so the cost is visible at the call site: it walks the pages rather than
+ * pretending the first one is everything.
+ */
+export async function listAllDeployments(query: DeploymentQuery = {}): Promise<DeploymentView[]> {
+  const limit = 200;
+  const all: DeploymentView[] = [];
+  for (let offset = 0; ; offset += limit) {
+    const page = await listDeployments({ ...query, limit, offset });
+    all.push(...page.items);
+    if (all.length >= page.total || page.items.length === 0) return all;
+  }
 }
 
 export function getDeployment(id: string): Promise<DeploymentDetail> {
@@ -270,8 +777,45 @@ export function createDeployment(input: CreateDeploymentInput): Promise<Deployme
   return request('/deployments', { method: 'POST', body: JSON.stringify(input) });
 }
 
+/**
+ * A server's audit trail, newest first (#223). Written since the beginning and
+ * never read back until now, which is why "who stopped this" was unanswerable.
+ */
+export function listDeploymentEvents(id: string, opts: { limit?: number; offset?: number } = {}): Promise<DeploymentEvent[]> {
+  const q = new URLSearchParams();
+  if (opts.limit != null) q.set('limit', String(opts.limit));
+  if (opts.offset != null) q.set('offset', String(opts.offset));
+  const qs = q.toString();
+  return request(`/deployments/${id}/events${qs ? `?${qs}` : ''}`);
+}
+
+export interface UpdateDeploymentInput {
+  name?: string;
+  /** Edit an egg server through its own variables (#272), validated server-side. */
+  eggValues?: Record<string, string>;
+  dockerImage?: string;
+  ports?: Record<string, string>;
+  env?: Record<string, string>;
+  resourceLimits?: ResourceLimits;
+  autoRestart?: boolean;
+  persistPaths?: string[];
+}
+
+/**
+ * Change an existing server's configuration (#220). Omitted fields are left
+ * alone, and nothing restarts — the change lands on the server's next start.
+ */
+export function updateDeployment(id: string, patch: UpdateDeploymentInput): Promise<DeploymentDetail> {
+  return request(`/deployments/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+}
+
 export function stopDeployment(id: string): Promise<{ status: string; deploymentId: string }> {
   return request(`/deployments/${id}/stop`, { method: 'POST' });
+}
+
+/** Force-terminate (SIGKILL) a container that will not stop gracefully (#253). */
+export function killDeployment(id: string): Promise<{ status: string; deploymentId: string }> {
+  return request(`/deployments/${id}/kill`, { method: 'POST' });
 }
 
 export function restartDeployment(id: string): Promise<{ status: string; deploymentId: string }> {
@@ -280,6 +824,87 @@ export function restartDeployment(id: string): Promise<{ status: string; deploym
 
 export function startDeployment(id: string): Promise<{ status: string; deploymentId: string }> {
   return request(`/deployments/${id}/start`, { method: 'POST' });
+}
+
+/** The lifecycle commands that can be sent to several servers at once (#238). */
+export type BulkAction = 'start' | 'stop' | 'restart' | 'kill';
+
+/** One server's answer inside a bulk request. `name` is absent for an id you cannot see. */
+export interface BulkResult {
+  id: string;
+  name?: string;
+  ok: boolean;
+  status: number;
+  error?: string;
+}
+
+export interface BulkOutcome {
+  action: BulkAction;
+  succeeded: number;
+  failed: number;
+  results: BulkResult[];
+}
+
+/**
+ * Send one command to several servers (#238). Each is authorized on its own, so
+ * a 200 can still carry failures — read `failed`, not the status code.
+ */
+export function bulkDeploymentAction(action: BulkAction, ids: string[]): Promise<BulkOutcome> {
+  return request('/deployments/bulk', { method: 'POST', body: JSON.stringify({ action, ids }) });
+}
+
+/**
+ * Whether the registry has a newer image than this server runs (#239).
+ * `unknown` means the registry could not be asked — not that nothing is new.
+ */
+export type ImageUpdateStatus = 'current' | 'update-available' | 'pulled-not-applied' | 'unknown';
+
+export interface ImageStatus {
+  image: string;
+  status: ImageUpdateStatus;
+  remoteDigest: string | null;
+  localDigest: string | null;
+  checkedAt: string;
+}
+
+export function getImageStatus(id: string): Promise<ImageStatus> {
+  return request(`/deployments/${id}/image`);
+}
+
+/** Pull the tag afresh; a running server is recreated from it, keeping its data (#239). */
+export function updateImage(id: string): Promise<{ status: string; recreate: boolean }> {
+  return request(`/deployments/${id}/update`, { method: 'POST' });
+}
+
+/**
+ * Move a stopped server to another node, data and backups with it (#234).
+ * Platform administrators only. Answers once the move is accepted; progress is
+ * in the server's activity.
+ */
+export function migrateDeployment(id: string, nodeId: string): Promise<{ status: string; nodeId: string }> {
+  return request(`/deployments/${id}/migrate`, { method: 'POST', body: JSON.stringify({ nodeId }) });
+}
+
+/** Make one of a server's host ports the one shown first (#233). */
+export function setPrimaryPort(id: string, port: number): Promise<{ port: number }> {
+  return request(`/deployments/${id}/ports/primary`, { method: 'PUT', body: JSON.stringify({ port }) });
+}
+
+export interface NodePortAllocation {
+  port: number;
+  deploymentId: string;
+  name: string | null;
+  primary: boolean;
+}
+
+/** Every host port held on a node, and by which server — administrators only (#233). */
+export function listNodePorts(nodeId: string): Promise<NodePortAllocation[]> {
+  return request(`/nodes/${nodeId}/ports`);
+}
+
+/** Set a node's host-port pool, or remove it with null (#233). */
+export function setNodePortRange(nodeId: string, range: { start: number; end: number } | null): Promise<NodeView & { outsideRange: number }> {
+  return request(`/nodes/${nodeId}/ports`, { method: 'PATCH', body: JSON.stringify({ range }) });
 }
 
 /** Permanently delete a deployment (stops it first if running). */
@@ -349,6 +974,33 @@ export function writeFile(id: string, path: string, content: string): Promise<vo
   return request(`/deployments/${id}/files/content`, { method: 'PUT', body: JSON.stringify({ path, content }) });
 }
 
+/**
+ * Upload a file's raw bytes (#263). Deliberately not `writeFile`: that sends a
+ * JSON string, and decoding a binary file to text replaces every invalid byte,
+ * so a JAR or zip arrived corrupt while the panel reported success.
+ */
+export async function uploadFile(id: string, path: string, file: Blob): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`${BASE}/deployments/${id}/files/binary?path=${encodeURIComponent(path)}`, {
+    method: 'PUT',
+    headers: {
+      'content-type': 'application/octet-stream',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: file,
+  });
+  if (!res.ok) {
+    let message = res.statusText;
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body?.error) message = body.error;
+    } catch {
+      // non-JSON error body; keep the status text
+    }
+    throw new ApiError(res.status, message);
+  }
+}
+
 export function makeDir(id: string, path: string): Promise<void> {
   return request(`/deployments/${id}/files/dir`, { method: 'POST', body: JSON.stringify({ path }) });
 }
@@ -398,14 +1050,46 @@ export interface ServerBackup {
   sizeBytes: number;
   status: string;
   createdAt: string;
+  /** Whether a copy left the node (#232): null when the node has no off-site target. */
+  offsite?: 'stored' | 'failed' | null;
+}
+
+/** How many backups a server keeps, and for how long (#232). Both absent keeps all. */
+export interface BackupRetention {
+  keepLast?: number;
+  keepDays?: number;
+}
+
+export function setBackupRetention(id: string, policy: { keepLast: number | null; keepDays: number | null }): Promise<{ backupRetention: BackupRetention; expired: number }> {
+  return request(`/deployments/${id}/backups/retention`, { method: 'PUT', body: JSON.stringify(policy) });
+}
+
+/**
+ * A backup's tar, fetched with the session's token (#232). A plain link cannot
+ * carry the Authorization header, so the bytes come through here and are handed
+ * to the browser as a file.
+ */
+export async function downloadBackup(id: string, backupId: string): Promise<{ blob: Blob; filename: string }> {
+  const token = getToken();
+  const res = await fetch(`${BASE}/deployments/${id}/backups/${backupId}/download`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new ApiError(res.status, body?.error ?? res.statusText, body);
+  }
+  const disposition = res.headers.get('content-disposition') ?? '';
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? `backup-${backupId}.tar`;
+  return { blob: await res.blob(), filename };
 }
 
 export function listBackups(id: string): Promise<ServerBackup[]> {
   return request(`/deployments/${id}/backups`);
 }
 
-export function createBackup(id: string): Promise<ServerBackup> {
-  return request(`/deployments/${id}/backups`, { method: 'POST', body: JSON.stringify({}) });
+/** Snapshot a server; `path` names the directory, or the server's own data directory is used. */
+export function createBackup(id: string, path?: string): Promise<ServerBackup> {
+  return request(`/deployments/${id}/backups`, { method: 'POST', body: JSON.stringify(path ? { path } : {}) });
 }
 
 export function restoreBackup(id: string, backupId: string): Promise<{ status: string }> {
@@ -417,7 +1101,7 @@ export function deleteBackup(id: string, backupId: string): Promise<void> {
 }
 
 // ── Schedules (#111) ──────────────────────────────────────────────────────────
-export type ScheduleAction = 'restart' | 'backup';
+export type ScheduleAction = 'restart' | 'backup' | 'update';
 
 export interface ServerSchedule {
   id: string;
@@ -491,6 +1175,21 @@ export function updateSubuserRole(id: string, sid: string, role: SubuserRole): P
 
 export function removeSubuser(id: string, sid: string): Promise<void> {
   return request(`/deployments/${id}/subusers/${sid}`, { method: 'DELETE' });
+}
+
+// ── Ownership transfer (#230) ─────────────────────────────────────────────────
+export interface TransferResult {
+  deploymentId: string;
+  ownerId: string;
+  retainedRole: SubuserRole | null;
+}
+
+/**
+ * Hand a server to another account. `retainRole` null means the current owner
+ * keeps nothing — they are not asked twice, so the form makes that explicit.
+ */
+export function transferOwnership(id: string, email: string, retainRole: SubuserRole | null): Promise<TransferResult> {
+  return request(`/deployments/${id}/transfer`, { method: 'POST', body: JSON.stringify({ email, retainRole }) });
 }
 
 // ── Console exec (#68) ────────────────────────────────────────────────────────
@@ -595,4 +1294,65 @@ export function removeTeamMember(id: string, userId: string): Promise<void> {
 /** Share a server with a team, or detach it with null. Requires ownership. */
 export function setServerTeam(deploymentId: string, teamId: string | null): Promise<{ deploymentId: string; teamId: string | null }> {
   return request(`/deployments/${deploymentId}/team`, { method: 'PATCH', body: JSON.stringify({ teamId }) });
+}
+
+// ── Notifications (#236) ──────────────────────────────────────────────────────
+export type NotificationEventName = 'server.crashed' | 'server.suspended' | 'credit.low' | 'node.offline' | 'node.recovered';
+
+export const NOTIFICATION_EVENT_LABELS: Record<NotificationEventName, string> = {
+  'server.crashed': 'A server crashes',
+  'server.suspended': 'A server is suspended for billing',
+  // Offered by the server in the hosted edition only (#379).
+  'credit.low': 'Your credit is about to run out',
+  'node.offline': 'A node goes offline',
+  'node.recovered': 'A node comes back',
+};
+
+export interface NotificationChannel {
+  id: string;
+  kind: 'webhook' | 'email';
+  target: string;
+  format: 'json' | 'discord' | 'slack';
+  events: NotificationEventName[];
+  enabled: boolean;
+  signed: boolean;
+  lastDeliveryAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+}
+
+export interface NotificationSettings {
+  channels: NotificationChannel[];
+  capabilities: { email: boolean; events: NotificationEventName[] };
+}
+
+export function getNotificationSettings(): Promise<NotificationSettings> {
+  return request('/me/notifications');
+}
+
+export function createNotificationChannel(input: {
+  kind: 'webhook' | 'email';
+  target?: string;
+  format?: 'json' | 'discord' | 'slack';
+  events: NotificationEventName[];
+}): Promise<NotificationChannel & { secret?: string }> {
+  return request('/me/notifications', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function updateNotificationChannel(id: string, patch: { enabled?: boolean; events?: NotificationEventName[] }): Promise<NotificationChannel> {
+  return request(`/me/notifications/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+}
+
+export function deleteNotificationChannel(id: string): Promise<void> {
+  return request(`/me/notifications/${id}`, { method: 'DELETE' });
+}
+
+/** Send a test now. Resolves `{ ok: false, error }` rather than throwing when the endpoint refuses. */
+export async function testNotificationChannel(id: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    return await request(`/me/notifications/${id}/test`, { method: 'POST' });
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 502) return { ok: false, error: e.message };
+    throw e;
+  }
 }

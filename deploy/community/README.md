@@ -12,7 +12,14 @@ docker compose up -d
 
 Open **http://localhost:8095** and sign in as `ADMIN_EMAIL` with the password you set.
 
+**SFTP** to each server's files listens on port `2022` (set `SFTP_PUBLIC_PORT` to publish it elsewhere).
+The Files tab shows the user name to use; the password is your account password or an API token.
+
 Everything runs from published images — you do not need a checkout of the source to use this.
+
+**Optional settings** — email notifications and password reset (`SMTP_URL`, `PANEL_URL`), off-site
+backups (`BACKUP_S3_*`), mandatory 2FA (`REQUIRE_TOTP`) and reverse-proxy trust (`TRUST_PROXY`) — are
+all switched on from `.env`; `.env.example` lists them with what each does.
 
 ## What you get
 
@@ -32,6 +39,13 @@ A node is just a Node Agent process pointed at this broker. To add a second mach
 `RABBITMQ_URL` pointing at this host's broker — over an authenticated, TLS-protected connection, not
 the defaults in `.env.example`. It registers itself, and the scheduler starts placing servers on it.
 
+## Database
+
+SQLite by default — a file in the `orchestrator_data` volume, nothing else to run. For PostgreSQL, set
+`POSTGRES_PASSWORD` and `ORCHESTRATOR_DATABASE_URL` in `.env` and start with
+`docker compose --profile postgres up -d`; to move an existing installation's data across, see
+[PostgreSQL in the deployment docs](https://github.com/Tombomeke-Studios/NexusInfra/blob/main/docs/deployment.md#postgresql).
+
 ## Upgrading
 
 The image tags in `docker-compose.yml` default to the moving `community` tag. Pin
@@ -49,4 +63,7 @@ Database migrations are applied automatically when the Orchestrator starts.
 - The Node Agent's port is deliberately **not** published: it is an internal API that can start
   containers and open shells in them. Only the Orchestrator should reach it.
 - The broker is likewise unpublished. Publish it only if you run agents on other machines.
+- What is published: the panel (`DASHBOARD_PORT`, 8095), SFTP (`SFTP_PUBLIC_PORT`, 2022) and the API
+  gateway (`GATEWAY_PORT`, 9400). The orchestrator's own API answers on `127.0.0.1:9200` only, and the
+  Control Room is not published at all — change any of these ports in `.env` if they are taken.
 - Full detail: [docs/security.md](https://github.com/Tombomeke-Studios/NexusInfra/blob/main/docs/security.md).

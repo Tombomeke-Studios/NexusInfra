@@ -1,7 +1,10 @@
 import { randomUUID } from 'crypto';
 import { PrismaClient } from '../generated/prisma/index.js';
+import { createRequire } from 'module';
+import { isPostgresUrl } from 'shared';
 import { DEFAULT_PLAN, type BillingPlan } from './pricing.js';
 import type {
+  BilledDeployment,
   BillingCycleRecord,
   CreateCycleInput,
   CreateLedgerInput,
@@ -21,8 +24,19 @@ import type { ResourceLimits } from 'shared';
 
 let prisma: PrismaClient | null = null;
 
+/**
+ * The client for the database DATABASE_URL names (#241). Prisma fixes the
+ * provider when a client is generated, so both are generated and one is picked
+ * here. The models are the same (the PostgreSQL schema is derived from the
+ * SQLite one and checked in CI), so either satisfies the same type.
+ */
 export function getPrisma(): PrismaClient {
-  if (!prisma) prisma = new PrismaClient();
+  if (!prisma) {
+    const Client = isPostgresUrl(process.env.DATABASE_URL)
+      ? (createRequire(import.meta.url)('../generated/postgres/index.js') as { PrismaClient: new () => unknown }).PrismaClient
+      : PrismaClient;
+    prisma = new Client() as PrismaClient;
+  }
   return prisma;
 }
 
@@ -49,6 +63,9 @@ function toPlan(p: PrismaPlan): BillingPlan {
     freeHoursPerMonth: p.freeHoursPerMonth,
     maxServers: p.maxServers,
     maxDatabases: p.maxDatabases,
+    maxRamMb: p.maxRamMb ?? null,
+    maxBackupsPerServer: p.maxBackupsPerServer ?? null,
+    active: p.active,
   };
 }
 
@@ -75,6 +92,7 @@ function toLedger(e: PrismaLedger): CreditLedgerEntry {
     reference: e.reference,
     status: e.status as LedgerStatus,
     description: e.description,
+    failureReason: e.failureReason,
     createdAt: e.createdAt.toISOString(),
   };
 }
@@ -109,6 +127,50 @@ export class PrismaRepository implements Repository {
     const planId = assignment?.planId ?? DEFAULT_PLAN.id;
     const plan = await this.client.billingPlan.findUnique({ where: { id: planId } });
     return plan ? toPlan(plan) : DEFAULT_PLAN;
+  }
+
+  async listPlans(): Promise<BillingPlan[]> {
+    const rows = await this.client.billingPlan.findMany({ orderBy: { createdAt: 'asc' } });
+    return rows.map(toPlan);
+  }
+
+  async getPlan(id: string): Promise<BillingPlan | null> {
+    const row = await this.client.billingPlan.findUnique({ where: { id } });
+    return row ? toPlan(row) : null;
+  }
+
+  async savePlan(plan: BillingPlan): Promise<BillingPlan> {
+    const { id, ...fields } = plan;
+    const row = await this.client.billingPlan.upsert({ where: { id }, create: { id, ...fields }, update: fields });
+    return toPlan(row);
+  }
+
+  async setUserPlan(userId: string, planId: string): Promise<void> {
+    await this.client.userPlan.upsert({ where: { userId }, create: { userId, planId }, update: { planId } });
+  }
+
+  async saveDeployment(deployment: BilledDeployment): Promise<void> {
+    const data = { userId: deployment.userId, limits: JSON.stringify(deployment.limits ?? {}) };
+    await this.client.billingDeployment.upsert({
+      where: { deploymentId: deployment.deploymentId },
+      create: { deploymentId: deployment.deploymentId, ...data },
+      update: data,
+    });
+  }
+
+  async getDeployment(deploymentId: string): Promise<BilledDeployment | null> {
+    const row = await this.client.billingDeployment.findUnique({ where: { deploymentId } });
+    return row ? { deploymentId: row.deploymentId, userId: row.userId, limits: JSON.parse(row.limits || '{}') } : null;
+  }
+
+  async getOpenInterval(deploymentId: string): Promise<ServerBillingRecord | null> {
+    const row = await this.client.serverBilling.findFirst({ where: { deploymentId, stoppedAt: null }, orderBy: { startedAt: 'desc' } });
+    return row ? toInterval(row) : null;
+  }
+
+  async getLastInterval(deploymentId: string): Promise<ServerBillingRecord | null> {
+    const row = await this.client.serverBilling.findFirst({ where: { deploymentId }, orderBy: { startedAt: 'desc' } });
+    return row ? toInterval(row) : null;
   }
 
   async openInterval(input: OpenIntervalInput): Promise<ServerBillingRecord> {
@@ -149,6 +211,32 @@ export class PrismaRepository implements Repository {
     return { userId: wallet.userId, balance: wallet.balance, currency: wallet.currency };
   }
 
+  async setWalletEmail(userId: string, email: string): Promise<void> {
+    await this.client.creditWallet.upsert({
+      where: { userId },
+      create: { userId, balance: 0, currency: DEFAULT_PLAN.currency, email },
+      update: { email },
+    });
+  }
+
+  async getWalletEmail(userId: string): Promise<string | null> {
+    return (await this.client.creditWallet.findUnique({ where: { userId }, select: { email: true } }))?.email ?? null;
+  }
+
+  async getLowCreditWarnedAt(userId: string): Promise<string | null> {
+    const row = await this.client.creditWallet.findUnique({ where: { userId }, select: { lowCreditWarnedAt: true } });
+    return row?.lowCreditWarnedAt ? row.lowCreditWarnedAt.toISOString() : null;
+  }
+
+  async setLowCreditWarnedAt(userId: string, at: string | null): Promise<void> {
+    const lowCreditWarnedAt = at ? new Date(at) : null;
+    await this.client.creditWallet.upsert({
+      where: { userId },
+      create: { userId, balance: 0, currency: DEFAULT_PLAN.currency, lowCreditWarnedAt },
+      update: { lowCreditWarnedAt },
+    });
+  }
+
   async setBalance(userId: string, balance: number): Promise<CreditWallet> {
     const wallet = await this.client.creditWallet.upsert({
       where: { userId },
@@ -173,6 +261,23 @@ export class PrismaRepository implements Repository {
     if (!exists) return null;
     const row = await this.client.creditLedger.update({ where: { id }, data: { status } });
     return toLedger(row);
+  }
+
+  async transitionLedgerStatus(id: string, from: LedgerStatus[], to: LedgerStatus, failureReason?: string): Promise<boolean> {
+    // One conditional UPDATE: of two concurrent callers, exactly one sees a row change.
+    const { count } = await this.client.creditLedger.updateMany({
+      where: { id, status: { in: from } },
+      data: failureReason === undefined ? { status: to } : { status: to, failureReason },
+    });
+    return count === 1;
+  }
+
+  async listPendingTopUps(createdBefore: string): Promise<CreditLedgerEntry[]> {
+    const rows = await this.client.creditLedger.findMany({
+      where: { type: 'topup', status: 'pending', createdAt: { lt: new Date(createdBefore) } },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map(toLedger);
   }
 
   async listLedger(userId: string): Promise<CreditLedgerEntry[]> {
@@ -201,13 +306,12 @@ export class PrismaRepository implements Repository {
   }
 
   async listBillableUserIds(): Promise<string[]> {
-    const [intervals, wallets] = await Promise.all([
+    const [intervals, wallets, assignments, deployments] = await Promise.all([
       this.client.serverBilling.findMany({ distinct: ['userId'], select: { userId: true } }),
       this.client.creditWallet.findMany({ select: { userId: true } }),
+      this.client.userPlan.findMany({ select: { userId: true } }),
+      this.client.billingDeployment.findMany({ distinct: ['userId'], select: { userId: true } }),
     ]);
-    const ids = new Set<string>();
-    for (const i of intervals) ids.add(i.userId);
-    for (const w of wallets) ids.add(w.userId);
-    return [...ids];
+    return [...new Set([...intervals, ...wallets, ...assignments, ...deployments].map((row) => row.userId))];
   }
 }

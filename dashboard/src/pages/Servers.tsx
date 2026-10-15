@@ -1,18 +1,23 @@
-import { useCallback, useEffect, useState, type CSSProperties } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   getCurrentUser,
   listDeployments,
   stopDeployment,
   restartDeployment,
   startDeployment,
+  bulkDeploymentAction,
+  type BulkAction,
+  type BulkResult,
   type CurrentUser,
   type DeploymentView,
 } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
+import { PlayerCount } from '../components/PlayerStatus';
+import { isSuspended, suspensionNote } from '../suspension';
 import { IconStop, IconRestart, IconPlay } from '../components/Icons';
 import { useToast } from '../components/Toast';
-import { formatRelative, shortId } from '../format';
+import { formatLimits, formatRelative, isGameServer, shortId } from '../format';
 import { can, ROLE_LABELS, type ServerRole } from '../permissions';
 
 // Servers: the live list of deployments. It polls the Orchestrator so status
@@ -24,6 +29,23 @@ import { can, ROLE_LABELS, type ServerRole } from '../permissions';
 // each row, so the panel doesn't offer a button that would come back 403.
 const POLL_MS = 3000;
 
+/**
+ * One page at a time (#237).
+ *
+ * The list used to render every server the caller could see and poll all of them
+ * every three seconds. Fine with five; with two hundred it is two hundred rows
+ * of live meters and a response that grows without bound.
+ */
+const PAGE_SIZE = 25;
+
+const STATUSES = ['pending', 'running', 'stopped', 'crashed'] as const;
+
+interface Selection {
+  selected: Set<string>;
+  toggle: (id: string) => void;
+  toggleAll: (rows: DeploymentView[], on: boolean) => void;
+}
+
 interface ServerActions {
   stop: (id: string) => void;
   restart: (id: string) => void;
@@ -31,21 +53,38 @@ interface ServerActions {
 }
 
 export function Servers() {
+  // The query lives in the URL, so a filtered list is a link somebody can send,
+  // and going back returns to what you were looking at rather than to everything.
+  const [params, setParams] = useSearchParams();
+  const q = params.get('q') ?? '';
+  const status = params.get('status') ?? '';
+  const offset = Number(params.get('offset') ?? 0) || 0;
+
   const [deployments, setDeployments] = useState<DeploymentView[] | null>(null);
+  const [total, setTotal] = useState(0);
   const [me, setMe] = useState<CurrentUser | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  // Multi-select for bulk actions (#238). Ids, not rows, so a poll that replaces
+  // the row objects does not drop the selection.
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkFailures, setBulkFailures] = useState<BulkResult[] | null>(null);
   const { toast } = useToast();
   const navigate = useNavigate();
 
   const load = useCallback(async () => {
     try {
-      setDeployments(await listDeployments());
+      // A zero offset is the default; sending it would put `offset=0` on every
+      // request and make "am I on the first page" a thing to parse rather than see.
+      const page = await listDeployments({ q, status, limit: PAGE_SIZE, offset: offset || undefined });
+      setDeployments(page.items);
+      setTotal(page.total);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load deployments');
     }
-  }, []);
+  }, [q, status, offset]);
 
   useEffect(() => {
     void getCurrentUser()
@@ -55,6 +94,82 @@ export function Servers() {
     const handle = setInterval(() => void load(), POLL_MS);
     return () => clearInterval(handle);
   }, [load]);
+
+  // A selection belongs to the rows you were looking at: changing the filter or
+  // the page starts over, rather than acting on servers that are off-screen.
+  useEffect(() => setSelected(new Set()), [q, status, offset]);
+
+  // A server that disappeared (deleted, or no longer shared) leaves the selection.
+  useEffect(() => {
+    if (!deployments) return;
+    setSelected((prev) => {
+      const present = new Set(deployments.map((d) => d.id));
+      const kept = [...prev].filter((id) => present.has(id));
+      return kept.length === prev.size ? prev : new Set(kept);
+    });
+  }, [deployments]);
+
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const toggleAll = (rows: DeploymentView[], on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const d of rows) {
+        if (on) next.add(d.id);
+        else next.delete(d.id);
+      }
+      return next;
+    });
+
+  // Every selected server is sent; the API authorizes each one and answers for
+  // each one, so a server this role cannot touch — or one already stopped — is
+  // reported by name rather than quietly left out.
+  const runBulk = async (action: BulkAction, verb: string) => {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    setBulkFailures(null);
+    try {
+      const outcome = await bulkDeploymentAction(action, ids);
+      if (outcome.failed === 0) {
+        toast(`${verb} requested for ${outcome.succeeded} server${outcome.succeeded === 1 ? '' : 's'}`, 'success');
+      } else {
+        toast(`${outcome.succeeded} of ${outcome.results.length} ${verb.toLowerCase()} requests succeeded`, outcome.succeeded ? 'info' : 'error');
+      }
+      setBulkFailures(outcome.failed ? outcome.results.filter((r) => !r.ok) : null);
+      // Keep the failures selected so a retry is one click; drop what worked.
+      setSelected(new Set(outcome.results.filter((r) => !r.ok).map((r) => r.id)));
+      await load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : `Bulk ${verb.toLowerCase()} failed`, 'error');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const nameOf = (id: string) => deployments?.find((d) => d.id === id)?.name ?? id;
+
+  // Changing a filter returns to the first page: staying on page four of a new
+  // filter shows an empty list, which reads as a failure rather than as paging.
+  const setQuery = (next: { q?: string; status?: string; offset?: number }) => {
+    const merged = new URLSearchParams(params);
+    for (const [key, value] of Object.entries(next)) {
+      if (value === undefined || value === '' || value === 0) merged.delete(key);
+      else merged.set(key, String(value));
+    }
+    if (next.offset === undefined) merged.delete('offset');
+    setParams(merged, { replace: true });
+  };
+
+  const filtering = Boolean(q || status);
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageNumber = Math.floor(offset / PAGE_SIZE) + 1;
 
   const runAction = async (id: string, action: (id: string) => Promise<unknown>, verb: string) => {
     setPendingId(id);
@@ -80,8 +195,8 @@ export function Servers() {
   // Ownership comes from the record, not from the role: a platform administrator
   // resolves to `owner` on every server, and calling all of them "mine" would be
   // misleading.
-  const owned = deployments?.filter((d) => !me || !d.userId || d.userId === me.id) ?? [];
-  const shared = deployments?.filter((d) => me && d.userId && d.userId !== me.id) ?? [];
+  const owned = useMemo(() => deployments?.filter((d) => !me || !d.userId || d.userId === me.id) ?? [], [deployments, me]);
+  const shared = useMemo(() => deployments?.filter((d) => me && d.userId && d.userId !== me.id) ?? [], [deployments, me]);
 
   return (
     <div className="page" style={{ maxWidth: 1320 }}>
@@ -92,6 +207,89 @@ export function Servers() {
           Live
         </span>
       </div>
+
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
+        <input
+          className="input"
+          type="search"
+          value={q}
+          onChange={(e) => setQuery({ q: e.target.value })}
+          placeholder="Search by name"
+          aria-label="Search servers by name"
+          style={{ width: 'auto', minWidth: 220 }}
+        />
+        <select
+          className="select"
+          value={status}
+          onChange={(e) => setQuery({ status: e.target.value })}
+          aria-label="Filter by status"
+          style={{ width: 'auto' }}
+        >
+          <option value="">Any status</option>
+          {STATUSES.map((s) => (
+            <option key={s} value={s}>
+              {s[0].toUpperCase() + s.slice(1)}
+            </option>
+          ))}
+        </select>
+        {filtering && (
+          <button className="btn btn--ghost btn--sm" data-ripple onClick={() => setQuery({ q: '', status: '' })}>
+            Clear
+          </button>
+        )}
+        {deployments && (
+          <span className="subtle" style={{ fontSize: '.82rem', marginLeft: 'auto' }}>
+            {total === 0 ? 'No matches' : `${total} server${total === 1 ? '' : 's'}${filtering ? ' matching' : ''}`}
+          </span>
+        )}
+      </div>
+
+      {selected.size > 0 && (
+        <div
+          role="toolbar"
+          aria-label="Bulk actions"
+          className="card"
+          style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '10px 14px', marginBottom: 'var(--space-4)' }}
+        >
+          <strong style={{ fontSize: '.9rem' }}>{selected.size} selected</strong>
+          <span style={{ flex: 1 }} />
+          <button className="btn btn--secondary btn--sm" data-ripple disabled={bulkBusy} onClick={() => void runBulk('start', 'Start')}>
+            <IconPlay size={15} />
+            Start selected
+          </button>
+          <button className="btn btn--secondary btn--sm" data-ripple disabled={bulkBusy} onClick={() => void runBulk('restart', 'Restart')}>
+            <IconRestart size={15} />
+            Restart selected
+          </button>
+          <button className="btn btn--danger btn--sm" data-ripple disabled={bulkBusy} onClick={() => void runBulk('stop', 'Stop')}>
+            {bulkBusy ? <span className="spinner" /> : <IconStop size={15} />}
+            Stop selected
+          </button>
+          <button className="btn btn--ghost btn--sm" disabled={bulkBusy} onClick={() => setSelected(new Set())}>
+            Clear selection
+          </button>
+        </div>
+      )}
+
+      {bulkFailures && bulkFailures.length > 0 && (
+        <div role="alert" className="alert alert--error" style={{ marginBottom: 'var(--space-4)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+            <strong>
+              {bulkFailures.length} server{bulkFailures.length === 1 ? '' : 's'} could not be changed
+            </strong>
+            <button className="btn btn--ghost btn--sm" onClick={() => setBulkFailures(null)} aria-label="Dismiss bulk failures">
+              Dismiss
+            </button>
+          </div>
+          <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+            {bulkFailures.map((f) => (
+              <li key={f.id}>
+                <strong>{f.name ?? nameOf(f.id)}</strong> — {f.error ?? 'failed'}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {error && (
         <p role="alert" className="alert alert--error" style={{ marginBottom: 'var(--space-4)' }}>
@@ -106,7 +304,14 @@ export function Servers() {
       ) : deployments.length === 0 ? (
         <div className="table-wrap">
           <div className="empty">
-            No deployments yet. Create one from <strong>New Deployment</strong>.
+            {filtering ? (
+              // "None yet" would be a lie here: they may have plenty.
+              <>No servers match that search.</>
+            ) : (
+              <>
+                No deployments yet. Create one from <strong>New Deployment</strong>.
+              </>
+            )}
           </div>
         </div>
       ) : (
@@ -114,7 +319,7 @@ export function Servers() {
           {/* Headings only earn their space once there is a second section. */}
           {shared.length > 0 && <h2 style={{ fontSize: '1rem', margin: '0 0 10px' }}>My servers</h2>}
           {owned.length > 0 ? (
-            <ServerTable rows={owned} pendingId={pendingId} actions={actions} navigate={navigate} />
+            <ServerTable rows={owned} pendingId={pendingId} actions={actions} navigate={navigate} selection={{ selected, toggle, toggleAll }} label="my servers" />
           ) : (
             <div className="table-wrap">
               <div className="empty">
@@ -131,10 +336,34 @@ export function Servers() {
                   Servers other people have given you access to
                 </span>
               </h2>
-              <ServerTable rows={shared} pendingId={pendingId} actions={actions} navigate={navigate} showRole />
+              <ServerTable rows={shared} pendingId={pendingId} actions={actions} navigate={navigate} selection={{ selected, toggle, toggleAll }} label="shared servers" showRole />
             </>
           )}
         </>
+      )}
+
+      {total > PAGE_SIZE && (
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'center', marginTop: 18 }}>
+          <button
+            className="btn btn--secondary btn--sm"
+            data-ripple
+            disabled={offset === 0}
+            onClick={() => setQuery({ offset: Math.max(0, offset - PAGE_SIZE) })}
+          >
+            Previous
+          </button>
+          <span className="subtle" style={{ fontSize: '.82rem' }}>
+            Page {pageNumber} of {pageCount}
+          </span>
+          <button
+            className="btn btn--secondary btn--sm"
+            data-ripple
+            disabled={offset + PAGE_SIZE >= total}
+            onClick={() => setQuery({ offset: offset + PAGE_SIZE })}
+          >
+            Next
+          </button>
+        </div>
       )}
     </div>
   );
@@ -145,28 +374,47 @@ function ServerTable({
   pendingId,
   actions,
   navigate,
+  selection,
+  label,
   showRole = false,
 }: {
   rows: DeploymentView[];
   pendingId: string | null;
   actions: ServerActions;
   navigate: (to: string) => void;
+  selection: Selection;
+  label: string;
   showRole?: boolean;
 }) {
+  const allOn = rows.length > 0 && rows.every((d) => selection.selected.has(d.id));
+  const someOn = !allOn && rows.some((d) => selection.selected.has(d.id));
   return (
     <div className="table-wrap">
       <table className="table">
         <thead>
           <tr>
+            <th style={{ width: 36 }}>
+              <input
+                type="checkbox"
+                aria-label={`Select all ${label}`}
+                checked={allOn}
+                ref={(el) => {
+                  if (el) el.indeterminate = someOn;
+                }}
+                onChange={(e) => selection.toggleAll(rows, e.target.checked)}
+              />
+            </th>
             <th>Name</th>
-            <th>Image</th>
-            <th>Node</th>
+            <th className="wide-only">Image</th>
+            <th className="wide-only">Node</th>
             <th>Status</th>
-            {showRole && <th>Your role</th>}
-            <th>Container</th>
-            <th>Limits</th>
-            <th>Created</th>
-            <th></th>
+            {showRole && <th className="wide-only">Your role</th>}
+            <th className="wide-only">Container</th>
+            <th className="wide-only">Limits</th>
+            <th className="wide-only">Created</th>
+            <th>
+              <span className="sr-only">Actions</span>
+            </th>
           </tr>
         </thead>
         <tbody className="stagger">
@@ -174,7 +422,15 @@ function ServerTable({
             const role = d.role as ServerRole | undefined;
             const busy = pendingId === d.id;
             return (
-              <tr key={d.id} style={{ ['--i']: Math.min(i, 12) } as CSSProperties}>
+              <tr key={d.id} style={{ ['--i']: Math.min(i, 12) } as CSSProperties} aria-selected={selection.selected.has(d.id)}>
+                <td>
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${d.name}`}
+                    checked={selection.selected.has(d.id)}
+                    onChange={() => selection.toggle(d.id)}
+                  />
+                </td>
                 <td>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                     <button className="name-btn" onClick={() => navigate(`/servers/${d.id}`)}>
@@ -192,21 +448,23 @@ function ServerTable({
                         color: 'var(--color-text-subtle)',
                       }}
                     >
-                      {d.type === 'game' || d.dockerImage.startsWith('nexusinfra/') ? 'game' : 'app'}
+                      {isGameServer(d) ? 'game' : 'app'}
                     </span>
                   </span>
                 </td>
-                <td className="mono">{d.dockerImage}</td>
-                <td>{d.nodeId ?? '—'}</td>
+                <td className="mono wide-only">{d.dockerImage}</td>
+                <td className="wide-only">{d.nodeId ?? '—'}</td>
                 <td>
-                  <StatusBadge status={d.status} />
+                  <StatusBadge status={d.status} suspended={isSuspended(d)} title={suspensionNote(d) ?? undefined} />
+                  {/* Players, as the game reports them (#382). */}
+                  {isGameServer(d) && <PlayerCount deploymentId={d.id} running={d.status === 'running'} />}
                 </td>
-                {showRole && <td className="subtle">{role ? ROLE_LABELS[role] : '—'}</td>}
-                <td className="mono subtle">{shortId(d.containerId)}</td>
-                <td className="mono subtle" style={{ fontSize: '.82rem', whiteSpace: 'nowrap' }}>
-                  cpu 50% · ram 50%
+                {showRole && <td className="subtle wide-only">{role ? ROLE_LABELS[role] : '—'}</td>}
+                <td className="mono subtle wide-only">{shortId(d.containerId)}</td>
+                <td className="mono subtle wide-only" style={{ fontSize: '.82rem', whiteSpace: 'nowrap' }}>
+                  {formatLimits(d.resourceLimits)}
                 </td>
-                <td className="subtle tnum">{formatRelative(d.createdAt)}</td>
+                <td className="subtle tnum wide-only">{formatRelative(d.createdAt)}</td>
                 <td>
                   <span className="actions">
                     {d.status === 'running' ? (

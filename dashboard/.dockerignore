@@ -1,2 +1,16 @@
-node_modules
-dist
+# The dashboard image is built from this directory, not the repo root, so it needs
+# its own list (#396) — see the root .dockerignore for why each entry is here.
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+**/coverage
+**/.env
+**/.env.*
+!**/.env.example
+**/*.db
+**/*.db-journal
+**/*.log
+.git
+.claude
+**/.vscode
+**/.idea

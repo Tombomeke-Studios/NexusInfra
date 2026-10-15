@@ -3,6 +3,25 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { NewDeployment } from './NewDeployment';
+import { EditionProvider } from '../edition';
+
+// The catalogue the orchestrator serves (#231). The form renders itself from this,
+// so a new egg needs no dashboard change — and these tests assert exactly that.
+const MINECRAFT_EGG = {
+  id: 'minecraft-java',
+  name: 'Minecraft (Java Edition)',
+  description: 'A Java Edition server built on itzg/minecraft-server.',
+  dockerImage: 'itzg/minecraft-server',
+  ports: { '25565': '25565' },
+  dataPath: '/data',
+  memoryVariable: 'MEMORY',
+  variables: [
+    { key: 'MEMORY', label: 'Java heap size', description: 'How much memory the server may actually use.', kind: 'string', default: '2G' },
+    { key: 'TYPE', label: 'Server software', description: 'Which server software to run.', kind: 'choice', default: 'VANILLA', options: ['VANILLA', 'PAPER'] },
+    { key: 'MAX_PLAYERS', label: 'Player slots', description: 'How many people may connect at once.', kind: 'integer', default: '20', min: 1, max: 200 },
+    { key: 'ONLINE_MODE', label: 'Verify accounts with Mojang', description: 'Whether joining requires a paid account.', kind: 'boolean', default: 'true' },
+  ],
+};
 
 // Filling the form and submitting should POST a deployment with the parsed
 // ports/env and then navigate to the servers list.
@@ -24,11 +43,13 @@ describe('NewDeployment', () => {
     vi.stubGlobal('fetch', fetchMock);
     fetchMock.mockClear(); // don't let a prior test's POST leak into calls[]
     // The form fetches nodes on mount (placement options); answer that with [].
-    fetchMock.mockImplementation((url: string) =>
-      typeof url === 'string' && url.includes('/nodes')
-        ? Promise.resolve({ ok: true, status: 200, json: async () => [] } as Response)
-        : Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response)
-    );
+    fetchMock.mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/placement')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: null }) } as Response);
+      if (path.includes('/nodes')) return Promise.resolve({ ok: true, status: 200, json: async () => [] } as Response);
+      if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [MINECRAFT_EGG] } as Response);
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
+    });
   });
   afterEach(() => vi.unstubAllGlobals());
 
@@ -55,11 +76,13 @@ describe('NewDeployment', () => {
       ports: { '8080': '80' },
       env: {},
       type: 'app',
+      // Nothing typed: nothing beyond what the image declares is kept (#324).
+      persistPaths: [],
       autoRestart: true,
       resourceLimits: {
         cpuPercent: 50,
         ramPercent: 50,
-        diskPercent: 50,
+        // No diskPercent: the control was never enforced and is gone (#276).
         swapPercent: 0,
         ioPriority: 'normal',
         restartPolicy: 'on-failure',
@@ -68,22 +91,392 @@ describe('NewDeployment', () => {
     });
   });
 
-  it('deploys a game server with a real image and startup env', async () => {
+  it('sends the directories an application keeps across restarts (#324)', async () => {
+    renderForm();
+    await userEvent.type(screen.getByLabelText('Name'), 'web');
+    await userEvent.type(screen.getByLabelText('Docker image'), 'nginx');
+    await userEvent.type(screen.getByPlaceholderText('/data, /var/lib/app'), '/usr/share/nginx/html, /etc/nginx');
+    await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+    await screen.findByText('Servers page');
+
+    const call = fetchMock.mock.calls.find(([u, o]) => typeof u === 'string' && u.includes('/deployments') && o?.method === 'POST');
+    expect(JSON.parse(call![1].body as string).persistPaths).toEqual(['/usr/share/nginx/html', '/etc/nginx']);
+  });
+
+  it('deploys from an egg by id, letting the server derive the image', async () => {
     renderForm();
 
     await userEvent.click(screen.getByRole('button', { name: /Game server/ }));
     await userEvent.type(screen.getByLabelText('Name'), 'mc');
+    await screen.findByRole('button', { name: /Java Edition/ });
     await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
 
     expect(await screen.findByText('Servers page')).toBeInTheDocument();
-    const call = fetchMock.mock.calls.find(
-      ([u, o]) => typeof u === 'string' && u.includes('/deployments') && o?.method === 'POST'
-    );
+    const call = fetchMock.mock.calls.find(([u, o]) => typeof u === 'string' && u.includes('/deployments') && o?.method === 'POST');
     const body = JSON.parse(call![1].body as string);
-    expect(body.dockerImage).toBe('itzg/minecraft-server');
-    expect(body.type).toBe('game');
-    expect(body.ports).toEqual({ '25565': '25565' });
-    expect(body.env).toMatchObject({ EULA: 'TRUE', TYPE: 'PAPER' });
+
+    // The recipe lives on the server: the panel sends which egg, not which image.
+    expect(body.eggId).toBe('minecraft-java');
+    expect(body.dockerImage).toBeUndefined();
+  });
+
+  it('renders a field per egg variable and sends the answers', async () => {
+    renderForm();
+
+    await userEvent.click(screen.getByRole('button', { name: /Game server/ }));
+    await userEvent.type(screen.getByLabelText('Name'), 'mc');
+
+    // The fields come from the catalogue, not from anything hardcoded here.
+    await userEvent.click(await screen.findByRole('button', { name: 'PAPER' }));
+    const slots = screen.getByRole('spinbutton');
+    await userEvent.clear(slots);
+    await userEvent.type(slots, '40');
+    await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+
+    expect(await screen.findByText('Servers page')).toBeInTheDocument();
+    const call = fetchMock.mock.calls.find(([u, o]) => typeof u === 'string' && u.includes('/deployments') && o?.method === 'POST');
+    expect(JSON.parse(call![1].body as string).eggValues).toMatchObject({ TYPE: 'PAPER', MAX_PLAYERS: '40' });
+  });
+
+  // A password the API makes up when left blank (#388): the field says so, and
+  // an untouched one is not sent, which is what asks for the generated value.
+  it('leaves a generated password blank, saying it will be made up', async () => {
+    const VALHEIM = {
+      id: 'valheim', name: 'Valheim', description: '', dockerImage: 'img', ports: { '2456': '2456/udp' }, dataPath: '/config',
+      variables: [{ key: 'SERVER_PASS', label: 'Password', description: 'Required to join.', kind: 'string', default: '', generate: 'password', minLength: 5 }],
+    };
+    fetchMock.mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/placement')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: null }) } as Response);
+      if (path.includes('/nodes')) return Promise.resolve({ ok: true, status: 200, json: async () => [] } as Response);
+      if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [VALHEIM] } as Response);
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
+    });
+    renderForm();
+
+    await userEvent.click(screen.getByRole('button', { name: /Game server/ }));
+    await userEvent.type(screen.getByLabelText('Name'), 'vh');
+    const field = await screen.findByPlaceholderText('Generated if left blank');
+    expect(field).toHaveValue('');
+    expect(field).toHaveAttribute('placeholder', 'Generated if left blank');
+    await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+
+    expect(await screen.findByText('Servers page')).toBeInTheDocument();
+    const call = fetchMock.mock.calls.find(([u, o]) => typeof u === 'string' && u.includes('/deployments') && o?.method === 'POST');
+    expect(JSON.parse(call![1].body as string).eggValues?.SERVER_PASS).toBeUndefined();
+  });
+
+  it('offers no free-form environment rows for an egg', async () => {
+    // The egg owns its environment; arbitrary rows would defeat validating it.
+    renderForm();
+    await userEvent.click(screen.getByRole('button', { name: /Game server/ }));
+    await screen.findByRole('button', { name: /Java Edition/ });
+    expect(screen.queryByLabelText('Environment key 1')).not.toBeInTheDocument();
+  });
+
+  // The Placement control let you pin a server to a node and then never sent the
+  // choice — the orchestrator always picked the emptiest one, so a deliberate pin
+  // was silently overruled (#254).
+  it('sends the pinned node when placement is not Auto', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/placement'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: 'n1' }) } as Response);
+      if (path.includes('/nodes'))
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 'node-rack', name: 'rack-1', health: 'healthy', cpuPercent: 10, ramUsedMb: 1000, ramTotalMb: 8000, diskUsedGb: null, diskTotalGb: null, lastHeartbeat: new Date().toISOString() }],
+        } as Response);
+      if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [MINECRAFT_EGG] } as Response);
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
+    });
+    renderForm();
+
+    await userEvent.type(screen.getByLabelText('Name'), 'pinned');
+    await userEvent.type(screen.getByLabelText('Docker image'), 'nginx');
+    await userEvent.click(await screen.findByRole('button', { name: /rack-1/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+
+    expect(await screen.findByText('Servers page')).toBeInTheDocument();
+    const call = fetchMock.mock.calls.find(([u, o]) => typeof u === 'string' && u.includes('/deployments') && o?.method === 'POST');
+    expect(JSON.parse(call![1].body as string).nodeId).toBe('node-rack');
+  });
+
+  it('sends no node when placement is left on Auto', async () => {
+    renderForm();
+
+    await userEvent.type(screen.getByLabelText('Name'), 'auto');
+    await userEvent.type(screen.getByLabelText('Docker image'), 'nginx');
+    await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+
+    expect(await screen.findByText('Servers page')).toBeInTheDocument();
+    const call = fetchMock.mock.calls.find(([u, o]) => typeof u === 'string' && u.includes('/deployments') && o?.method === 'POST');
+    expect(JSON.parse(call![1].body as string)).not.toHaveProperty('nodeId');
+  });
+
+  it('no longer offers controls that go nowhere', async () => {
+    renderForm();
+    // Both were written to state and read by nothing (#255, #256).
+    expect(screen.queryByText(/startup command/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/feature limits/i)).not.toBeInTheDocument();
+  });
+
+  // The container cap and the heap control the same physical RAM (#271). Since
+  // #308 the heap is derived from the cap instead of being asked for separately,
+  // so the defaults cannot collide — and the warning only concerns a heap
+  // somebody chose themselves.
+  it('derives the heap from the limit instead of colliding with it', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/placement'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: 'n1' }) } as Response);
+      if (path.includes('/nodes'))
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          // 4 GB node: the default 50% limit is a 2048 MB cap, and the egg's
+          // default heap is 2G — the collision the defaults used to produce.
+          json: async () => [{ id: 'n1', name: 'small-box', health: 'healthy', cpuPercent: 10, ramUsedMb: 1000, ramTotalMb: 4096, diskUsedGb: null, diskTotalGb: null, lastHeartbeat: new Date().toISOString() }],
+        } as Response);
+      if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [MINECRAFT_EGG] } as Response);
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
+    });
+    renderForm();
+
+    await userEvent.click(screen.getByRole('button', { name: /Game server/ }));
+    await screen.findByRole('button', { name: /Java Edition/ });
+
+    // 50% of a 4 GB node is a 2048 MB cap. The old fixed `2G` default needed
+    // ~2560 MB and was refused here while being accepted on a bigger node — the
+    // same untouched form, a different answer depending on where it landed.
+    expect(await screen.findByText(/1536 MB/)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    // And it is not asked for twice: no heap field unless you take it over.
+    expect(screen.queryByRole('textbox', { name: /Java heap size/i })).not.toBeInTheDocument();
+  });
+
+  // A percentage of a node that has not reported its memory is still a limit —
+  // it just cannot be turned into megabytes, so neither can a heap (#381).
+  it('says why no heap can be worked out from a percentage of an unknown node', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/placement')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: 'n1' }) } as Response);
+      if (path.includes('/nodes'))
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 'n1', name: 'fresh-box', health: 'healthy', cpuPercent: null, ramUsedMb: null, ramTotalMb: null, diskUsedGb: null, diskTotalGb: null, lastHeartbeat: new Date().toISOString() }],
+        } as Response);
+      if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [MINECRAFT_EGG] } as Response);
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
+    });
+    renderForm();
+
+    await userEvent.click(screen.getByRole('button', { name: /Game server/ }));
+    await screen.findByRole('button', { name: /Java Edition/ });
+
+    expect(await screen.findByText(/fresh-box has not reported its memory yet/)).toBeInTheDocument();
+    expect(screen.queryByText(/no memory limit to derive one from/)).not.toBeInTheDocument();
+
+    // In MB the cap needs no node, and the heap follows it.
+    await userEvent.click(screen.getByRole('button', { name: 'RAM limit in MB' }));
+    expect(await screen.findByText(/1536 MB/)).toBeInTheDocument();
+  });
+
+  it('sends no heap, which is what asks the API to derive one', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/placement')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: 'n1' }) } as Response);
+      if (path.includes('/nodes'))
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 'n1', name: 'small-box', health: 'healthy', cpuPercent: 10, ramUsedMb: 1000, ramTotalMb: 4096, diskUsedGb: null, diskTotalGb: null, lastHeartbeat: new Date().toISOString() }],
+        } as Response);
+      if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [MINECRAFT_EGG] } as Response);
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
+    });
+    renderForm();
+
+    await userEvent.click(screen.getByRole('button', { name: /Game server/ }));
+    await screen.findByRole('button', { name: /Java Edition/ });
+    await userEvent.type(screen.getByLabelText('Name'), 'mc');
+    await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+
+    const call = fetchMock.mock.calls.find(([u, o]) => String(u).includes('/deployments') && o?.method === 'POST');
+    const body = JSON.parse(call![1].body as string);
+    // Omitted, not blank: the egg reads blank as "use my default", which is the
+    // fixed 2G this replaced.
+    expect(body.eggValues.MEMORY).toBeUndefined();
+  });
+
+  it('hands the heap back when somebody asks for it, warning if it will not fit', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/placement')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: 'n1' }) } as Response);
+      if (path.includes('/nodes'))
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 'n1', name: 'small-box', health: 'healthy', cpuPercent: 10, ramUsedMb: 1000, ramTotalMb: 4096, diskUsedGb: null, diskTotalGb: null, lastHeartbeat: new Date().toISOString() }],
+        } as Response);
+      if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [MINECRAFT_EGG] } as Response);
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
+    });
+    renderForm();
+
+    await userEvent.click(screen.getByRole('button', { name: /Game server/ }));
+    await screen.findByRole('button', { name: /Java Edition/ });
+    await userEvent.click(screen.getByRole('checkbox', { name: /set the heap myself/i }));
+
+    const field = await screen.findByRole('textbox', { name: /Java heap size/i });
+    await userEvent.clear(field);
+    await userEvent.type(field, '2G');
+
+    const warning = await screen.findByRole('alert');
+    expect(warning).toHaveTextContent(/2048 MB heap will not fit a 2048 MB limit/);
+    expect(warning).toHaveTextContent(/Java claims the whole heap up front/);
+  });
+
+  it('shows the memory limit in MB for the chosen node', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/placement'))
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: 'n1' }) } as Response);
+      if (path.includes('/nodes'))
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 'n1', name: 'big-box', health: 'healthy', cpuPercent: 10, ramUsedMb: 1000, ramTotalMb: 32768, diskUsedGb: null, diskTotalGb: null, lastHeartbeat: new Date().toISOString() }],
+        } as Response);
+      if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [MINECRAFT_EGG] } as Response);
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
+    });
+    renderForm();
+
+    // 50% of 32 GB — meaningless as "50%", actionable as "16384 MB".
+    expect(await screen.findByText(/16384 MB on big-box/)).toBeInTheDocument();
+  });
+
+  // Setting limits in the unit you are actually thinking in (#275), against
+  // capacity that reflects what is committed rather than what is momentarily used.
+  describe('resource units and capacity', () => {
+    // 8 GB / 8 cores, mostly "used" by page cache, with 2 GB committed elsewhere.
+    const NODE_WITH_CAPACITY = {
+      id: 'n1',
+      name: 'home-box',
+      health: 'healthy',
+      cpuPercent: 4,
+      cpuCores: 8,
+      ramUsedMb: 7000,
+      ramTotalMb: 8192,
+      diskUsedGb: null,
+      diskTotalGb: null,
+      lastHeartbeat: new Date().toISOString(),
+      capacity: {
+        ramTotalMb: 8192,
+        ramCommittedMb: 2048,
+        ramUsedMb: 7000,
+        ramAvailableMb: 6144,
+        cpuCoresTotal: 8,
+        cpuCoresCommitted: 2,
+        cpuUsedPercent: 4,
+        cpuCoresAvailable: 6,
+        overCommitted: false,
+      },
+    };
+
+    function renderWithCapacity() {
+      fetchMock.mockImplementation((url: string) => {
+        const path = String(url);
+        if (path.includes('/placement')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: 'n1' }) } as Response);
+        if (path.includes('/nodes')) return Promise.resolve({ ok: true, status: 200, json: async () => [NODE_WITH_CAPACITY] } as Response);
+        if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [MINECRAFT_EGG] } as Response);
+        return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
+      });
+      renderForm();
+    }
+
+    it('reports what is uncommitted, not what is unused', async () => {
+      renderWithCapacity();
+      // 7000 of 8192 MB reads as used, and 6144 MB is genuinely available.
+      expect(await screen.findByText(/6144 MB of 8192 MB uncommitted on home-box/)).toBeInTheDocument();
+      expect(screen.getByText(/6 of 8 cores uncommitted on home-box/)).toBeInTheDocument();
+    });
+
+    it('shows committed against total rather than a bare percentage', async () => {
+      renderWithCapacity();
+      expect(await screen.findByText('2048 MB committed of 8192 MB')).toBeInTheDocument();
+      expect(screen.getByText('2 cores committed of 8 cores')).toBeInTheDocument();
+    });
+
+    it('sends an absolute memory limit when MB is chosen', async () => {
+      renderWithCapacity();
+      await screen.findByText(/MB uncommitted on home-box/);
+
+      await userEvent.type(screen.getByLabelText('Name'), 'svc');
+      await userEvent.type(screen.getByLabelText('Docker image'), 'nginx');
+      await userEvent.click(screen.getByRole('button', { name: 'RAM limit in MB' }));
+
+      const field = screen.getByLabelText('RAM limit');
+      await userEvent.clear(field);
+      await userEvent.type(field, '6144');
+      await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+
+      expect(await screen.findByText('Servers page')).toBeInTheDocument();
+      const call = fetchMock.mock.calls.find(([u, o]) => typeof u === 'string' && u.includes('/deployments') && o?.method === 'POST');
+      const limits = JSON.parse(call![1].body as string).resourceLimits;
+      expect(limits.ramMb).toBe(6144);
+      // Only one unit is sent; sending both would be ambiguous.
+      expect(limits.ramPercent).toBeUndefined();
+    });
+
+    it('sends an absolute core count when cores is chosen', async () => {
+      renderWithCapacity();
+      await screen.findByText(/MB uncommitted on home-box/);
+
+      await userEvent.type(screen.getByLabelText('Name'), 'svc');
+      await userEvent.type(screen.getByLabelText('Docker image'), 'nginx');
+      await userEvent.click(screen.getByRole('button', { name: 'CPU limit in cores' }));
+
+      const field = screen.getByLabelText('CPU limit');
+      await userEvent.clear(field);
+      await userEvent.type(field, '4');
+      await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+
+      expect(await screen.findByText('Servers page')).toBeInTheDocument();
+      const call = fetchMock.mock.calls.find(([u, o]) => typeof u === 'string' && u.includes('/deployments') && o?.method === 'POST');
+      const limits = JSON.parse(call![1].body as string).resourceLimits;
+      expect(limits.cpuCores).toBe(4);
+      expect(limits.cpuPercent).toBeUndefined();
+    });
+
+    it('converts the value when the unit is switched rather than resetting it', async () => {
+      renderWithCapacity();
+      await screen.findByText(/MB uncommitted on home-box/);
+
+      // The form starts at 50% of an 8192 MB node.
+      await userEvent.click(screen.getByRole('button', { name: 'RAM limit in MB' }));
+      expect(screen.getByLabelText('RAM limit')).toHaveValue(4096);
+
+      // And back again, unchanged.
+      await userEvent.click(screen.getByRole('button', { name: 'RAM limit in %' }));
+      expect(screen.getByLabelText('RAM limit percent')).toHaveValue('50');
+    });
+
+    it('warns when the request exceeds what the node has left', async () => {
+      renderWithCapacity();
+      await screen.findByText(/MB uncommitted on home-box/);
+
+      await userEvent.click(screen.getByRole('button', { name: 'RAM limit in MB' }));
+      const field = screen.getByLabelText('RAM limit');
+      await userEvent.clear(field);
+      await userEvent.type(field, '8000'); // more than the 6144 uncommitted
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(/More than this node has left/);
+    });
   });
 
   it('surfaces an API error and stays on the form', async () => {
@@ -100,5 +493,188 @@ describe('NewDeployment', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('No healthy node available');
+  });
+});
+
+// ── NeoForge and the version selector (#311) ─────────────────────────────────
+
+describe('NewDeployment egg options', () => {
+  const fetchMock = vi.fn();
+
+  /** The catalogue as the orchestrator serves it: version options already filled in. */
+  const EGG_WITH_VERSIONS = {
+    ...MINECRAFT_EGG,
+    variables: [
+      {
+        key: 'TYPE',
+        label: 'Server software',
+        description: 'Which server software to run.',
+        kind: 'choice',
+        default: 'VANILLA',
+        options: ['VANILLA', 'PAPER', 'FABRIC', 'FORGE', 'NEOFORGE', 'QUILT'],
+      },
+      {
+        key: 'VERSION',
+        label: 'Game version',
+        description: 'Which Minecraft version to run.',
+        kind: 'version',
+        optionsSource: 'minecraft-versions',
+        default: 'LATEST',
+        options: ['LATEST', 'SNAPSHOT', '26.2', '1.21.11', '1.20.1'],
+      },
+      {
+        key: 'NEOFORGE_VERSION',
+        label: 'NeoForge build',
+        description: 'Which NeoForge build to install.',
+        kind: 'string',
+        default: 'latest',
+        showWhen: { key: 'TYPE', equals: ['NEOFORGE'] },
+      },
+      { key: 'MEMORY', label: 'Java heap size', description: 'Heap.', kind: 'string', default: '2G' },
+    ],
+  };
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock.mockReset();
+    fetchMock.mockImplementation((url: string) => {
+      const path = String(url);
+      if (path.includes('/placement')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ nodeId: 'n1' }) } as Response);
+      if (path.includes('/nodes'))
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 'n1', name: 'box', health: 'healthy', cpuPercent: 10, ramUsedMb: 1000, ramTotalMb: 16384, diskUsedGb: null, diskTotalGb: null, lastHeartbeat: new Date().toISOString() }],
+        } as Response);
+      if (path.includes('/eggs')) return Promise.resolve({ ok: true, status: 200, json: async () => [EGG_WITH_VERSIONS] } as Response);
+      return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'd1' }) } as Response);
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const openGameForm = async () => {
+    render(
+      <MemoryRouter initialEntries={['/new']}>
+        <Routes>
+          <Route path="/new" element={<NewDeployment />} />
+          <Route path="/servers" element={<div>Servers page</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Game server/ }));
+    await screen.findByRole('button', { name: /Java Edition/ });
+  };
+
+  it('offers NeoForge as server software', async () => {
+    await openGameForm();
+    expect(screen.getByRole('button', { name: 'NEOFORGE' })).toBeInTheDocument();
+  });
+
+  it('picks the version from a list rather than a text field', async () => {
+    await openGameForm();
+
+    const select = screen.getByRole('combobox', { name: /game version/i });
+    expect(select).toHaveValue('LATEST');
+    // The list the orchestrator resolved, not one baked into the panel.
+    expect(screen.getByRole('option', { name: '26.2' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: '1.20.1' })).toBeInTheDocument();
+
+    await userEvent.selectOptions(select, '1.21.11');
+    expect(select).toHaveValue('1.21.11');
+  });
+
+  it('still lets a version be typed, since the list can be stale or offline', async () => {
+    await openGameForm();
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /game version/i }), '__other__');
+    const typed = await screen.findByRole('textbox', { name: /game version/i });
+    await userEvent.type(typed, '1.21.11-rc1');
+
+    expect(typed).toHaveValue('1.21.11-rc1');
+  });
+
+  it('asks for the NeoForge build only once NeoForge is chosen', async () => {
+    await openGameForm();
+    expect(screen.queryByRole('textbox', { name: /neoforge build/i })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'NEOFORGE' }));
+    expect(await screen.findByRole('textbox', { name: /neoforge build/i })).toBeInTheDocument();
+
+    // And it goes away again when the software changes back.
+    await userEvent.click(screen.getByRole('button', { name: 'PAPER' }));
+    expect(screen.queryByRole('textbox', { name: /neoforge build/i })).not.toBeInTheDocument();
+  });
+
+  it('sends the chosen software and version', async () => {
+    await openGameForm();
+
+    await userEvent.type(screen.getByLabelText('Name'), 'modded');
+    await userEvent.click(screen.getByRole('button', { name: 'NEOFORGE' }));
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /game version/i }), '1.21.11');
+    await userEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+
+    const call = fetchMock.mock.calls.find(([u, o]) => String(u).includes('/deployments') && o?.method === 'POST');
+    const body = JSON.parse(call![1].body as string);
+    expect(body.eggValues).toMatchObject({ TYPE: 'NEOFORGE', VERSION: '1.21.11' });
+  });
+});
+
+// #297: in the hosted edition the form shows the plan before anyone picks a size.
+describe('NewDeployment — plan entitlements', () => {
+  const plan = {
+    entitlements: {
+      planId: 'standard',
+      planName: 'Standard',
+      maxServers: 5,
+      maxDatabases: 5,
+      maxRamMb: 8192,
+      maxBackupsPerServer: 10,
+      charging: { basis: 'runtime-hours', pricePerHour: 0.02, currency: 'EUR', freeHoursPerMonth: 100, sizeFactor: { standardCpuPercent: 50, standardRamPercent: 50, minimum: 0.25 } },
+    },
+    usage: { servers: 1, databases: 0, ramMb: 1024, uncappedServers: 0 },
+  };
+
+  function serve(edition: 'community' | 'hosted') {
+    const fetchMock = vi.fn((url: string) => {
+      const path = String(url);
+      const json = (body: unknown) => Promise.resolve({ ok: true, status: 200, json: async () => body } as Response);
+      if (path.endsWith('/config')) return json({ edition });
+      if (path.includes('/me/entitlements')) return json(plan);
+      if (path.includes('/placement')) return json({ nodeId: null });
+      if (path.includes('/nodes')) return json([]);
+      if (path.includes('/eggs')) return json([]);
+      return json({});
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  function renderWithEdition() {
+    return render(
+      <EditionProvider>
+        <MemoryRouter initialEntries={['/new']}>
+          <Routes>
+            <Route path="/new" element={<NewDeployment />} />
+          </Routes>
+        </MemoryRouter>
+      </EditionProvider>
+    );
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('shows the plan in the hosted edition', async () => {
+    serve('hosted');
+    renderWithEdition();
+    expect(await screen.findByRole('region', { name: 'Your plan' })).toHaveTextContent('1 GB of 8 GB');
+  });
+
+  it('never asks for a plan in the community edition', async () => {
+    const fetchMock = serve('community');
+    renderWithEdition();
+    await screen.findByLabelText('Name');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole('region', { name: 'Your plan' })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/me/entitlements'))).toBe(false);
   });
 });

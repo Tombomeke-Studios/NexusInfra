@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { listNodes, listDeployments, deregisterNode, type NodeView, type DeploymentView } from '../api';
+import { listNodes, listAllDeployments, deregisterNode, getCurrentUser, listNodePorts, setNodePortRange, getNodeDisk, type NodeView, type DeploymentView, type NodePortAllocation } from '../api';
+import { formatBytes, formatRelative } from '../format';
+import { InfoHint } from '../components/InfoHint';
 import { StatusBadge } from '../components/StatusBadge';
 import { useToast } from '../components/Toast';
+import { useDialog } from '../components/Dialog';
 
 // Node detail (#125): a per-node view with live CPU/RAM meters, a session-scoped
 // resource-history sparkline, the deployments hosted on it, and deregister. History
@@ -11,12 +14,14 @@ const HISTORY = 60; // samples kept (~2 min at the 2s poll)
 
 const cpuOf = (n: NodeView) => Math.round(n.cpuPercent ?? 0);
 const ramOf = (n: NodeView) => (n.ramUsedMb != null && n.ramTotalMb ? Math.round((n.ramUsedMb / n.ramTotalMb) * 100) : 0);
-const diskOf = (n: NodeView) => (n.diskUsedGb != null && n.diskTotalGb ? Math.round((n.diskUsedGb / n.diskTotalGb) * 100) : 0);
+// Null when the node cannot measure its disk — rendered as unknown, not 0% (#276).
+const diskOf = (n: NodeView) => (n.diskUsedGb != null && n.diskTotalGb ? Math.round((n.diskUsedGb / n.diskTotalGb) * 100) : null);
 
 export function NodeDetail() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { confirm } = useDialog();
   const [node, setNode] = useState<NodeView | null>(null);
   const [deps, setDeps] = useState<DeploymentView[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -26,7 +31,7 @@ export function NodeDetail() {
 
   const load = useCallback(async () => {
     try {
-      const [nodes, deployments] = await Promise.all([listNodes(), listDeployments()]);
+      const [nodes, deployments] = await Promise.all([listNodes(), listAllDeployments()]);
       const n = nodes.find((x) => x.id === id) ?? null;
       setNode(n);
       setDeps(deployments.filter((d) => d.nodeId === id));
@@ -47,7 +52,13 @@ export function NodeDetail() {
   }, [load]);
 
   const deregister = async () => {
-    if (!window.confirm(`Deregister ${node?.name ?? id}? Its record is removed (the machine itself is untouched).`)) return;
+    const ok = await confirm({
+      title: `Deregister ${node?.name ?? id}?`,
+      message: 'Its record is removed from the panel. The machine itself is untouched, and it will reappear if its agent keeps sending heartbeats.',
+      confirmLabel: 'Deregister',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await deregisterNode(id);
       toast('Node deregistered', 'error', 'Node');
@@ -81,7 +92,7 @@ export function NodeDetail() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12, marginBottom: 24 }}>
         <StatBox label="CPU" value={`${cpuOf(node)}%`} />
         <StatBox label="Memory" value={`${ramOf(node)}%`} />
-        <StatBox label="Disk" value={`${diskOf(node)}%`} />
+        <StatBox label="Disk" value={diskOf(node) != null ? `${diskOf(node)}%` : '—'} />
         <StatBox label="Servers" value={String(deps.length)} />
       </div>
 
@@ -94,6 +105,9 @@ export function NodeDetail() {
           <span style={{ color: 'var(--color-success)' }}>● Memory {ramOf(node)}%</span>
         </div>
       </div>
+
+      <PortPool node={node} />
+      <DiskByServer nodeId={node.id} />
 
       <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 12 }}>Servers on this node</strong>
       <div style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface)', overflow: 'hidden' }}>
@@ -111,6 +125,177 @@ export function NodeDetail() {
         ))}
         {deps.length === 0 && <div className="empty">No servers on this node.</div>}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The node's host-port pool and who holds what (#233). Administrators only —
+ * the API refuses everyone else, and the list names servers they may not see.
+ */
+function PortPool({ node }: { node: NodeView }) {
+  const { toast } = useToast();
+  const [admin, setAdmin] = useState(false);
+  const [held, setHeld] = useState<NodePortAllocation[]>([]);
+  const [start, setStart] = useState(node.portRangeStart != null ? String(node.portRangeStart) : '');
+  const [end, setEnd] = useState(node.portRangeEnd != null ? String(node.portRangeEnd) : '');
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(() => {
+    void listNodePorts(node.id)
+      .then(setHeld)
+      .catch(() => undefined);
+  }, [node.id]);
+
+  useEffect(() => {
+    void getCurrentUser()
+      .then((me) => {
+        const isAdmin = me.platformRole === 'admin' || me.platformRole === 'owner';
+        setAdmin(isAdmin);
+        if (isAdmin) refresh();
+      })
+      .catch(() => undefined);
+  }, [refresh]);
+
+  if (!admin) return null;
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const range = start.trim() || end.trim() ? { start: Number(start), end: Number(end) } : null;
+      const r = await setNodePortRange(node.id, range);
+      toast(
+        range
+          ? `Port range saved${r.outsideRange ? ` — ${r.outsideRange} port${r.outsideRange === 1 ? ' is' : 's are'} already in use outside it and kept` : ''}`
+          : 'Port range removed — any free port may be named',
+        'success',
+        'Node',
+      );
+      refresh();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not save the range', 'error', 'Node');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card" style={{ padding: '18px 20px', marginBottom: 24 }}>
+      <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 10 }}>
+        Host ports
+        <InfoHint text="With a range, servers here may only use ports inside it, and a port written as auto takes the lowest free one. Without a range any free port may be named. Two servers on one node can never hold the same port." label="Host ports help" />
+      </strong>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 14 }}>
+        <label>
+          <span className="field__label" style={{ fontSize: '.78rem' }}>From</span>
+          <input className="input" type="number" min={1} max={65535} value={start} onChange={(e) => setStart(e.target.value)} placeholder="none" aria-label="Port range start" style={{ width: 120 }} />
+        </label>
+        <label>
+          <span className="field__label" style={{ fontSize: '.78rem' }}>To</span>
+          <input className="input" type="number" min={1} max={65535} value={end} onChange={(e) => setEnd(e.target.value)} placeholder="none" aria-label="Port range end" style={{ width: 120 }} />
+        </label>
+        <button className="btn btn--secondary btn--sm" data-ripple disabled={busy} onClick={() => void save()} style={{ minHeight: 40 }}>
+          Save range
+        </button>
+      </div>
+      {held.length === 0 ? (
+        <p className="subtle" style={{ margin: 0, fontSize: '.84rem' }}>No ports are held on this node.</p>
+      ) : (
+        <table className="table" style={{ fontSize: '.84rem' }}>
+          <thead>
+            <tr>
+              <th>Port</th>
+              <th>Server</th>
+            </tr>
+          </thead>
+          <tbody>
+            {held.map((a) => (
+              <tr key={a.port}>
+                <td className="mono">
+                  {a.port}
+                  {a.primary && <span className="subtle"> · primary</span>}
+                </td>
+                <td>{a.name ?? a.deploymentId}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Which server is using this node's disk (#347), largest first. Administrators
+ * only, like the port pool: it names every account's servers. A volume the
+ * panel has no server for is data a deletion left behind — named, because it is
+ * the first place to look when a disk fills.
+ */
+function DiskByServer({ nodeId }: { nodeId: string }) {
+  const navigate = useNavigate();
+  const [usage, setUsage] = useState<Awaited<ReturnType<typeof getNodeDisk>> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void getCurrentUser()
+      .then((me) => {
+        if (me.platformRole !== 'admin' && me.platformRole !== 'owner') return;
+        return getNodeDisk(nodeId).then((u) => live && setUsage(u));
+      })
+      .catch((e) => live && setError(e instanceof Error ? e.message : 'Could not measure'));
+    return () => {
+      live = false;
+    };
+  }, [nodeId]);
+
+  if (!usage && !error) return null;
+  const rows = Array.isArray(usage?.deployments) ? usage.deployments : [];
+  const total = (d: { volumesBytes: number | null; writableBytes: number | null }) => (d.volumesBytes == null ? null : d.volumesBytes + (d.writableBytes ?? 0));
+
+  return (
+    <div className="card" style={{ padding: '18px 20px', marginBottom: 24 }}>
+      <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 4 }}>
+        Disk by server
+        <InfoHint text="Each server's data volumes plus its container's own layer, as the node measures them. Measured, not limited: nothing caps a server's disk yet." label="Disk by server help" />
+      </strong>
+      {error ? (
+        <p role="alert" className="alert alert--error" style={{ marginBottom: 0 }}>{error}</p>
+      ) : rows.length === 0 ? (
+        <p className="subtle" style={{ margin: 0, fontSize: '.84rem' }}>No server keeps data on this node.</p>
+      ) : usage ? (
+        <>
+          <p className="subtle" style={{ margin: '0 0 12px', fontSize: '.8rem' }}>Measured {formatRelative(usage.measuredAt)}.</p>
+          <table className="table" style={{ fontSize: '.84rem' }}>
+            <thead>
+              <tr>
+                <th>Server</th>
+                <th>Data</th>
+                <th className="wide-only">Container layer</th>
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((d) => (
+                <tr key={d.deploymentId}>
+                  <td>
+                    {d.known ? (
+                      <button className="name-btn" onClick={() => navigate(`/servers/${d.deploymentId}`)}>{d.name}</button>
+                    ) : (
+                      <span title={d.deploymentId}>
+                        <span className="badge badge--warning">no server</span> <span className="mono subtle">{d.deploymentId.slice(0, 8)}</span>
+                      </span>
+                    )}
+                  </td>
+                  <td className="tnum">{formatBytes(d.volumesBytes)}</td>
+                  <td className="tnum wide-only">{formatBytes(d.writableBytes)}</td>
+                  <td className="tnum" style={{ fontWeight: 600 }}>{formatBytes(total(d))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      ) : null}
     </div>
   );
 }

@@ -3,7 +3,8 @@ import type { Repository } from './types.js';
 
 // Consumes billing.server.suspend from the Billing Bridge (hosted edition): when
 // a user's credit runs out, stop each named deployment that is still running by
-// emitting infra.server.stop, and record the suspension on the audit trail.
+// emitting infra.server.stop, and record the suspension with the server (#380)
+// and on the audit trail.
 // Dependency-injected (publisher) so it's testable without a broker.
 
 export type PublishFn = (routingKey: string, envelope: EventEnvelope) => Promise<boolean>;
@@ -11,6 +12,8 @@ export type PublishFn = (routingKey: string, envelope: EventEnvelope) => Promise
 export interface SuspendDeps {
   repo: Repository;
   publish?: PublishFn;
+  /** Tell the people on the server (#236); a failure here never blocks the stop. */
+  onSuspended?(deploymentId: string, reason: string): Promise<void> | void;
 }
 
 export interface SuspendPayload {
@@ -34,7 +37,12 @@ export function createSuspendHandler(deps: SuspendDeps) {
           payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId },
         })
       );
+      // Recorded with the server, so the list and its page can say why it stopped
+      // until it next starts (#380) — the audit trail alone made it look like any
+      // other stopped server.
+      await repo.updateDeploymentStatus(detail.id, { suspendedAt: new Date().toISOString(), suspendedReason: payload.reason });
       await repo.appendDeploymentEvent(detail.id, 'suspended', `suspended by billing: ${payload.reason}`);
+      await (async () => deps.onSuspended?.(detail.id, payload.reason))().catch(() => undefined);
     }
   };
 }

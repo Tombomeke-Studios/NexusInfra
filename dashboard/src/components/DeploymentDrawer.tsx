@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useFocusTrap } from '../focusTrap';
 import { getDeployment, type DeploymentDetail } from '../api';
 import { StatusBadge } from './StatusBadge';
+import { isSuspended, suspensionNote } from '../suspension';
 import { formatRelative } from '../format';
 
 // Right-side detail drawer for a deployment: metadata + the full event/audit
@@ -32,10 +34,16 @@ export function DeploymentDrawer({ deploymentId, onClose }: { deploymentId: stri
     return () => window.removeEventListener('keydown', onKey);
   }, [close]);
 
+  // A modal drawer keeps Tab inside and hands focus back when it closes (#247).
+  const panelRef = useRef<HTMLElement>(null);
+  useFocusTrap(panelRef, true);
+
   return (
     <>
       <div className={`drawer__scrim${closing ? ' drawer__scrim--closing' : ''}`} onClick={close} />
       <aside
+        ref={panelRef}
+        tabIndex={-1}
         className={`drawer__panel${closing ? ' drawer__panel--closing' : ''}`}
         role="dialog"
         aria-modal="true"
@@ -57,7 +65,7 @@ export function DeploymentDrawer({ deploymentId, onClose }: { deploymentId: stri
           ) : detail ? (
             <>
               <div style={{ marginBottom: 'var(--space-4)' }}>
-                <StatusBadge status={detail.status} />
+                <StatusBadge status={detail.status} suspended={isSuspended(detail)} title={suspensionNote(detail) ?? undefined} />
               </div>
               <dl className="meta">
                 <dt>Image</dt>

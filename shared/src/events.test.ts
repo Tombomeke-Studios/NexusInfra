@@ -93,3 +93,30 @@ describe('Billing events (hosted edition, #145)', () => {
     expect((envelope.event.payload as any).amount).toBe(12.5);
   });
 });
+
+// Produced by FinVault's own `encryptPayload` (FinVault shared/src/events.ts),
+// run from a FinVault checkout on 2026-09-26 (#298). A fixture from the other
+// codebase is the only thing that proves the two implementations agree — a
+// round-trip through our own code proves only that we agree with ourselves.
+const FINVAULT_FIXTURE = {
+  key: 'shared-secret-key-for-both',
+  ciphertext: 'oODoaOWGasQrKVNi8HYS8SYMwMoUmRfM2gCnSVmqF46Gd6ii7oZgYaa4+ljWctcC2Tex71K2xgq5ZnGrVknEaTBBz/qOo5OiyjJ3mb2ckdSbgf3yplEK',
+  payload: { reference: 'topup-u1-abc', amount: 12.5, currency: 'EUR' },
+};
+
+describe('wire compatibility with FinVault (#298)', () => {
+  it("decrypts a payload encrypted by FinVault's own code", () => {
+    expect(decryptPayload(FINVAULT_FIXTURE.ciphertext, FINVAULT_FIXTURE.key)).toEqual(FINVAULT_FIXTURE.payload);
+  });
+
+  it('names the likely cause when the keys differ, instead of an opaque crypto error', () => {
+    process.env.FINVAULT_MESSAGE_KEY = 'not-the-same-key';
+    try {
+      expect(() => readPayload({ type: 'payment.confirmed', payload: { encrypted: true, data: FINVAULT_FIXTURE.ciphertext } } as never)).toThrow(
+        /FINVAULT_MESSAGE_KEY differs/
+      );
+    } finally {
+      delete process.env.FINVAULT_MESSAGE_KEY;
+    }
+  });
+});

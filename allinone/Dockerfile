@@ -21,6 +21,7 @@ COPY package*.json tsconfig.json ./
 COPY shared/ ./shared/
 COPY services/ ./services/
 COPY dashboard/ ./dashboard/
+COPY scripts/ ./scripts/
 
 ARG NEXUS_EDITION=community
 ENV NEXUS_EDITION=$NEXUS_EDITION
@@ -77,14 +78,15 @@ COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/shared ./shared
 COPY --from=builder /app/services ./services
+COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/dashboard/dist /usr/share/nginx/html
 
 # Regenerate the Prisma client against *this* stage. The builder resolves
 # OpenSSL 1.1 while the runtime installs OpenSSL 3.0, so a client generated
 # earlier looks for an engine that is not here — and the failure only surfaces
 # on the first database call, long after the build has passed.
-RUN cd /app/services/orchestrator && npx prisma generate >/dev/null \
- && if [ -d /app/services/billing-bridge/prisma ]; then cd /app/services/billing-bridge && npx prisma generate >/dev/null || true; fi
+RUN cd /app/services/orchestrator && npm run db:generate >/dev/null \
+ && if [ -d /app/services/billing-bridge/prisma ]; then cd /app/services/billing-bridge && npm run db:generate >/dev/null || true; fi
 
 COPY allinone/nginx.conf /etc/nginx/sites-available/default
 COPY allinone/root /
@@ -103,5 +105,6 @@ VOLUME /data
 ENV DATA_DIR=/data
 ENV NODE_ID=node-local
 
-EXPOSE 80
+# 80 is the panel; 2022 is SFTP to a server's files (#235).
+EXPOSE 80 2022
 ENTRYPOINT ["/init"]

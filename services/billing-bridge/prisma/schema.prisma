@@ -26,6 +26,11 @@ model BillingPlan {
   freeHoursPerMonth Float    @default(0)
   maxServers        Int      @default(5)
   maxDatabases      Int      @default(5)
+  // Null means no ceiling (#297).
+  maxRamMb            Int?
+  maxBackupsPerServer Int?
+  // A retired plan keeps the accounts it has; nobody new may choose it (#369).
+  active            Boolean  @default(true)
   createdAt         DateTime @default(now())
 }
 
@@ -51,11 +56,30 @@ model ServerBilling {
   @@index([deploymentId])
 }
 
+// What billing needs to know about a deployment to charge for it: who owns it
+// and how big it is. Written on deployment.created/updated, so a server started
+// after a restart of this service is still billed (#364).
+model BillingDeployment {
+  deploymentId String   @id
+  userId       String
+  limits       String   @default("{}")
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+}
+
 // A user's prepaid credit balance held in NexusInfra.
 model CreditWallet {
   userId   String @id
   balance  Float  @default(0)
   currency String @default("EUR")
+  // The address the account last asked FinVault to bill (#375) — where its
+  // monthly statement goes. Null until a first top-up.
+  email    String?
+  // When the account was last warned that its credit is running low (#379);
+  // null once it lasts past the threshold again. Stored so a restart of the
+  // bridge does not warn twice for one dip.
+  lowCreditWarnedAt DateTime?
 }
 
 // Append-only credit movements: top-ups (funded via FinVault) and usage charges.
@@ -68,6 +92,8 @@ model CreditLedger {
   reference   String   @unique
   status      String   @default("pending")
   description String   @default("")
+  // Why a top-up failed, in FinVault's words (#351). Null for anything else.
+  failureReason String?
   createdAt   DateTime @default(now())
 
   @@index([userId])

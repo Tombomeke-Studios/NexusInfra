@@ -33,6 +33,7 @@ other people. An optional hosted edition adds usage-based billing through
 - [Architecture](#architecture)
 - [Components](#components)
 - [HTTP API](#http-api)
+- [Command line: nexusctl](#command-line-nexusctl)
 - [FinVault integration](#finvault-integration)
 - [Development](#development)
 - [Documentation](#documentation)
@@ -75,8 +76,10 @@ Most people want the first one.
 
 ### In short
 
-- Deploy any Docker image, or a game preset, from a browser — with CPU, memory and restart policy
-- Live console, interactive terminal, file browser, managed databases, backups and cron schedules
+- Deploy any Docker image, or a game preset, from a browser — with CPU, memory and restart policy.
+  Presets: Minecraft (Java and Bedrock), Palworld, Valheim, Rust, Counter-Strike 2, Terraria,
+  Factorio, Satisfactory, Project Zomboid and Enshrouded
+- Live console, interactive terminal, file browser and SFTP, managed databases, backups and cron schedules
 - Share servers by email or by team, with roles from read-only to full control
 - Automatic placement across several machines, with live health and uptime per host
 - Self-hosted and self-contained; an optional hosted edition adds usage billing
@@ -124,6 +127,7 @@ stack — no compose file, no installer:
 
 ```bash
 docker run -d -v /var/run/docker.sock:/var/run/docker.sock \
+  --add-host=host.docker.internal:host-gateway \
   -v nexusinfra:/data -p 8095:80 ghcr.io/tombomeke-studios/nexusinfra-community
 ```
 
@@ -188,7 +192,7 @@ real container:
 |---|---|
 | **Console** | Live container logs, streamed, plus one-shot commands |
 | **Terminal** | A full interactive shell, over a WebSocket |
-| **Files** | Browse, read, edit, upload, rename and delete inside the container |
+| **Files** | Browse, read, edit, upload, rename and delete inside the container — in the panel or over SFTP with any desktop client, holding the same permissions |
 | **Databases** | Provision a real MySQL, MariaDB or PostgreSQL container with generated credentials |
 | **Backups** | Take and restore tar snapshots of the server's data |
 | **Schedules** | Cron-driven restarts and backups |
@@ -353,6 +357,34 @@ Full request and response shapes, status codes and the event contract are in
 
 ---
 
+## Command line: nexusctl
+
+`nexusctl` drives the same API from a terminal or a script. It lives in [`cli/`](cli), needs Node 20
+and nothing else, and authenticates with an **API token** — create one under *Account → API tokens*
+(the `write` scope is needed to change anything; a read-only token can list and inspect).
+
+```bash
+npm run build --workspace=cli
+alias nexusctl="node $PWD/cli/dist/index.js"
+
+nexusctl login --url https://panel.example.com/api --token nxi_…   # checked, then saved (mode 600)
+nexusctl servers list --status running
+nexusctl servers create --name web --image nginx:alpine --port 8080:80 --persist /usr/share/nginx/html
+nexusctl servers create --name survival --egg minecraft-java --var TYPE=PAPER
+nexusctl servers restart survival web          # by name or id; one request, reported per server
+nexusctl servers logs survival --follow
+nexusctl backups create survival
+nexusctl backups download survival <backup id> # saves the tar under the panel's file name
+nexusctl nodes list
+```
+
+Every listing takes `--json`. `NEXUSCTL_URL` and `NEXUSCTL_TOKEN` override the saved login, so CI
+never has to write a token to disk. Exit codes: `0` success, `1` the panel refused (or part of a
+bulk action failed), `2` a usage error. Destructive commands (`servers delete`, `backups restore`)
+need `--yes`. `nexusctl --help` lists everything.
+
+---
+
 ## FinVault integration
 
 Both platforms share one RabbitMQ topic exchange, `finvault.events`, with a dead-letter exchange
@@ -440,13 +472,15 @@ the full sharing flow including roles, invitations and teams.
 
 Known limitations, stated plainly rather than left to be discovered:
 
-- **Not yet hardened for the public internet.** There is no TLS termination in the shipped bundles,
-  and the default broker credentials need replacing. Treat the bundles as a starting point.
+- **The stack speaks plain HTTP and terminates no TLS itself.** Passwords, tokens and the WebSocket
+  that opens a root shell in a container all travel in the clear, so it must sit behind a reverse
+  proxy before it is reachable from anywhere you do not control.
+  [docs/deployment.md](docs/deployment.md#putting-it-behind-tls-245) has working Caddy and nginx
+  configurations, which ports to publish and which never to. The default broker credentials need
+  replacing too.
 - **SQLite, not PostgreSQL.** Fine for a single control plane; a migration path is on the roadmap.
 - **The hosted edition has not been verified against a live FinVault instance** — the event contract
   is test-guarded on this side, but the two have not yet been run together.
-- **The interactive terminal and the gateway proxy are unit-tested but not yet exercised end to end**
-  against a running stack.
 
 See [TODO.md](TODO.md) for what is planned.
 

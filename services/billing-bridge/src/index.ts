@@ -1,9 +1,9 @@
 import express from 'express';
-import cors from 'cors';
-import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, getEdition, isHosted, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
+import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, getEdition, isHosted, readPayload, startHeartbeat, type EventEnvelope, MetricsRegistry, registerBuildInfo, httpMetrics, metricsHandler } from 'shared';
 import { PrismaRepository } from './db.js';
-import { createBillingService } from './service.js';
+import { createBillingService, DEFAULT_SETTLE_INTERVAL_MS, DEFAULT_TOPUP_TIMEOUT_MS } from './service.js';
 import { createBillingRouter } from './api.js';
+import { requireInternalToken } from './internalAuth.js';
 import { startCycleRunner } from './cycle.js';
 
 // ── Billing Bridge (hosted edition) ───────────────────────────────────────────
@@ -29,13 +29,20 @@ const repo = new PrismaRepository();
 const service = createBillingService({ repo });
 
 const app = express();
-app.use(cors());
+// Prometheus metrics (#246).
+const metrics = new MetricsRegistry();
+registerBuildInfo(metrics, 'billing-bridge', buildInfo());
+app.use(httpMetrics(metrics, 'billing-bridge'));
 app.use(express.json());
+app.get('/metrics', metricsHandler(metrics));
 app.get('/health', (_req, res) => {
   res.json({ service: 'billing-bridge', status: 'healthy', ...buildInfo(), uptimeSec: Math.round(process.uptime()) });
 });
 
 if (isHosted(edition)) {
+  // Only the Orchestrator may call these (#372): they act on whichever account
+  // the path names. No CORS either — no browser talks to this service.
+  app.use(requireInternalToken());
   app.use(createBillingRouter({ repo, service }));
 }
 app.listen(PORT, () => console.log(`[BillingBridge] HTTP listening on http://localhost:${PORT} (edition: ${edition})`));
@@ -50,12 +57,25 @@ async function start() {
     await repo.ensureDefaultPlan();
     await consumeRabbitQueue(
       'nexusinfra.billing-bridge',
-      ['infra.deployment.created', 'infra.server.started', 'infra.server.stopped', 'infra.server.crashed', 'bank.payment.confirmed', 'bank.payment.failed'],
+      [
+        'infra.deployment.created',
+        'infra.deployment.updated',
+        'infra.server.started',
+        'infra.server.stopped',
+        'infra.server.crashed',
+        'bank.payment.confirmed',
+        'bank.payment.failed',
+        // What FinVault actually publishes on (#298): its gateway routes every event
+        // as `events.<type>`. Bound as well, not instead, so either side can move.
+        'events.payment.confirmed',
+        'events.payment.failed',
+      ],
       async (envelope: EventEnvelope) => {
         const { type } = envelope.event;
         const payload = readPayload(envelope.event);
         switch (type) {
           case 'deployment.created':
+          case 'deployment.updated':
             await service.handleDeploymentCreated(payload as { deploymentId: string; userId: string });
             break;
           case 'server.started':
@@ -69,7 +89,7 @@ async function start() {
             await service.handlePaymentConfirmed(payload as { reference: string; amount: number });
             break;
           case 'payment.failed':
-            await service.handlePaymentFailed(payload as { reference: string });
+            await service.handlePaymentFailed(payload as { reference: string; reason?: string });
             break;
           default:
             break;
@@ -82,6 +102,18 @@ async function start() {
     // balance, emit invoices. Idempotent, so hourly polling is safe.
     startCycleRunner({ repo });
     console.log('[BillingBridge] Cycle runner started (hourly poll)');
+
+    // A top-up FinVault never answers is shown as unconfirmed after a while
+    // instead of pending forever (#298).
+    const topUpTimeoutMs = Number(process.env.TOPUP_TIMEOUT_MS) || DEFAULT_TOPUP_TIMEOUT_MS;
+    setInterval(() => void service.expireStaleTopUps(topUpTimeoutMs).catch((err) => console.error('[BillingBridge] top-up expiry failed:', err)), 60_000).unref();
+
+    // Usage is held against the balance while servers run, not only when the
+    // month closes (#365).
+    const settleMs = Number(process.env.SETTLE_INTERVAL_MS) || DEFAULT_SETTLE_INTERVAL_MS;
+    setInterval(() => void service.settle().catch((err) => console.error('[BillingBridge] settling accounts failed:', err)), settleMs).unref();
+    // …and an account is warned before that happens, once per dip (#379).
+    setInterval(() => void service.warnLowCredit().catch((err) => console.error('[BillingBridge] low-credit warnings failed:', err)), settleMs).unref();
 
     startHeartbeat('billing-bridge', 1000);
     console.log('[BillingBridge] Publishing heartbeat on monitoring.heartbeat.service.billing-bridge');

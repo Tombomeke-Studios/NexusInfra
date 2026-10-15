@@ -211,11 +211,11 @@
   cursor: not-allowed;
 }
 .btn--primary {
-  background: var(--color-primary);
+  background: var(--color-primary-solid);
   color: var(--color-primary-fg);
 }
 .btn--primary:hover:not(:disabled) {
-  background: var(--color-primary-hover);
+  background: var(--color-primary-solid-hover);
 }
 .btn--secondary {
   background: var(--color-surface);
@@ -576,6 +576,13 @@
 }
 
 /* ── Table ──────────────────────────────────────────────────────────────── */
+/* Detail columns a phone has no room for (#247): the row still says what the
+   server is and what state it is in, and the server's page has the rest. */
+@media (max-width: 700px) {
+  .wide-only {
+    display: none;
+  }
+}
 .table-wrap {
   overflow-x: auto;
   border: 1px solid var(--color-border);
@@ -678,6 +685,27 @@ input[type='range']::-moz-range-thumb {
   background: var(--color-success-soft);
   color: var(--color-success);
 }
+.alert--warning {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+/* A button that reads as a link (#344): an action, not a navigation, so it is a
+   <button> and keyboard-operable — but it sits in running text. The global
+   :focus-visible ring still applies. */
+.link-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--color-primary);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.link-button:hover {
+  text-decoration-thickness: 2px;
+}
 
 /* ── Auth (login) ───────────────────────────────────────────────────────── */
 .auth-wrap {
@@ -741,6 +769,62 @@ input[type='range']::-moz-range-thumb {
 }
 .appbar__spacer {
   flex: 1;
+}
+/* The nav and the bar's actions (#247). On a wide screen the wrapper is not a
+   box at all, so the bar lays out exactly as before; on a narrow one it folds
+   behind the Menu button. */
+.appbar__menu {
+  display: contents;
+}
+.appbar__menu-toggle {
+  display: none;
+}
+/* Folded when the full bar does not fit — measured in Layout.tsx (#352), not a
+   fixed width, because how much the bar holds depends on the edition and role. */
+.appbar--compact {
+  justify-content: space-between;
+  padding: 0 var(--space-4);
+}
+.appbar--compact .appbar__menu-toggle {
+  display: inline-flex;
+}
+.appbar--compact .appbar__menu {
+  display: none;
+}
+.appbar--compact .appbar__menu.is-open {
+  position: absolute;
+  top: var(--nav-height);
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
+  max-height: calc(100dvh - var(--nav-height));
+  overflow-y: auto;
+}
+.appbar--compact .appbar__menu.is-open .appbar__nav {
+  flex-direction: column;
+}
+.appbar--compact .appbar__menu.is-open .navlink {
+  padding: var(--space-3);
+}
+/* In the full bar nothing wraps or gets squeezed: when it does not fit, that
+   shows as overflow — which is what folds it — instead of a two-line label or a
+   theme toggle squashed to a sliver. */
+.appbar:not(.appbar--compact) .appbar__menu > *,
+.appbar > .appbar__brand {
+  flex-shrink: 0;
+}
+.appbar:not(.appbar--compact) .appbar__nav {
+  flex-shrink: 1;
+}
+.appbar .navlink {
+  white-space: nowrap;
 }
 .navlink {
   padding: var(--space-2) var(--space-3);
@@ -1051,4 +1135,56 @@ input[type='range']::-moz-range-thumb {
   100% {
     background-position: -100% 0;
   }
+}
+
+/* ── In-app confirm / prompt dialogs (#299) ─────────────────────────────────
+   Replaces window.confirm and window.prompt: OS chrome that announced the
+   origin, gave a deletion the same weight as a rename, and froze the page
+   thread against any automated run. */
+.dialog-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--color-bg) 55%, transparent);
+  backdrop-filter: blur(3px);
+  animation: fade-in 160ms var(--ease-out);
+}
+.dialog-panel {
+  width: 100%;
+  max-width: 420px;
+  padding: 24px;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
+  animation: rise 200ms var(--ease-out) both;
+}
+.dialog-title {
+  font-size: 1.02rem;
+  margin: 0 0 8px;
+}
+.dialog-message {
+  margin: 0 0 18px;
+  font-size: 0.86rem;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+/* A destructive confirmation should not look like a routine one. */
+.btn--danger-solid {
+  background: var(--color-danger-solid);
+  border-color: var(--color-danger-solid);
+  color: #fff;
+}
+.btn--danger-solid:hover:not(:disabled) {
+  filter: brightness(1.08);
 }

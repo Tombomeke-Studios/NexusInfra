@@ -25,6 +25,14 @@ ARG APP_VERSION=0.0.0-dev
 ARG NEXUS_EDITION=community
 ENV APP_VERSION=$APP_VERSION
 RUN mkdir -p /etc/nexusinfra && printf '%s' "$NEXUS_EDITION" > /etc/nexusinfra/edition
+# Backups are kept on a volume by default (#357). The agent used to write them
+# to the container's temp directory unless BACKUP_DIR said otherwise — and the
+# bundles mounted a volume here without ever setting it, so every upgrade
+# (which recreates the container) deleted every local backup while the panel
+# went on listing them.
+ENV BACKUP_DIR=/var/lib/nexusinfra/backups
+RUN mkdir -p /var/lib/nexusinfra/backups
+VOLUME ["/var/lib/nexusinfra/backups"]
 ENV PORT=9100
 EXPOSE 9100
 # Requires the host Docker socket mounted at runtime, e.g.

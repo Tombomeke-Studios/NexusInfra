@@ -39,7 +39,8 @@ export function Preferences() {
 
         <PrefSlider label="CPU limit" value={d.cpu} onChange={(v) => set('cpu', v)} min={5} max={100} step={5} />
         <PrefSlider label="RAM limit" value={d.ram} onChange={(v) => set('ram', v)} min={5} max={100} step={5} />
-        <PrefSlider label="Disk limit" value={d.disk} onChange={(v) => set('disk', v)} min={5} max={100} step={5} />
+        {/* No Disk limit here: it was never enforced, so a saved default for it
+            would only pre-fill a control that does nothing (#276). */}
         <PrefSlider label="Swap (of RAM limit)" value={d.swap} onChange={(v) => set('swap', v)} min={0} max={100} step={25} />
 
         <Field label="Block I/O priority">

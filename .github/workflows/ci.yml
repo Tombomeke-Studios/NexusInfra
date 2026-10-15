@@ -37,3 +37,71 @@ jobs:
         run: npm test
         env:
           NEXUS_EDITION: hosted
+
+  # Against a real broker and database (#242): bindings, encryption on the wire,
+  # dead-lettering, the migrations from nothing, unique-index races, and the
+  # command → agent → report loop. The unit suite replaces each of these with a
+  # captured function, so a broken binding used to pass CI.
+  integration:
+    name: Integration (RabbitMQ + database)
+    runs-on: ubuntu-latest
+    services:
+      # Both databases the panel supports (#241): SQLite needs nothing running;
+      # PostgreSQL is this service.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nexus
+          POSTGRES_PASSWORD: nexus
+          POSTGRES_DB: nexus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nexus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      rabbitmq:
+        image: rabbitmq:3-alpine
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 10s
+          --health-retries 24
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # Each service's PostgreSQL migrations, replayed into a scratch database,
+      # must produce exactly its schema. A model changed without a PostgreSQL
+      # migration fails here, not on somebody's upgrade (#241).
+      - name: PostgreSQL migrations match the schema
+        run: |
+          for svc in orchestrator billing-bridge; do
+            (cd services/$svc && npx prisma migrate diff --exit-code \
+              --from-migrations prisma/postgres/migrations \
+              --to-schema-datamodel prisma/postgres/schema.prisma \
+              --shadow-database-url "postgresql://nexus:nexus@localhost:5432/nexus?schema=shadow_$svc") \
+              || { echo "::error::$svc: prisma/postgres/migrations do not produce prisma/postgres/schema.prisma — add a PostgreSQL migration"; exit 1; }
+          done
+
+      - name: Integration tests
+        run: npm run test:integration
+        env:
+          RABBITMQ_URL: amqp://guest:guest@localhost:5672
+          # Fail rather than skip if the broker or the database is missing.
+          REQUIRE_BROKER: '1'
+          TEST_POSTGRES_URL: postgresql://nexus:nexus@localhost:5432/nexus
+          REQUIRE_POSTGRES: '1'

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useFocusTrap } from '../focusTrap';
 
 // First-run intro (#123): a short, skippable, keyboard-friendly walkthrough that
 // orients a new user — what a node is, what a deployment is, and where the per
@@ -39,6 +40,9 @@ const STEPS: Step[] = [
 
 export function IntroTour({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [step, setStep] = useState(0);
+  const cardRef = useRef<HTMLDivElement>(null);
+  // Hooks run before the early return below; the trap is idle while closed (#247).
+  useFocusTrap(cardRef, open);
 
   // Reset to the first step whenever it opens, and wire Escape to dismiss.
   useEffect(() => {
@@ -64,7 +68,7 @@ export function IntroTour({ open, onClose }: { open: boolean; onClose: () => voi
       aria-modal="true"
       aria-labelledby="intro-title"
     >
-      <div className="intro-card" onClick={(e) => e.stopPropagation()}>
+      <div className="intro-card" ref={cardRef} tabIndex={-1} onClick={(e) => e.stopPropagation()}>
         <div className="intro-card__step">Step {step + 1} of {STEPS.length}</div>
         <h2 id="intro-title" className="intro-card__title">{current.title}</h2>
         <p className="intro-card__body">{current.body}</p>

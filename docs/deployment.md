@@ -41,6 +41,12 @@ Every service uses the same **multi-stage workspace build** (see
 `services/control-room/Dockerfile`): builder stage compiles `shared` then the service; runtime stage
 copies only `dist/` + production deps. Build context is always the **repo root**.
 
+The image builds everything itself, so the build context leaves out what a working tree collects:
+`.dockerignore` (and `dashboard/.dockerignore`, whose context is that directory) excludes
+`node_modules`, `dist`, `.env` files, local databases, `.git` and `.claude` (#396). Without it a
+local build copied the host's build output in — a community image built after `npm run build`
+contained, and started, the billing bridge. A new top-level directory with local state belongs there.
+
 The **Orchestrator** image is based on Debian slim (not Alpine) with `openssl` installed, because
 Prisma's query/schema engines require OpenSSL and do not run on Alpine/musl. It applies
 `prisma migrate deploy` on startup before serving. The **dashboard** builds to static assets served
@@ -66,6 +72,202 @@ alongside FinVault) while agents run anywhere. Practical caveats for a real mult
 - **Published ports are per-node:** a container's published port lives on *that node's* host, so you
   reach a deployed server at that node's IP:port. A unifying reverse proxy / gateway is a later phase.
 - Multi-node placement is tracked as roadmap item #21.
+
+## Putting it behind TLS (#245)
+
+**Everything the stack speaks is plain HTTP.** The login that carries a password, the JWT on every
+request afterwards, the WebSocket that opens a root shell inside a container — all of it, in the
+clear. On a LAN you control that is a considered risk. The moment any of it crosses a network you do
+not control, it is somebody else's session.
+
+Nothing in the stack terminates TLS itself, deliberately: certificate renewal, HSTS and cipher choice
+are a reverse proxy's job, and every host already has one it prefers. Put the panel behind one and
+publish nothing else.
+
+### What to expose, and what not to
+
+| Service | Expose? |
+|---|---|
+| dashboard `8095` | Yes — behind the proxy, as the only public entry point |
+| orchestrator `9200` | No. The dashboard's nginx reaches it on the internal network |
+| orchestrator `2022` (SFTP, #235) | Yes, if you want SFTP — **directly**, not through the HTTP proxy: it is SSH, which carries its own encryption. Remove it and `SFTP_PORT` to turn SFTP off |
+| gateway `9400` | Only if you use it as the entry point instead of the dashboard |
+| node-agent `9100` | **Never.** It starts containers and opens shells; see [images.md](images.md) |
+| control-room `9000`, billing-bridge `9300` | No |
+| grafana `3000` (the `monitoring` profile, #355) | Behind the proxy if at all — it holds a password of its own. Prometheus is never published |
+| RabbitMQ `5672` / `15672` | No. Management UI least of all — it ships with `guest/guest` |
+
+The release bundles already follow this table (#392): they publish the dashboard, SFTP and the gateway
+(`DASHBOARD_PORT`, `SFTP_PUBLIC_PORT`, `GATEWAY_PORT`), bind the orchestrator to `127.0.0.1`
+(`ORCHESTRATOR_PORT`) and do not publish the Control Room at all. The dev compose file at the repo root
+still publishes everything, for poking at services directly. For an exposed host, bind whatever you
+are not proxying to localhost so a stray firewall rule cannot turn it into an entry point.
+
+### Caddy
+
+Caddy is the shortest path: it obtains and renews a certificate on its own, provided the domain
+resolves to the host and ports 80 and 443 reach it.
+
+```caddyfile
+panel.example.com {
+    reverse_proxy localhost:8095
+}
+```
+
+That is the whole file. The WebSocket used by the terminal is upgraded automatically — no extra
+configuration, which is the usual reason a panel's console works everywhere except behind a proxy.
+
+### nginx
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name panel.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/panel.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/panel.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8095;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # The terminal (#71) is a WebSocket. Without these two the console fails
+        # to connect while every other page works, which is a confusing way to
+        # discover the proxy is misconfigured.
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # A shell session is idle whenever nobody is typing. The default 60s read
+        # timeout closes it mid-use.
+        proxy_read_timeout 3600s;
+    }
+}
+
+server {
+    listen 80;
+    server_name panel.example.com;
+    return 301 https://$host$request_uri;
+}
+```
+
+### Getting the client's real address
+
+Rate limiting (#225) keys on the caller's IP, and behind a proxy every request appears to come from
+the proxy — so one address would carry everyone's budget and lock the whole installation out
+together. `TRUST_PROXY` tells the orchestrator how many proxies to believe `X-Forwarded-For` from, and
+make sure each one sets that header.
+
+Count the hops: the release bundles already default to `1` — the dashboard's own nginx — and the
+all-in-one image trusts its internal nginx itself (#401). **Put Caddy or nginx in front of a bundle
+and it is `2`**; with `1` every request would appear to come from your proxy again.
+
+Only do this behind a proxy you control. `X-Forwarded-For` is a request header like any other: if the
+orchestrator is reachable directly, a caller can set it themselves and choose which bucket to spend.
+
+### Before you expose anything
+
+- Set `ADMIN_PASSWORD` to something generated, not the one in the example file.
+- Confirm `JWT_SECRET` and `INTERNAL_API_TOKEN` are not the defaults — the installer generates both
+  (#191); a hand-assembled stack may not have.
+- Check that only the proxy's ports answer from outside: `ss -tlnp` on the host, then try one of the
+  service ports from another machine.
+- Community edition refuses self-registration, so the only accounts are the ones you create. Hosted
+  does not — that is the point of it, but it means the registration form is public.
+
+## Monitoring (#355)
+
+Every service serves Prometheus metrics at `/metrics` (#246). The compose files — the dev one and both
+release bundles — carry a **`monitoring` profile** that runs Prometheus and Grafana against them, with
+the NexusInfra dashboard provisioned:
+
+```bash
+# in .env: GRAFANA_ADMIN_PASSWORD=<something real>   (Grafana will not start without it)
+docker compose --profile monitoring up -d
+```
+
+Grafana is on `GRAFANA_PORT` (default 3000); the dashboard is its home page. It answers:
+
+- **Is everything up** — a scrape status per service, servers running, healthy nodes, dead letters.
+- **Servers and nodes** — by status and health, and what each node's Docker actually holds.
+- **Traffic** — requests and 5xx per service and route pattern, the five slowest routes (p95), and
+  the gateway's outcomes, refusals included.
+- **Events and delivery** — publishes the broker never took, the agent's outbox, lifecycle reports,
+  containers that stopped or came back on their own, and notification outcomes.
+- **Processes** — memory per service, and which version each is running.
+
+Without the profile nothing changes: neither service exists, and nothing is required.
+
+**`METRICS_TOKEN`.** Set it in `.env` and every service's `/metrics` wants it, and Prometheus sends it.
+The token is written to a file inside the Prometheus container when it starts; it is never in a
+configuration file. Set it whenever the orchestrator or gateway port can be reached from outside — the
+dashboard's `/api` proxy reaches the orchestrator's `/metrics` too.
+
+The configuration lives in `deploy/monitoring/` and ships in the release archive beside both bundles.
+The billing bridge's scrape job is a separate file that only the hosted stack mounts, so a community
+dashboard never shows a service that is always down. `deploy/monitoring.test.ts` fails when a panel
+queries a metric no service registers: a renamed metric would otherwise just leave a panel saying *No
+data*, and people learn to ignore that.
+
+## PostgreSQL
+
+**SQLite is the default** and the right choice for most installations: a file in the service's
+volume, nothing else to run, backed up by copying it. **PostgreSQL** (#241) is supported for when you
+want the database on a server you already run, managed backups, or to stop depending on a file on the
+orchestrator's disk. Both are fully supported and tested in CI — every repository behaviour that
+needs a real database runs against both.
+
+It is not a scaling switch. The orchestrator keeps some coordination in process (the migration lock,
+the schedule runner, the notification drain), so it still runs as a single instance either way.
+
+### A new installation on PostgreSQL
+
+In the release bundle's `.env`:
+
+```sh
+POSTGRES_PASSWORD=<a long random value>
+ORCHESTRATOR_DATABASE_URL=postgresql://nexusinfra:<that value>@postgres:5432/nexusinfra
+# hosted only — its own schema in the same database:
+BILLING_DATABASE_URL=postgresql://nexusinfra:<that value>@postgres:5432/nexusinfra?schema=billing
+```
+
+then `docker compose --profile postgres up -d`. An external server works the same way: point the URLs
+at it and leave the profile off. The services create their tables at start. (On the very first start
+the orchestrator may try before PostgreSQL is ready; it exits and Docker restarts it.)
+
+### Moving an existing installation
+
+The migrations create empty tables; the data is copied by `scripts/sqlite-to-postgres.mjs`, which
+copies every table in dependency order, checks the row counts, and refuses a target that already has
+data. With the bundle:
+
+```sh
+docker compose stop orchestrator billing-bridge            # nothing may write during the copy
+docker compose --profile postgres up -d postgres
+docker compose run --rm --no-deps orchestrator \
+  node ../../scripts/sqlite-to-postgres.mjs . \
+  --from file:/data/orchestrator.db --to "$ORCHESTRATOR_DATABASE_URL"
+# hosted: the same for billing-bridge, from file:/data/billing.db to $BILLING_DATABASE_URL
+```
+
+Then set the `*_DATABASE_URL` values in `.env` and `docker compose --profile postgres up -d`. The
+SQLite files stay in their volumes untouched — going back is unsetting the variables.
+
+### Changing the schema
+
+Each service carries two schemas and two sets of migrations, because Prisma fixes the provider when a
+client is generated:
+
+1. Edit `prisma/schema.prisma` (the SQLite one — the source).
+2. `npm run db:sync-postgres` regenerates `prisma/postgres/schema.prisma` from it.
+3. Add a migration for each: `npx prisma migrate dev` (SQLite) and
+   `npx prisma migrate dev --schema prisma/postgres/schema.prisma` against a PostgreSQL `DATABASE_URL`.
+
+CI holds you to it: a unit test fails when the PostgreSQL schema is out of date or the SQLite
+migrations do not produce the schema, and the integration job replays the PostgreSQL migrations into a
+real server and fails on any difference.
 
 ## Combined deployment with FinVault
 
@@ -100,8 +302,9 @@ would mean a half-enabled billing system rather than a working one. Running from
 unaffected: with no stamp, `NEXUS_EDITION` decides as it always has.
 
 **The community build genuinely does not contain the hosted code.** This matters most for the
-dashboard, which is served to a browser: the billing page is aliased to a stub at build time and its
-route is compiled out, and the image build runs `verify-edition.mjs` against the built bundle so a
+dashboard, which is served to a browser: every hosted-only module is aliased to a stub at build time (`dashboard/editionStubs.ts`, matched on
+the import as written, #393) and the billing routes are compiled out — each alone keeps the code
+out — and the image build runs `verify-edition.mjs` against the built bundle so a
 regression fails the build instead of shipping quietly. `billing-bridge` is built for hosted only —
 a community build of it would be a build of nothing.
 
@@ -141,5 +344,11 @@ development.
   `dev` / `staging` / `main`. The suite runs **twice** — once as `community` (the default) and once
   with `NEXUS_EDITION=hosted` — because billing routes, plan quotas and signup policy only execute
   in the hosted edition and would otherwise ship untested.
+- The same workflow's **integration** job (#242) runs `npm run test:integration` against a RabbitMQ
+  service container and a real SQLite database through Prisma: bindings, payload encryption on the
+  wire, dead-lettering, every migration from an empty file, unique-index races, and the full
+  command → agent → report loop. It sets `REQUIRE_BROKER`, so a job that lost its broker fails
+  instead of skipping. Locally: `RABBITMQ_URL=amqp://guest:guest@localhost:5672 npm run test:integration`
+  (the broker suites skip without it; the database suite always runs).
 - Releases: merges reach `main` only via `staging`; tag `vX.Y.Z` after each main merge
   (see CLAUDE.md branch strategy).
