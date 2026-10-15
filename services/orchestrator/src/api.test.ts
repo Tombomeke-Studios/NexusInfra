@@ -2529,6 +2529,19 @@ describe('backup retention and download (#232)', () => {
     expect(res.body.path).toBe('/srv');
   });
 
+  it("removes a deleted server's backup archives from its node (#390)", async () => {
+    await request(app).post(`/deployments/${id}/backups`).send({}).expect(201);
+    await request(app).post(`/deployments/${id}/backups`).send({}).expect(201);
+    const refs = (await repo.listBackups(id)).map((b) => b.ref);
+    expect(refs).toHaveLength(2);
+
+    await request(app).delete(`/deployments/${id}`).expect(204);
+
+    // The rows went with the server before this fix too; the archives did not,
+    // and with no row left nothing could ever reach them again.
+    expect(removedRefs.sort()).toEqual(refs.sort());
+  });
+
   it('sets a policy, applies it at once, and says what it removed', async () => {
     for (let i = 0; i < 3; i++) {
       await request(app).post(`/deployments/${id}/backups`).send({});

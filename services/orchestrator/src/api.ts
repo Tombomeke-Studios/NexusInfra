@@ -1070,6 +1070,16 @@ export function createApiRouter(deps: ApiDeps): Router {
         console.warn(`[orchestrator] could not remove the data of deleted server ${detail.id}: ${err instanceof Error ? err.message : err}`);
       }
     }
+    // Its backups too (#390) — the dialog promises they go, and the rows are
+    // deleted with the server, after which nothing could reach the archives
+    // again. The agent's delete also removes the off-site copy (#232).
+    for (const backup of await repo.listBackups(detail.id)) {
+      try {
+        await removeBackup(ownerAgentUrl, backup.ref);
+      } catch (err) {
+        console.warn(`[orchestrator] could not remove backup ${backup.ref} of deleted server ${detail.id}: ${err instanceof Error ? err.message : err}`);
+      }
+    }
     await repo.deleteDeployment(detail.id);
     return res.status(204).end();
   });

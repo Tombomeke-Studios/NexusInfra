@@ -859,7 +859,8 @@ Permanently delete a deployment. If it is running, the container is stopped firs
 `infra.server.stop`); any managed database containers are deprovisioned (best-effort); then the
 deployment and all its child records (events, databases, backups, schedules, subusers) are removed.
 The owning node is asked to remove the server's containers and **data volumes** (#324) — best-effort,
-so an unreachable node does not strand the record. An imported host directory (#268) is never removed.
+so an unreachable node does not strand the record. Each of its **backup archives** is removed from the
+node and the off-site store the same way (#390). An imported host directory (#268) is never removed.
 `204` on success, `404` if unknown.
 
 ### `GET /nodes`
