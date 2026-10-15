@@ -22,6 +22,10 @@ Cross-project security design: [`../../CONCEPTS/integration/security.md`](../../
 - `FINVAULT_MESSAGE_KEY` is shared with FinVault — treat it with the same care as FinVault does;
   rotating it requires rotating both platforms together.
 - RabbitMQ dev credentials (`guest/guest`) must be replaced in any non-local deployment.
+- A connection URL is never logged with its password: `redactUrl` (`shared/src/rabbitmq.ts`) replaces
+  it with `***` and keeps the rest, so the line still names the broker (#394). Logs get pasted into
+  issues, and in the hosted edition the broker is shared with FinVault. Log any new connection URL
+  through it.
 
 ## Authentication (#174)
 

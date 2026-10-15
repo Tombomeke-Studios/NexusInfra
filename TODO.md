@@ -293,7 +293,7 @@ scrolling log lines describing events that never happened.
 
 - [x] Out of the box every panel user shares one login rate-limit bucket (#401) 🐛
 
-- [ ] Every service prints the broker password to its log when it connects (#394) 🐛
+- [x] Every service prints the broker password to its log when it connects (#394) 🐛 — `redactUrl` (shared) replaces the password before the URL reaches a log line
 
 - [ ] Heartbeats flood every service's log twice a second (#395) 🐛
 

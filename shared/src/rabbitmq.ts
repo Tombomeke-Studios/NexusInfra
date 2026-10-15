@@ -11,6 +11,24 @@ const DLQ = 'finvault.events.dlq';
 const RABBITMQ_URL = process.env.RABBITMQ_URL;
 const RABBITMQ_URL_WITH_DEFAULT = RABBITMQ_URL || 'amqp://guest:guest@rabbitmq:5672';
 
+/**
+ * A connection URL fit for a log line: the password is replaced, everything else
+ * kept so the line still says which broker or database was meant (#394). Logs get
+ * pasted into issues, and in the hosted edition the broker is shared with FinVault.
+ * Anything that does not parse as a URL is cut at the credentials by hand rather
+ * than printed as given.
+ */
+export function redactUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    if (!url.password) return raw;
+    url.password = '***';
+    return url.toString();
+  } catch {
+    return raw.replace(/\/\/([^:/@]*):[^@]*@/, '//$1:***@');
+  }
+}
+
 let connection: any = null;
 let channel: any = null;
 
@@ -26,7 +44,7 @@ export async function connectRabbitMQ(retryCount = 8, delayMs = 3000): Promise<{
 
   for (let i = 1; i <= retryCount; i++) {
     try {
-      console.log(`[RabbitMQ] Connecting to ${RABBITMQ_URL_WITH_DEFAULT} (Attempt ${i}/${retryCount})...`);
+      console.log(`[RabbitMQ] Connecting to ${redactUrl(RABBITMQ_URL_WITH_DEFAULT)} (Attempt ${i}/${retryCount})...`);
       const conn = await amqp.connect(RABBITMQ_URL_WITH_DEFAULT);
       const ch = await conn.createChannel();
 
