@@ -9,6 +9,8 @@ import type { Repository, ServerScheduleRecord } from './types.js';
 export interface ScheduleActions {
   restart(deploymentId: string): Promise<void>;
   backup(deploymentId: string): Promise<void>;
+  /** Pull the image afresh and recreate a running server from it (#239). */
+  update(deploymentId: string): Promise<void>;
 }
 
 /** Enabled schedules whose cron fires at `now` and that haven't already run this minute. */
@@ -23,6 +25,7 @@ export function selectDue(schedules: ServerScheduleRecord[], now: Date): ServerS
 export async function runScheduleAction(actions: ScheduleActions, schedule: ServerScheduleRecord): Promise<void> {
   if (schedule.action === 'restart') await actions.restart(schedule.deploymentId);
   else if (schedule.action === 'backup') await actions.backup(schedule.deploymentId);
+  else if (schedule.action === 'update') await actions.update(schedule.deploymentId);
 }
 
 /** Run every due schedule once, stamping lastRunAt. Returns the schedules that ran. */

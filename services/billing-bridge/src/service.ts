@@ -1,9 +1,11 @@
 import { randomUUID } from 'crypto';
 import { buildEnvelope, publishRabbitEvent, type EventEnvelope, type NexusInfraEvent, type ResourceLimits } from 'shared';
-import { resourceFactor, roundCurrency, type BillingPlan } from './pricing.js';
-import { accruedHours } from './tracking.js';
+import { DEFAULT_PLAN, resourceFactor, roundCurrency, type BillingPlan } from './pricing.js';
+import { parsePlanInput, planIdFrom, retireProblem, switchProblem } from './plans.js';
+import { ratesOf } from './cycle.js';
+import { computeStanding, currentPeriod, lowCreditStep, parseLowCreditHours, usageIn, type Standing } from './standing.js';
 import { applyTopUp } from './wallet.js';
-import type { CreditLedgerEntry, CreditWallet, Repository, ServerBillingRecord } from './types.js';
+import type { BilledDeployment, CreditLedgerEntry, CreditWallet, Repository, ServerBillingRecord } from './types.js';
 
 // The Billing Bridge service (hosted edition). Turns bus events into runtime
 // intervals and credit movements, and drives the top-up flow to FinVault. All
@@ -16,13 +18,11 @@ export type PublishFn = (routingKey: string, envelope: EventEnvelope) => Promise
 // `bank.payment.#` namespace (see docs/architecture.md); the event `type` stays
 // `payment.request` for wire-compatibility.
 export const KEY_PAYMENT_REQUEST = 'bank.payment.request';
+const KEY_SUSPEND = 'billing.server.suspend';
+export const KEY_CREDIT_LOW = 'billing.credit.low';
 
-/** What we remember about a deployment so an interval can be opened for it later. */
-interface DeploymentMeta {
-  userId: string;
-  planId: string;
-  limits: ResourceLimits;
-}
+/** How often running accounts are checked against their balance (#365). */
+export const DEFAULT_SETTLE_INTERVAL_MS = 5 * 60 * 1000;
 
 export interface BillingServiceDeps {
   repo: Repository;
@@ -30,7 +30,59 @@ export interface BillingServiceDeps {
   now?: () => string;
   /** NexusInfra's receiver wallet id on payment.request (FinVault resolves the sender). */
   billingWalletId?: string;
+  log?: (message: string) => void;
+  /** Warn an account whose credit lasts fewer hours than this (#379); `LOW_CREDIT_HOURS`, else a day. */
+  lowCreditHours?: number;
 }
+
+/**
+ * How long a top-up may wait for FinVault before it is shown as unconfirmed
+ * (#298). A mismatched FINVAULT_MESSAGE_KEY, a FinVault that never received the
+ * request, or one that answered on a key nobody binds all look the same from
+ * here — silence — so silence has to end somewhere visible.
+ */
+export const DEFAULT_TOPUP_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * How many top-ups one account may have waiting on FinVault (#351). Each one is
+ * a payment request in somebody's FinVault inbox, addressed by an email this
+ * side has not verified.
+ */
+export const MAX_PENDING_TOPUPS = 3;
+
+/** A request this service refuses; `status` is the HTTP answer. */
+export class BillingError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+/** A top-up that was refused before anything was sent. */
+export const TopUpError = BillingError;
+
+/** The most an administrator may add or remove by hand in one go (#369) — a typo guard, not a policy. */
+export const MAX_ADJUSTMENT = 10_000;
+
+/** One account as the provider sees it (#369). */
+export interface AccountSummary {
+  userId: string;
+  planId: string;
+  planName: string;
+  balance: number;
+  /** Balance less usage not yet charged. */
+  available: number;
+  canRun: boolean;
+  currency: string;
+  /** This cycle so far. */
+  hours: number;
+  cost: number;
+  runningServers: number;
+}
+
+const REASON_MAX = 300;
+
+/** A confirmed amount "matches" to the cent: the ledger stores money, not floats. */
+const sameAmount = (a: number, b: number) => Math.round(a * 100) === Math.round(b * 100);
 
 export interface TopUpResult {
   reference: string;
@@ -42,40 +94,48 @@ export function createBillingService(deps: BillingServiceDeps) {
   const publish = deps.publish ?? publishRabbitEvent;
   const now = deps.now ?? (() => new Date().toISOString());
   const billingWalletId = deps.billingWalletId ?? process.env.BILLING_WALLET_ID ?? 'nexusinfra';
-
-  // deploymentId → owner/plan/limits, learned from deployment.created. Falls back
-  // to the latest stored interval if we missed the creation (e.g. after restart).
-  const meta = new Map<string, DeploymentMeta>();
+  const log = deps.log ?? ((m: string) => console.warn(`[BillingBridge] ${m}`));
+  const lowCreditHours = deps.lowCreditHours ?? parseLowCreditHours(process.env.LOW_CREDIT_HOURS);
 
   const emit = (routingKey: string, event: NexusInfraEvent) => publish(routingKey, buildEnvelope('billing-bridge', event));
 
-  async function resolveMeta(deploymentId: string, userId?: string): Promise<DeploymentMeta | null> {
-    const cached = meta.get(deploymentId);
-    if (cached) return cached;
-    if (userId) {
-      const intervals = await repo.listIntervals(userId);
-      const last = intervals.filter((i) => i.deploymentId === deploymentId).at(-1);
-      if (last) {
-        const m: DeploymentMeta = { userId: last.userId, planId: last.planId, limits: last.limits };
-        meta.set(deploymentId, m);
-        return m;
-      }
-    }
-    return null;
+  /**
+   * Who owns a deployment and how big it is. Stored, not remembered: this used
+   * to be a map in memory, so after any restart every server started later ran
+   * unbilled (#364). A server from before that is recognised by its last interval.
+   */
+  async function deploymentFor(deploymentId: string): Promise<BilledDeployment | null> {
+    const known = await repo.getDeployment(deploymentId);
+    if (known) return known;
+    const last = await repo.getLastInterval(deploymentId);
+    if (!last) return null;
+    const recovered: BilledDeployment = { deploymentId, userId: last.userId, limits: last.limits };
+    await repo.saveDeployment(recovered);
+    return recovered;
   }
 
   return {
-    /** Learn a deployment's owner + resource limits so future starts can be billed. */
+    /** Record a deployment's owner + resource limits so its runtime can be billed. Also handles a resize. */
     async handleDeploymentCreated(payload: { deploymentId: string; userId: string; resourceLimits?: ResourceLimits }): Promise<void> {
-      const plan = await repo.getUserPlan(payload.userId);
-      meta.set(payload.deploymentId, { userId: payload.userId, planId: plan.id, limits: payload.resourceLimits ?? {} });
+      await repo.saveDeployment({ deploymentId: payload.deploymentId, userId: payload.userId, limits: payload.resourceLimits ?? {} });
     },
 
-    /** Open a runtime interval for a server that just started. */
+    /**
+     * Open a runtime interval for a server that just started. A server that
+     * already has one running keeps it: a start reported twice (the broker
+     * delivers at least once, and an agent re-reports after its own restart) used
+     * to open a second interval that nothing would ever close.
+     */
     async handleServerStarted(payload: { deploymentId: string }): Promise<ServerBillingRecord | null> {
-      const m = await resolveMeta(payload.deploymentId);
-      if (!m) return null; // unknown deployment (never saw deployment.created) — skip
-      return repo.openInterval({ userId: m.userId, deploymentId: payload.deploymentId, planId: m.planId, limits: m.limits, startedAt: now() });
+      const deployment = await deploymentFor(payload.deploymentId);
+      if (!deployment) {
+        log(`server ${payload.deploymentId} started but billing has never heard of it; it is not being charged`);
+        return null;
+      }
+      const running = await repo.getOpenInterval(payload.deploymentId);
+      if (running) return running;
+      const plan = await repo.getUserPlan(deployment.userId);
+      return repo.openInterval({ userId: deployment.userId, deploymentId: payload.deploymentId, planId: plan.id, limits: deployment.limits, startedAt: now() });
     },
 
     /** Close the open interval for a server that stopped or crashed. */
@@ -86,10 +146,20 @@ export function createBillingService(deps: BillingServiceDeps) {
     /**
      * Start a credit top-up: record a pending ledger entry and ask FinVault to
      * charge the user (payment.request). Credit is added only on payment.confirmed.
+     *
+     * `customerEmail` is who FinVault asks to pay (#351) — the account's own
+     * address, supplied by the Orchestrator from the signed-in user, never by the
+     * browser.
      */
-    async requestTopUp(userId: string, amount: number, currency?: string): Promise<TopUpResult> {
-      if (!(amount > 0)) throw new Error('top-up amount must be positive');
+    async requestTopUp(userId: string, amount: number, currency?: string, customerEmail?: string): Promise<TopUpResult> {
+      if (!(amount > 0)) throw new TopUpError('top-up amount must be positive', 400);
+      const waiting = (await repo.listLedger(userId)).filter((e) => e.type === 'topup' && e.status === 'pending').length;
+      if (waiting >= MAX_PENDING_TOPUPS) {
+        throw new TopUpError(`you already have ${waiting} top-ups waiting to be approved in FinVault — pay or decline one there first`, 409);
+      }
       const wallet = await repo.getWallet(userId);
+      // Where this account's monthly statement goes too (#375).
+      if (customerEmail) await repo.setWalletEmail(userId, customerEmail);
       const cur = currency ?? wallet.currency;
       const reference = `topup-${userId}-${randomUUID()}`;
       const entry = await repo.createLedgerEntry({
@@ -101,50 +171,252 @@ export function createBillingService(deps: BillingServiceDeps) {
         status: 'pending',
         description: 'NexusInfra credit top-up',
       });
-      await emit(KEY_PAYMENT_REQUEST, {
+      const sent = await emit(KEY_PAYMENT_REQUEST, {
         type: 'payment.request',
-        payload: { reference, senderWalletId: userId, receiverWalletId: billingWalletId, amount, currency: cur, description: 'NexusInfra credit top-up' },
+        payload: {
+          reference,
+          senderWalletId: userId,
+          receiverWalletId: billingWalletId,
+          amount,
+          currency: cur,
+          description: 'NexusInfra credit top-up',
+          ...(customerEmail ? { customerEmail } : {}),
+        },
       });
+      if (!sent) {
+        // The broker did not take it, so FinVault will never see this request.
+        // Saying so now beats thirty minutes of "pending" for nothing.
+        const reason = 'the request could not be sent to FinVault';
+        await repo.transitionLedgerStatus(entry.id, ['pending'], 'failed', reason);
+        throw new TopUpError(`${reason} — nothing was charged, try again in a moment`, 503);
+      }
       return { reference, entry };
     },
 
-    /** A top-up succeeded in FinVault: mark it confirmed and add the credit. */
-    async handlePaymentConfirmed(payload: { reference: string; amount: number }): Promise<CreditWallet | null> {
+    /**
+     * A top-up succeeded in FinVault: mark it confirmed and add the credit.
+     *
+     * The status change is conditional, so a confirmation delivered twice — which
+     * an at-least-once broker is allowed to do — credits once. A late confirmation
+     * of an expired top-up is still credited: the money moved.
+     */
+    async handlePaymentConfirmed(payload: { reference: string; amount?: number }): Promise<CreditWallet | null> {
       const entry = await repo.getLedgerByReference(payload.reference);
-      if (!entry || entry.type !== 'topup' || entry.status !== 'pending') return null;
-      await repo.updateLedgerStatus(entry.id, 'confirmed');
+      // FinVault confirms every payment on one key, including ones that are none
+      // of NexusInfra's business; an unknown reference is not an error.
+      if (!entry || entry.type !== 'topup') return null;
+      if (typeof payload.amount === 'number' && !sameAmount(payload.amount, entry.amount)) {
+        // Neither amount can be trusted over the other, so nothing is credited
+        // automatically — and the entry stays open for someone to look at.
+        log(`top-up ${entry.reference} was confirmed for ${payload.amount} but requested for ${entry.amount}; not credited — check it by hand`);
+        return null;
+      }
+      if (!(await repo.transitionLedgerStatus(entry.id, ['pending', 'expired'], 'confirmed'))) return null;
+      if (entry.status === 'expired') log(`top-up ${entry.reference} was confirmed after it had expired; credited`);
       const wallet = await repo.getWallet(entry.userId);
       return repo.setBalance(entry.userId, applyTopUp(wallet.balance, entry.amount));
     },
 
-    /** A top-up failed in FinVault: mark it failed, no credit added. */
-    async handlePaymentFailed(payload: { reference: string }): Promise<CreditLedgerEntry | null> {
+    /** A top-up failed in FinVault: mark it failed with FinVault's reason, no credit added. */
+    async handlePaymentFailed(payload: { reference: string; reason?: string }): Promise<CreditLedgerEntry | null> {
       const entry = await repo.getLedgerByReference(payload.reference);
-      if (!entry || entry.type !== 'topup' || entry.status !== 'pending') return null;
-      return repo.updateLedgerStatus(entry.id, 'failed');
+      if (!entry || entry.type !== 'topup') return null;
+      const failureReason = typeof payload.reason === 'string' && payload.reason.trim() ? payload.reason.trim().slice(0, REASON_MAX) : null;
+      if (!(await repo.transitionLedgerStatus(entry.id, ['pending', 'expired'], 'failed', failureReason ?? undefined))) return null;
+      return { ...entry, status: 'failed', failureReason };
     },
 
     /**
-     * Current usage summary for a user: accrued hours and projected cost. The
-     * plan's monthly free-hour grant is a single pool spent across intervals
-     * (cheapest-correct: consumed in interval order); each interval's billable
-     * hours are then charged at its own resource factor.
+     * Mark top-ups FinVault has not answered within `timeoutMs` as expired (#298),
+     * so the panel says "not confirmed" instead of "pending" forever. Returns the
+     * ones it expired.
+     */
+    async expireStaleTopUps(timeoutMs = DEFAULT_TOPUP_TIMEOUT_MS): Promise<CreditLedgerEntry[]> {
+      const cutoff = new Date(new Date(now()).getTime() - timeoutMs).toISOString();
+      const expired: CreditLedgerEntry[] = [];
+      for (const entry of await repo.listPendingTopUps(cutoff)) {
+        if (await repo.transitionLedgerStatus(entry.id, ['pending'], 'expired')) expired.push({ ...entry, status: 'expired' });
+      }
+      if (expired.length > 0) {
+        log(
+          `${expired.length} top-up(s) had no answer from FinVault in ${Math.round(timeoutMs / 60000)} min and are now shown as not confirmed. ` +
+            'If none are ever confirmed, check that FINVAULT_MESSAGE_KEY matches FinVault\'s and that both use the same broker.'
+        );
+      }
+      return expired;
+    },
+
+    /**
+     * This cycle's usage so far: hours run and what they will cost. Computed with
+     * the function the cycle runner charges with, over the month in progress — it
+     * used to sum every interval an account ever had, so the figure only grew and
+     * stopped matching the bill after the first month (#366).
      */
     async getUsage(userId: string): Promise<{ hours: number; cost: number; plan: BillingPlan }> {
-      const [plan, intervals] = await Promise.all([repo.getUserPlan(userId), repo.listIntervals(userId)]);
-      const at = now();
-      let remainingFree = plan.freeHoursPerMonth;
-      let cost = 0;
-      let hours = 0;
-      for (const i of intervals) {
-        const h = accruedHours([{ startedAt: i.startedAt, stoppedAt: i.stoppedAt }], at);
-        hours += h;
-        const freeApplied = Math.min(remainingFree, h);
-        remainingFree -= freeApplied;
-        const billable = h - freeApplied;
-        cost += billable * plan.pricePerHour * resourceFactor(i.limits);
+      const [plan, intervals, plans] = await Promise.all([repo.getUserPlan(userId), repo.listIntervals(userId), repo.listPlans()]);
+      return { ...usageIn(intervals, plan, currentPeriod(now()), ratesOf(plans)), plan };
+    },
+
+    /** What the account has left to spend, and whether it may run servers (#365). */
+    async getStanding(userId: string): Promise<Standing> {
+      const [plan, intervals, wallet, cycles, plans] = await Promise.all([
+        repo.getUserPlan(userId),
+        repo.listIntervals(userId),
+        repo.getWallet(userId),
+        repo.listCycles(userId),
+        repo.listPlans(),
+      ]);
+      return computeStanding({ balance: wallet.balance, currency: wallet.currency, intervals, cycles, plan, now: now(), rateOf: ratesOf(plans), lowCreditHours });
+    },
+
+    /**
+     * Warn every account whose credit lasts less than the threshold at its
+     * running servers' rate (#379) — once per dip. The mark is stored with the
+     * wallet, so a restart does not warn again; it is cleared once the credit
+     * lasts the threshold again, so the next dip warns. A warning the broker did
+     * not take is not marked, and is tried again next time. Returns who was warned.
+     */
+    async warnLowCredit(): Promise<string[]> {
+      const warned: string[] = [];
+      for (const userId of await repo.listBillableUserIds()) {
+        if (!(await repo.listIntervals(userId)).some((i) => i.stoppedAt === null)) continue;
+        const standing = await this.getStanding(userId);
+        // Out of credit is the suspension's news (settle), not a warning.
+        if (!standing.canRun) continue;
+        const step = lowCreditStep(standing.hoursLeft, lowCreditHours, await repo.getLowCreditWarnedAt(userId));
+        if (step === 'clear') await repo.setLowCreditWarnedAt(userId, null);
+        if (step !== 'warn' || standing.hoursLeft === null) continue;
+        const sent = await emit(KEY_CREDIT_LOW, {
+          type: 'billing.credit.low',
+          payload: { userId, hoursLeft: standing.hoursLeft, available: standing.available, currency: standing.currency },
+        });
+        if (!sent) continue;
+        await repo.setLowCreditWarnedAt(userId, now());
+        warned.push(userId);
       }
-      return { hours: Math.round(hours * 1000) / 1000, cost: roundCurrency(cost), plan };
+      return warned;
+    },
+
+    /**
+     * Stop the servers of every account that has used up what it had (#365).
+     * Nothing is charged here — the monthly cycle still does that — this only
+     * stops usage from running past the balance while the month is open. Safe to
+     * repeat: once the servers stop there is nothing running to suspend.
+     */
+    async settle(): Promise<Array<{ userId: string; deploymentIds: string[] }>> {
+      const suspended: Array<{ userId: string; deploymentIds: string[] }> = [];
+      for (const userId of await repo.listBillableUserIds()) {
+        const running = [...new Set((await repo.listIntervals(userId)).filter((i) => i.stoppedAt === null).map((i) => i.deploymentId))];
+        if (running.length === 0) continue;
+        const standing = await this.getStanding(userId);
+        if (standing.canRun) continue;
+        await emit(KEY_SUSPEND, { type: 'billing.server.suspend', payload: { userId, deploymentIds: running, reason: 'credit exhausted' } });
+        suspended.push({ userId, deploymentIds: running });
+      }
+      if (suspended.length > 0) log(`suspended the servers of ${suspended.length} account(s) that ran out of credit`);
+      return suspended;
+    },
+
+    // ── Plans (#369) ─────────────────────────────────────────────────────────
+
+    /** Add a plan to the catalogue. Its id is made from its name and never changes. */
+    async createPlan(body: unknown): Promise<BillingPlan> {
+      const parsed = parsePlanInput(body);
+      if (!parsed.ok) throw new BillingError(parsed.error, 400);
+      const id = planIdFrom(parsed.plan.name);
+      if (!id) throw new BillingError('the name needs at least one letter or digit', 400);
+      if (await repo.getPlan(id)) throw new BillingError(`there is already a plan called "${id}" — edit that one, or pick another name`, 409);
+      return repo.savePlan({ id, currency: DEFAULT_PLAN.currency, ...parsed.plan });
+    },
+
+    /**
+     * Change a plan. Prices and ceilings apply to everyone on it, from now and
+     * for the month in progress — the charge is computed when the month closes.
+     */
+    async updatePlan(id: string, body: unknown): Promise<BillingPlan> {
+      const existing = await repo.getPlan(id);
+      if (!existing) throw new BillingError('no such plan', 404);
+      const parsed = parsePlanInput(body, existing);
+      if (!parsed.ok) throw new BillingError(parsed.error, 400);
+      if (!parsed.plan.active) {
+        const problem = retireProblem(existing);
+        if (problem) throw new BillingError(problem, 409);
+      }
+      return repo.savePlan({ id, currency: existing.currency, ...parsed.plan });
+    },
+
+    /**
+     * Move an account to another plan. Servers that are running are re-opened
+     * under the new plan from this moment, so what ran before the switch is
+     * charged at the old rate and what runs after it at the new one.
+     */
+    async changePlan(userId: string, planId: string): Promise<BillingPlan> {
+      const [target, current] = await Promise.all([repo.getPlan(planId), repo.getUserPlan(userId)]);
+      const problem = switchProblem(target, current.id);
+      if (problem || !target) throw new BillingError(problem ?? 'no such plan', target ? 409 : 404);
+      if (target.id === current.id) return target;
+      await repo.setUserPlan(userId, target.id);
+      const at = now();
+      const running = (await repo.listIntervals(userId)).filter((i) => i.stoppedAt === null);
+      for (const interval of running) {
+        await repo.closeInterval(interval.deploymentId, at);
+        await repo.openInterval({ userId, deploymentId: interval.deploymentId, planId: target.id, limits: interval.limits, startedAt: at });
+      }
+      return target;
+    },
+
+    // ── The provider's view (#369) ───────────────────────────────────────────
+
+    /** Every account billing knows about, with what it has, what it used and whether it may run. */
+    async listAccounts(): Promise<AccountSummary[]> {
+      const rateOf = ratesOf(await repo.listPlans());
+      const accounts: AccountSummary[] = [];
+      for (const userId of await repo.listBillableUserIds()) {
+        const [plan, intervals, wallet, cycles] = await Promise.all([repo.getUserPlan(userId), repo.listIntervals(userId), repo.getWallet(userId), repo.listCycles(userId)]);
+        const at = now();
+        const standing = computeStanding({ balance: wallet.balance, currency: wallet.currency, intervals, cycles, plan, now: at, rateOf });
+        const usage = usageIn(intervals, plan, currentPeriod(at), rateOf);
+        accounts.push({
+          userId,
+          planId: plan.id,
+          planName: plan.name,
+          balance: wallet.balance,
+          available: standing.available,
+          canRun: standing.canRun,
+          currency: wallet.currency,
+          hours: usage.hours,
+          cost: usage.cost,
+          runningServers: new Set(intervals.filter((i) => i.stoppedAt === null).map((i) => i.deploymentId)).size,
+        });
+      }
+      return accounts;
+    },
+
+    /**
+     * Add or remove credit by hand — a refund, a goodwill credit, a correction.
+     * It goes on the ledger like any other movement, naming who did it and why:
+     * money that appears with no record is indistinguishable from a bug.
+     */
+    async adjustCredit(userId: string, amount: number, reason: string, by: string): Promise<{ wallet: CreditWallet; entry: CreditLedgerEntry }> {
+      if (typeof amount !== 'number' || !Number.isFinite(amount) || amount === 0) throw new BillingError('the amount must be a number other than zero', 400);
+      if (Math.abs(amount) > MAX_ADJUSTMENT) throw new BillingError(`one adjustment may be at most ${MAX_ADJUSTMENT} — make several if that is really meant`, 400);
+      const why = typeof reason === 'string' ? reason.trim().slice(0, 200) : '';
+      if (!why) throw new BillingError('say why — the reason is shown to the customer in their payment history', 400);
+      const rounded = roundCurrency(Math.abs(amount));
+      if (rounded === 0) throw new BillingError('the amount is less than one cent', 400);
+
+      const wallet = await repo.getWallet(userId);
+      const entry = await repo.createLedgerEntry({
+        userId,
+        type: amount > 0 ? 'topup' : 'charge',
+        amount: rounded,
+        currency: wallet.currency,
+        reference: `adjust-${randomUUID()}`,
+        status: 'confirmed',
+        description: `${amount > 0 ? 'Credit added' : 'Credit removed'} by ${by || 'an administrator'}: ${why}`,
+      });
+      const updated = await repo.setBalance(userId, roundCurrency(wallet.balance + (amount > 0 ? rounded : -rounded)));
+      return { wallet: updated, entry };
     },
 
     /** Expose the resource factor for a set of limits (handy for UIs/quotes). */

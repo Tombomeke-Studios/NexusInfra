@@ -20,6 +20,26 @@ describe('createNodeRegistry', () => {
     registry = createNodeRegistry(repo);
   });
 
+  // The panel showed a vCPU count derived from RAM because nothing measured cores
+  // (#261). The agent reports the real number; a node that has not said stays null.
+  it('records the reported CPU core count', async () => {
+    await registry.handleHeartbeat(
+      nodeHeartbeat('node-local', '2026-07-21T00:00:00.000Z', { cpuPercent: 10, ramTotalMb: 16384, cpuCores: 4 })
+    );
+    expect((await repo.listNodes())[0].cpuCores).toBe(4);
+  });
+
+  it('leaves the core count unknown when the agent does not report it', async () => {
+    await registry.handleHeartbeat(nodeHeartbeat('node-local', '2026-07-21T00:00:00.000Z', { cpuPercent: 10 }));
+    expect((await repo.listNodes())[0].cpuCores).toBeNull();
+  });
+
+  it('keeps a known core count across beats that omit it', async () => {
+    await registry.handleHeartbeat(nodeHeartbeat('n1', '2026-07-21T00:00:00.000Z', { cpuCores: 8 }));
+    await registry.handleHeartbeat(nodeHeartbeat('n1', '2026-07-21T00:00:01.000Z', { cpuPercent: 20 }));
+    expect((await repo.listNodes())[0].cpuCores).toBe(8);
+  });
+
   it('registers a node from a heartbeat carrying resources', async () => {
     await registry.handleHeartbeat(
       nodeHeartbeat('node-local', '2026-07-21T00:00:00.000Z', {

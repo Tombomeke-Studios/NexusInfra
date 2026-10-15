@@ -22,6 +22,10 @@ Cross-project security design: [`../../CONCEPTS/integration/security.md`](../../
 - `FINVAULT_MESSAGE_KEY` is shared with FinVault — treat it with the same care as FinVault does;
   rotating it requires rotating both platforms together.
 - RabbitMQ dev credentials (`guest/guest`) must be replaced in any non-local deployment.
+- A connection URL is never logged with its password: `redactUrl` (`shared/src/rabbitmq.ts`) replaces
+  it with `***` and keeps the rest, so the line still names the broker (#394). Logs get pasted into
+  issues, and in the hosted edition the broker is shared with FinVault. Log any new connection URL
+  through it.
 
 ## Authentication (#174)
 
@@ -49,6 +53,12 @@ requires one.
   panel to a network.
 - WebSocket connections authenticate via a JWT in the query string (browsers cannot set headers on
   the handshake), mirroring FinVault's gateway.
+- **The gateway is a first check, never the only one** (#20, #69). It verifies a JWT's signature and
+  expiry before proxying anything — HTTP or WebSocket — but the Orchestrator still authenticates every
+  request itself (sessions, API tokens, the second factor) and authorizes it per server. An API token
+  is opaque to the gateway and passes through for the Orchestrator to judge; it is rate-limited by
+  address, because an unverified token is a key the caller chose. The `x-user-id` header the gateway
+  adds is stripped from what callers send, so it can only ever name a verified user.
 
 A valid token establishes only *who* the caller is. What they may do is a separate concern — see
 below.
@@ -75,8 +85,153 @@ immediately rather than whenever the holder's token happens to expire.
 |---|---|
 | **viewer** | See the server, its logs and its resource usage |
 | **operator** | The above, plus start / stop / restart, the console, and reading files |
-| **admin** | The above, plus writing files, databases, backups, schedules and managing access |
-| **owner** | The above, plus deleting the server |
+| **admin** | The above, plus writing files, databases, backups, schedules, managing access, and editing the server's configuration (#220) |
+| **owner** | The above, plus transferring (#230) and deleting the server |
+
+### Ownership can move (#230)
+
+Ownership used to be fixed at creation, which orphaned servers whenever an owner left: `owner` is the
+only role that may delete a server or manage its access, and nobody could ever hold it again. A
+transfer moves the server to another account, optionally leaving the outgoing owner an explicit
+lesser role, and is recorded on the audit trail.
+
+- **Owner-level permission**, not admin. A server admin who could transfer could hand the server to
+  themselves, which is exactly the escalation the role boundary exists to prevent.
+- **The recipient must already have an account.** An invitation may wait for someone to sign up
+  because it grants nothing meanwhile; a server whose owner is a pending invitation is the orphan
+  again, with the mailbox holder as its only route back.
+- **The outgoing owner can only step down.** Ownership is never a grant, so what they keep is a
+  grantable role or nothing at all.
+- A server whose owner account is already gone can still be rescued, which is the case the whole
+  feature is for.
+
+### Credential checks are rate limited (#225)
+
+The API Gateway limits per IP, and the dashboard's nginx proxies `/api` straight to the Orchestrator,
+around it — so login was unlimited against bcrypt hashes, whose work factor slows an attacker by a
+constant rather than by enough.
+
+Attempts are now measured per address **and** per account. Per-IP alone is defeated by a botnet
+spreading one password list; per-account alone lets one machine work through a list of accounts. Only
+failures count, and a success clears them, so someone signing in normally never meets the limit. A
+lockout answers exactly the same `401` as a wrong password, for the same reason unknown accounts do:
+a distinct reply would confirm the account is worth attacking.
+
+### Sessions can be ended (#227)
+
+A JWT is stateless. Before this, a token remained valid until it expired regardless of what happened
+to the account behind it — changing a password did not sign other devices out, and "sign out" was a
+client-side gesture that left the token working for anyone holding a copy.
+
+Tokens now name a session row, which `requireAuth` verifies still exists. That costs one indexed read
+per authenticated request and buys the ability to answer truthfully: sign out ends *this* session,
+changing a password ends every *other* one, and a person can see where they are signed in and end any
+of it. A token naming no session is refused outright, because an unrevocable token is what this
+replaced.
+
+### Password reset by email (#344)
+
+The other half of #226: somebody who forgot their password can have a link mailed to them, where the
+installation can send mail (`SMTP_URL`) and knows its own public address (`PANEL_URL`). Without both,
+the login page says to ask an administrator, who can reset it from the Accounts page.
+
+- **The link is built from `PANEL_URL`, never from the request.** A reset link built from the `Host`
+  header lets an attacker ask for a reset of *your* account with their own host, so the mail you
+  receive — genuine, from this panel — carries your token to their site.
+- **The response says nothing about the account.** Every request gets the same `202`, and the mail is
+  sent after the response, so the time taken does not tell either.
+- **The token is treated like an API token**: 256 random bits, only its SHA-256 digest stored, spent by
+  the first accepted submission (an atomic claim, so two submissions of one link cannot both succeed),
+  gone after 30 minutes, superseded by a newer request.
+- **Requests are limited** per address and per client — 5 an hour — separately from the login limiter,
+  so someone locked out of signing in can still ask, and one mailbox cannot be flooded.
+- **A reset ends every session**, as an administrator's reset does: it is what you do when you think
+  someone else has been in the account.
+- **Two-factor stays on.** A mailbox is one factor; the next sign-in still asks for the code.
+
+### Two-factor authentication (#229)
+
+The panel hands out root shells inside containers and control over the Docker hosts behind them. A
+password was the whole defence, and a password is the credential people reuse.
+
+TOTP (RFC 6238) is implemented in `totp.ts` rather than taken as a dependency — it is HMAC-SHA1 over a
+counter, Node already has the HMAC, and the RFC publishes the test vectors the implementation is
+checked against. A dependency for forty lines is a dependency to keep current in an authentication
+path.
+
+- **Enrolment is two steps.** The secret is stored when enrolment starts and only *enabled* once the
+  person produces a code from it, so an abandoned enrolment leaves the account exactly as it was
+  rather than behind a code nobody ever scanned.
+- **Recovery codes come with it**, ten of them, shown once and stored as digests. Each works exactly
+  once. On a self-hosted panel there is no support desk and possibly no second administrator; without
+  these, turning 2FA on is a way to lose your own machines to a broken phone.
+- **Turning it off needs the password**, not just the session. A session is something someone else may
+  be holding; requiring the password is what makes the factor more than decoration.
+- **A code is accepted one step either side of now.** Phones drift and people type slowly; a zero
+  window rejects codes that were correct when they were read, which teaches people to distrust it.
+
+`REQUIRE_TOTP=true` makes it mandatory for the installation. That does **not** refuse the login of
+someone who has not enrolled — doing so would lock out everyone, including the only administrator, the
+moment the flag was switched on. They sign in and find every route but enrolment answering `403`, and
+enrolment hands back a fresh token. The claim rides on the token rather than being looked up, because
+it is a fact about *that login*: enrolling later must not retroactively bless a token minted before a
+code was ever asked for. The terminal WebSocket checks it too, since a root shell is the last place to
+honour such a token.
+
+Two consequences worth stating plainly:
+
+- **A missing code is answered differently from a wrong password.** That confirms the password was
+  correct — unavoidable, since the person has to be told to reach for their phone, and only ever said
+  to someone who already holds the password. A missing or wrong code still counts as a failed attempt
+  against the login limiter (#225), so the code field is not an unlimited guessing surface.
+- **API tokens are unaffected.** One was created by somebody who had already satisfied the
+  requirement, and blocking them would take CI down the moment the flag flips without adding a factor
+  any script could supply. A token cannot change how you sign in.
+
+### API tokens (#228)
+
+Everything required a JWT obtained by password login, so automating anything against the panel meant
+putting a person's password in a script. That is the worst credential available: it opens the whole
+account, it cannot be told apart from that person afterwards, and withdrawing it locks them out too.
+
+An API token is a second kind of bearer credential, presented the same way and resolving to the same
+account, with three properties the password did not have:
+
+- **It is stored as a digest only.** The secret is returned once, at creation, and never again; a
+  database that leaks yields nothing presentable. SHA-256 rather than bcrypt deliberately — the secret
+  is 256 random bits, so there is nothing to brute-force, and a slow hash on every request would be a
+  self-inflicted rate limit rather than a defence.
+- **It can be narrowed below the account.** Reading is always allowed; changing anything needs
+  `write`; and administering the panel needs `admin` on top of the account's platform role, because an
+  administrator's deploy token should not also be able to create accounts.
+- **It can be withdrawn on its own**, immediately, without touching the person's own access.
+
+Two decisions in that scoping are worth stating, because both were the alternative to something
+plausible and worse:
+
+- **Scope is enforced by HTTP method, not by a table of paths.** A path table is a second description
+  of the API that has to be kept in step with the first; the day it falls behind is the day a new
+  route is silently unscoped, and only for token callers. Every route is on one side of the safe/unsafe
+  line already, including routes nobody has written yet.
+- **A token cannot mint tokens.** One that could would not really be revocable — withdraw it and its
+  offspring keep working, which is the property the whole feature exists to provide.
+
+The interactive terminal WebSocket does not accept them at all: it opens a root shell, its handshake
+is a `GET`, and a script that needs to run a command has the exec route.
+
+### Importing a host directory (#268)
+
+Mounting an existing directory into a server is the most dangerous capability in the panel, because
+the person who owns that server has a root shell inside the container. `/`, `/var/run/docker.sock`
+or a home directory mounted in is the whole machine. It is therefore fenced in four ways:
+
+- **Platform administrators only.** It never follows from a per-server role, however high.
+- **Off by default.** A node imports nothing unless `IMPORT_ROOT` is set on that node.
+- **The node decides.** Only the agent can see its own filesystem, so the orchestrator asks it; the
+  agent checks again at container start rather than trusting an event that crossed a broker.
+- **Resolved, then checked.** Containment is tested on the real path after symlink resolution, and by
+  path segment rather than string prefix — `/srv/import-evil` is not inside `/srv/import`, and
+  `/srv/import/escape -> /` passes any check performed before resolution.
 
 Design decisions worth stating explicitly:
 
@@ -125,6 +280,21 @@ a way to lose control of a server:
 - A team the caller doesn't belong to reads as **404**, for the same reason a server does — otherwise
   team identifiers become a directory of who works with whom.
 
+Since **#224** the team routes are authorized the same way the server routes are, rather than each
+handler checking ownership for itself: a guard on the whole `/teams/:id` subtree resolves the caller's
+standing once, and each route declares the permission it needs. The reason is the one that motivated
+#175 — authorization repeated in sixty places is authorization that eventually gets omitted in one of
+them, and nothing about the omission looks wrong at the call site.
+
+A team has **no role ladder of its own**: you either own it or you are in it. The role stored on a
+membership is a *server* role — what that member gets on the servers the team holds — and confers
+nothing over the team itself. Two consequences fall out of the same distinction:
+
+- **Leaving is not managing.** Removing someone else needs the owner; removing yourself never does.
+- **A platform administrator gets nothing on a team**, unlike on a server. Administering the
+  installation means reaching the hosts, and there is no operation on a team that an admin cannot
+  already perform on the servers it holds. A team is a private grouping of people, not infrastructure.
+
 ## Service-to-service auth (#169)
 
 The Node Agent's HTTP/WS surface drives Docker directly — `POST /exec/:id`, file writes, and a
@@ -150,6 +320,36 @@ Now:
 **Remaining gap:** the token is a static shared secret with no rotation, and AMQP/HTTP hops are still
 plaintext on the private network. mTLS and rotation belong with the production hardening (#21).
 
+
+### Confirming an email address (#367)
+
+In the hosted edition an account's address is more than a login name: a top-up's payment request is
+sent to the FinVault account that has it. So a self-registered account must open a mailed link before
+it can top up.
+
+- The link is built from `PANEL_URL`, never the request's Host header, and the token is 256 random
+  bits stored only as a digest — single-use, valid for 24 hours, superseded by asking again.
+- Asking for the mail again is limited per account.
+- It is enforced only when the installation has both `SMTP_URL` and `PANEL_URL`. `GET /config` says
+  which (`emailVerification`), so the panel never asks for something the server cannot do.
+- Confirming says the address reaches the account's owner. It is not a second factor and does not
+  replace one.
+
+### The Billing Bridge (#372)
+
+The Billing Bridge's routes name the account in the path (`/billing/:userId/...`) and believe it: the
+Orchestrator is meant to be the only caller, and puts the signed-in user's id there. Nothing enforced
+that either. Anyone able to reach the bridge's port could read any account's wallet and ledger, or start
+a top-up — a payment request in somebody's FinVault account — for any user and any address.
+
+- Every route except `/health` and `/metrics` now requires the same `INTERNAL_API_TOKEN`.
+- The Orchestrator calls it only through `bridgeFetch`, which attaches the token.
+- CORS is gone from the bridge; no browser talks to it.
+- **A mismatched token is quiet.** The Orchestrator's billing checks fail open by design (a billing
+  outage must not stop servers), so with different values on the two services quotas and credit are
+  simply not enforced. The Orchestrator logs each check it could not make; the release bundle refuses
+  to start without the variable, and a bundle test checks every compose file passes it to both.
+
 ## Container file management (#108)
 
 - The Node Agent's file API operates **inside** the target container. Every path is normalised to a
@@ -160,6 +360,34 @@ plaintext on the private network. mTLS and rotation belong with the production h
 - The endpoints are **agent-internal** — token-guarded (#169) and reached via the Orchestrator's proxy,
   which gates them on a running deployment. User-facing authorisation rides on the same JWT as the rest
   of the API; per-server subuser scoping is a later slice (#112).
+
+### SFTP (#235)
+
+SFTP is a second way in to the same files, so it is held to the same rules rather than given its own:
+
+- **The same credentials.** An account password, or an API token. A password is one factor, so an
+  account with two-factor sign-in — or any account while `REQUIRE_TOTP` is on — is refused a password
+  here and uses a token, which it could only have minted from a session that passed the second
+  factor. A token must belong to the account the user name names.
+- **The same permissions.** Logging in needs `file.read` on the server; every change needs `file.write`
+  *and* a credential allowed to write (a password, or a token with the `write` scope). Both are checked
+  on every operation, not once at login: revoking a share ends an open session's access on its next
+  request.
+- **The same budget.** Failed logins count against the panel's per-address and per-account limiter
+  (#225). Two doors to one password with two budgets would double what a guesser gets.
+- **The same answer for every refusal** — wrong password, unknown server, no access — so the prompt does
+  not confirm which guess was right.
+- **A file door, nothing else.** No shell, no exec, no forwarding. Paths go to the agent's file API,
+  which normalises and contains them exactly as it does for the panel. `REMOVE` refuses a directory and
+  `RMDIR` a non-empty one, because the agent's delete is recursive and SFTP clients rely on neither
+  being.
+- **A stable host key.** Generated on first start (ed25519), written `0600` to `SFTP_HOST_KEY_PATH` on
+  the data volume. A key that changes on every upgrade trains people to accept the warning that would
+  one day be real.
+- **Bounded memory.** An upload is held until the handle closes (64 MB at most, the HTTP upload's cap)
+  and a download is read whole (the agent's `MAX_DOWNLOAD_BYTES`, 256 MB). A write that fails part way
+  leaves the old file as it was: the close that follows reports the failure instead of uploading the
+  fragment that did arrive.
 
 ## Managed databases (#109)
 
@@ -174,15 +402,52 @@ plaintext on the private network. mTLS and rotation belong with the production h
 - A backup is a tar the agent writes under an **opaque, filesystem-safe ref** (validated so a crafted
   ref can't traverse out of the backup directory); the agent's backup endpoint is internal
   (token-guarded, #169).
-- Tars live on the **node that made them** (single-node MVP); the Orchestrator stores only metadata, not
-  the blob. Multi-node placement + off-node backup storage is a later (production) concern.
+- Tars live on the **node that made them**; the Orchestrator stores only metadata, not the blob.
+- **Off-site (#232)** is optional and configured per node (`BACKUP_S3_*`, see images.md). The
+  credentials live in the agent's environment only — never in the database or on the wire to the
+  panel — and should be scoped to the one bucket/prefix. Requests are signed with AWS SigV4
+  (`s3.ts`, checked against AWS's published example and byte-for-byte against botocore). A failed
+  upload is recorded on the backup rather than hidden, so "copied off-site" in the panel is a claim
+  that was checked. Tars are uploaded as-is: encrypt at the bucket (SSE) if the data warrants it.
+- **Download** streams through the Orchestrator behind `backup.manage`, so a backup's contents reach
+  exactly the people who could have restored it.
 
 ## Subusers (#112)
 
-- The subuser API manages **who may access a server** (by email) and their role (`admin`/`viewer`), but
-  **does not yet enforce it** — the panel still authenticates as the single stub user. Enforcement (mapping
-  a logged-in identity to its allowed servers/roles) lands with real multi-user login via the FinVault-JWT
-  gateway (#20). Until then this is intentionally a management/record layer, not an access boundary.
+- The subuser API manages **who may access a server** (by email) and their role, and **enforces it**
+  since #175: every `/deployments/:id/*` route resolves the caller's role on that specific server and
+  answers `404` when they have none. (This paragraph previously said enforcement was still to come; it
+  was left behind by #175 and is corrected here.)
+
+## Transport security (#245)
+
+**The stack speaks plain HTTP and terminates no TLS itself.** The login carrying a password, every
+JWT after it, and the WebSocket that opens a root shell in a container all travel in the clear.
+
+That is a deliberate division of labour rather than an oversight — certificate renewal, HSTS and
+cipher selection belong to a reverse proxy, and every host already has one it prefers — but it makes
+one rule absolute: **do not expose this stack without a proxy in front of it.** On a LAN you control
+the risk is yours to take; across any network you do not, an observer has the session.
+[deployment.md](deployment.md#putting-it-behind-tls-245) has working Caddy and nginx configurations,
+which ports to publish and which never to, and the `TRUST_PROXY` setting that keeps per-IP rate
+limiting meaningful once every request arrives from the proxy's address.
+
+## Notifications (#236)
+
+- **Webhooks cannot reach the private network** unless a platform administrator made them. A webhook
+  is the orchestrator making a request on someone's behalf; without this, any account could aim it
+  at the node agents, a database, or the cloud metadata endpoint (`169.254.169.254`). Loopback,
+  RFC 1918, link-local, CGNAT, multicast and IPv6 ULA/link-local are refused, including IPv4-mapped
+  IPv6. The check runs at creation (for a clear error) **and at connect time**, as the HTTP client's
+  DNS lookup — so a name that resolves publicly when saved and privately when used (DNS rebinding)
+  is still refused.
+- **Every webhook body is signed**: `X-NexusInfra-Signature: sha256=<HMAC-SHA256(secret, body)>`,
+  with a per-channel secret shown once at creation. The secret is stored in plain form, because
+  signing needs it; it grants nothing but the ability to forge notifications to that one receiver.
+  `X-NexusInfra-Delivery` stays the same across retries, so a receiver can drop duplicates.
+- **Email goes only to the account's own address.** A panel that mailed any address on request would
+  be a spam relay behind a login page.
+- Channels live under `/me` and are the caller's own; another account's channel answers 404.
 
 ## Known gaps (foundation phase)
 

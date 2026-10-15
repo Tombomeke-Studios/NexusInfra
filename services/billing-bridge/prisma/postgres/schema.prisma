@@ -1,0 +1,118 @@
+// GENERATED from ../schema.prisma by scripts/postgres-schema.mjs — do not edit.
+// Change ../schema.prisma, run `npm run db:sync-postgres`, and add a migration
+// for each database (see docs/deployment.md#postgresql).
+
+// Billing Bridge persistence — Prisma + SQLite (FinVault pattern, PostgreSQL-ready).
+// This schema (and its generated migrations/) is the source of truth for the
+// billing data model; docs describe it in prose only (see CLAUDE.md doc rules).
+// Hosted edition only — the community edition never runs this service.
+
+generator client {
+  provider = "prisma-client-js"
+  // Generated into this service rather than the hoisted default. Two schemas in
+  // one workspace otherwise write to the same node_modules/.prisma/client and
+  // whichever runs last wins — invisible until both services share an image.
+  output   = "../../generated/postgres"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// A tunable pricing + quota plan. Rates/limits live in the DB so they change
+// without a code deploy. Users default to the "standard" plan.
+model BillingPlan {
+  id                String   @id
+  name              String
+  pricePerHour      Float
+  currency          String   @default("EUR")
+  freeHoursPerMonth Float    @default(0)
+  maxServers        Int      @default(5)
+  maxDatabases      Int      @default(5)
+  // Null means no ceiling (#297).
+  maxRamMb            Int?
+  maxBackupsPerServer Int?
+  // A retired plan keeps the accounts it has; nobody new may choose it (#369).
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+}
+
+// Maps a user to their plan. Absent → the default plan.
+model UserPlan {
+  userId String @id
+  planId String
+}
+
+// One runtime interval for a deployment: opened on server.started, closed on
+// server.stopped/crashed. Summed per cycle to compute charges.
+model ServerBilling {
+  id           String    @id
+  userId       String
+  deploymentId String
+  planId       String
+  limits       String    @default("{}")
+  startedAt    DateTime
+  stoppedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([userId])
+  @@index([deploymentId])
+}
+
+// What billing needs to know about a deployment to charge for it: who owns it
+// and how big it is. Written on deployment.created/updated, so a server started
+// after a restart of this service is still billed (#364).
+model BillingDeployment {
+  deploymentId String   @id
+  userId       String
+  limits       String   @default("{}")
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// A user's prepaid credit balance held in NexusInfra.
+model CreditWallet {
+  userId   String @id
+  balance  Float  @default(0)
+  currency String @default("EUR")
+  // The address the account last asked FinVault to bill (#375) — where its
+  // monthly statement goes. Null until a first top-up.
+  email    String?
+  // When the account was last warned that its credit is running low (#379);
+  // null once it lasts past the threshold again. Stored so a restart of the
+  // bridge does not warn twice for one dip.
+  lowCreditWarnedAt DateTime?
+}
+
+// Append-only credit movements: top-ups (funded via FinVault) and usage charges.
+model CreditLedger {
+  id          String   @id
+  userId      String
+  type        String
+  amount      Float
+  currency    String   @default("EUR")
+  reference   String   @unique
+  status      String   @default("pending")
+  description String   @default("")
+  // Why a top-up failed, in FinVault's words (#351). Null for anything else.
+  failureReason String?
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+}
+
+// A user's monthly billing cycle. Driven by the cycle runner (#147).
+model BillingCycle {
+  id          String   @id
+  userId      String
+  periodStart DateTime
+  periodEnd   DateTime
+  totalCost   Float    @default(0)
+  currency    String   @default("EUR")
+  status      String   @default("open")
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+}

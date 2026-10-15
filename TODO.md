@@ -5,7 +5,7 @@
 ![MVP](https://img.shields.io/badge/panel-feature--complete-16a34a?style=flat-square)
 ![Phase](https://img.shields.io/badge/next-Phase_5_·_Production-3b82f6?style=flat-square)
 ![Editions](https://img.shields.io/badge/editions-community_·_hosted-8b5cf6?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-451_passing-6e9f18?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-971_passing-6e9f18?style=flat-square)
 ![Open issues](https://img.shields.io/github/issues/Tombomeke-Studios/NexusInfra?style=flat-square)
 
 </div>
@@ -28,12 +28,21 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 | **4 · Billing (2 editions)** | Open-core split (community vs hosted) + Billing Bridge ↔ FinVault, usage-based charging | ✅ Done (#144–#150) |
 | **5 · Production** | Multi-node, metrics, security hardening, Postgres, API Gateway | 📋 Backlog |
 | **6 · Sharing + releases** | Accounts · per-server authorization · invitations · teams · role-aware panel · per-edition release pipeline | ✅ Done (#173–#179) |
+| **7 · Say only what we do** | Close the gap between what the panel claims and what it does — mock tabs, dead buttons, unreachable APIs | ✅ Done (#217–#224) |
+| **8 · Accounts & security** | Login rate limit · password reset · session revocation · API tokens · 2FA · ownership transfer | ✅ Done (#225–#230) |
+| **9 · Depth** | Templates · backup retention · port pools · node migration · SFTP · notifications · list scale · CLI | 📋 Backlog (#231–#240) |
 
 ---
 
 ## Current state
 
-> **The panel is feature-complete and every tab is real — verified live.**
+> **⚠️ "Every tab is real" was too generous.** A repo sweep (2026-08-26) found the **Network** and
+> **Startup** tabs still rendering hardcoded mock data, a Reinstall button that only toasts
+> "not wired yet", an audit trail nobody can read, and the account/user-admin APIs with no page
+> calling them. Phase 7 (#217–#224) closes exactly that gap. Everything below this line is accurate
+> for the tabs it names.
+>
+> **The panel is otherwise feature-complete and those tabs are real — verified live.**
 > `docker-compose up` brings up RabbitMQ + Control Room + Node Agent + Orchestrator + dashboard; the
 > dashboard is at **http://localhost:8095** (sign in as `admin@local` / `ADMIN_PASSWORD`). The node-agent mounts the Docker
 > socket, so all container operations run against real containers.
@@ -65,8 +74,11 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 > look, and **revoking access took effect on the next request**. Self-registration was refused in
 > community, and the served dashboard bundle contained **no billing code**.
 >
->  **⚠️ Still not verified live:** the terminal's PTY/WebSocket path, the gateway proxy, and the
-> hosted edition (needs FinVault on a shared broker).
+>  **Hosted, verified against FinVault's own code (#298):** payload encryption both ways, a confirmation
+> sent through FinVault's gateway crediting a real balance, a wrong key failing visibly, and the monthly
+> cycle suspending a real server. **Not yet possible:** a complete top-up — FinVault does not consume
+> NexusInfra's `payment.request` (#351). The terminal's PTY/WebSocket path and the gateway proxy have
+> since been run end to end (#69, #20).
 >
 > **Phase 6 is complete (#173–#179) — the panel is multi-user and both editions are shippable.**
 > Real accounts replace the single hardcoded login, and **every** server route is now authorized:
@@ -143,10 +155,10 @@ gateway work" above.)_
 
 ### Phase 3+ — remaining console / gateway work
 
-- [~] WebSocket transport for a persistent exec/terminal session (JWT) (#69 — **console/terminal over WS done**; logs/stats still SSE)
+- [x] WebSocket transport for a persistent exec/terminal session (JWT) (#69) — the terminal is a WebSocket end to end, through the gateway too; logs/stats stay server-sent events, which the gateway now streams instead of buffering (a second transport for a one-way stream would be two things to keep working)
 - [x] Dashboard: full interactive terminal (xterm.js, persistent PTY) for a server (#71)
-- [~] API Gateway: JWT validation, routing, WebSocket proxy (#20) — **HTTP core done** (CORS, rate limit, JWT, reverse proxy, `:9400`); WS proxy pending with the terminal
-- [ ] Replace stub login with real FinVault JWT via the Gateway (#17, #20)
+- [x] API Gateway: JWT validation, routing, WebSocket proxy (#20) — CORS, rate limit, JWT, streaming reverse proxy, WebSocket upgrades, API tokens passed through; verified live (terminal, SSE logs/stats, `nexusctl`)
+- [ ] Sign in with FinVault — one identity across the two products (#377) — was "replace stub login with real FinVault JWT"; the stub login went with #174 and the old issue ref pointed at something else. Needs a decision on the flow before any code; until then accounts are linked by confirmed email address (#351, #367)
 
 ### Phase 6 — Multi-user sharing + two shippable editions
 
@@ -176,11 +188,152 @@ gateway work" above.)_
 - [x] Slim the all-in-one — build tooling no longer ships to users, 1.07 GB → 915 MB (#204)
 - [x] Document the release installer, and link it from the README (#210)
 
+### Phase 7 — Say only what we do (`feature/panel-truthfulness`)
+
+> **The panel promises more than it delivers.** A repo sweep found two server tabs still rendering
+> hardcoded mock data, a button that only fires a "not wired yet" toast, an audit trail that is
+> written and never read, and two working API surfaces (account + user admin) that no page calls.
+> None of this is new work in the product sense — it is closing the gap between what the UI claims
+> and what the code does. Build **in order**; each is a feature branch + PR.
+
+- [x] Network tab is hardcoded — render real port allocations, drop the fake SFTP host (#217) 🐛
+- [x] Startup tab invents environment variables — show the server's own (#218) 🐛
+- [x] "Reinstall server" is a no-op — removed; Start already recreates from config (#219) 🐛
+
+**Second sweep — the panel fabricates telemetry.** Worse than the tabs: when a real stream fails,
+the panel does not say so, it *invents plausible data*. A broken node shows drifting meters and
+scrolling log lines describing events that never happened.
+
+- [x] Live CPU/RAM/network are invented when the stats stream fails (#250) 🐛
+- [x] The console invents log lines when the log stream fails (#251) 🐛
+- [x] Player count and TPS are fabricated for every game server (#252) 🐛 — tiles removed
+- [x] Kill button is a no-op — unlike Reinstall, this one is worth building (#253) 🐛
+- [x] Placement picker is ignored — a pinned node is silently overruled (#254) 🐛
+- [x] The startup command field is never sent anywhere (#255) 🐛 — field removed
+- [x] Feature limit sliders (databases/backups) are never sent or enforced (#256) 🐛 — section removed
+- [x] Node maintenance mode exists only in the browser tab — servers still land there (#258) 🐛
+- [x] Node cards invent a vCPU count and a committed-resources meter (#261) 🐛
+- [x] Uploading a binary file silently corrupts it — bytes now travel raw (#263) 🐛
+- [x] A server's config cannot be edited after creation — `PATCH /deployments/:id` (#220)
+- [x] Account settings page — change your own password (`/me` exists, nothing calls it) (#221)
+- [x] Admin user management page — list/create accounts without curl (#222)
+- [x] Expose the deployment audit trail + an Activity tab (#223)
+- [x] Team routes check membership by hand — move them behind the guard layer (#224)
+
+### Phase 8 — Accounts & security hardening
+
+> Everything here is about what happens **after** the password: recovery, revocation, second
+> factors, and the machine-to-machine path. The panel hands out root shells; today a single
+> password with no rate limit is the whole defence.
+
+- [x] Login is not rate limited on the orchestrator — nginx proxies past the gateway (#225) 🐛
+- [x] Password reset flow — admin-driven; the email variant waits on the notification service (#226)
+- [x] Self-service password reset by email — single-use 30-minute links built from `PANEL_URL`, same answer for every address, sessions ended (#344)
+- [x] Sessions cannot be revoked — a deleted user's token stays valid (#227)
+- [x] API tokens for scripted/CI access, scoped and revocable (#228)
+- [x] Two-factor authentication (TOTP) + recovery codes (#229)
+- [x] Transfer server ownership — an owner who leaves orphans their servers (#230)
+
+### Phase 9 — Features that follow from what exists
+
+- [x] Server templates ("eggs") — recipes with typed, validated variables; replaced `gameSpec.ts` (#231)
+- [x] Minecraft egg: NeoForge + pick the game version from a list instead of typing it (#311)
+- [x] Every published port was mapped as TCP, so the UDP game servers were unreachable (#313) 🐛
+- [x] Add Minecraft Bedrock and Palworld eggs (#315)
+- [x] The Valheim egg pointed at an image the project no longer publishes from (#317)
+- [x] Add Terraria, Factorio, Satisfactory, Project Zomboid and Enshrouded eggs — with length/shape rules for string variables (#384)
+- [x] Generate a random default password per server instead of a fixed `changeme` in the eggs (#388)
+- [x] Import an existing server directory into the panel (#268)
+- [x] Backup retention, download, and off-site (S3) targets (#232)
+- [x] Port allocation management per node — pool, conflicts, primary port (#233)
+- [x] Migrate a server to another node (#234)
+- [x] Real SFTP access per server, honouring the file permissions (#235)
+- [x] Show how much disk each server uses — data volumes + container layer, per server and per node (with data no server owns) (#347)
+- [ ] Enforce a per-server disk quota where the filesystem supports it (#278) — needs XFS project quotas on the volume directories, not `StorageOpt` (which caps only the writable layer since data moved to volumes, #324); see the issue
+- [x] Notification service — mail/webhook on crash, suspend, node offline (#236)
+- [x] Search, filter and pagination on the Servers list (#237)
+- [x] Bulk actions on multiple servers (#238)
+- [x] Update a deployment's container image (pull + recreate) (#239)
+- [x] `nexusctl` — a CLI client for the panel (#240)
+- [x] Live player count and server status for game servers — Minecraft SLP, Bedrock RakNet ping, Steam A2S_INFO (#382)
+
 ### 🐛 Bugs / fixes (open)
+
+- [x] The Java heap and the RAM limit are two settings for the same memory (#308)
+- [x] A server's memory limit could not be changed after creation, so neither could its Java heap — Settings now has a Resources editor that shows the heap following the limit (#381) 🐛
+- [x] The Overview counted only percentage caps as committed, so servers sized in MB looked free (#383) 🐛
+- [x] The New Deployment form guesses the placement node itself, and can guess wrong (#309) 🐛
+- [x] Servers list shows invented limits and labels every egg server as an app (#318) 🐛
+- [x] A stopped server keeps the id of a container that no longer exists (#321) 🐛
+- [x] Stopping a server deleted its data — it now lives in named volumes owned by the server (#324) 🐛
+- [x] Restoring a backup nested it inside the directory instead of replacing it (#327) 🐛
+- [x] Starting a stopped server could move it to a node without its data (#329) 🐛
+- [x] A server that died on its own was shown as running forever — the agent now watches Docker events (#332) 🐛
+- [x] A missing backup archive answered with the node's host path (`ENOENT …/bk_….tar`) (#339) 🐛
+- [x] Backing up a server with no data directory failed with Docker's "no such container" (#342) 🐛
 
 - [x] Delete server button is a no-op — wire `DELETE /deployments/:id` end to end (#156)
 - [x] Node Agent internal API was unauthenticated + host-published — token-guard it (#169)
 - [x] Control Room not surfaced/up in the running stack — verify it starts + show its health in the panel (#157)
+- [x] A server name with a space never starts — derive a Docker-safe container name (#286)
+- [x] One failing async route kills the whole Orchestrator process — add an error boundary (#294)
+- [x] Deleting a running server races its own stop event and violates a foreign key (#293)
+- [x] Release bundles cannot start: `container_name` contains a slash (#291)
+- [x] The hosted billing-bridge image contradicts its own edition stamp (#292)
+- [x] IO priority makes every container start fail on hosts without `io.weight` — detect and skip it (#288)
+
+### 🚀 First deployment round (v0.4.0) — found by smoke-testing the release bundles
+
+- [x] Uploading a file over 1 MB through the panel fails with 413 (#389) 🐛
+
+- [x] Deleting a server leaves its backup archives on the node (#390) 🐛
+
+- [x] Release bundles cannot turn on mail, password reset, 2FA enforcement, off-site backups or proxy trust (#391) 🐛
+
+- [x] Release bundles publish internal ports on every interface, and 9000 collides with common tools (#392) 🐛
+
+- [x] Out of the box every panel user shares one login rate-limit bucket (#401) 🐛
+
+- [x] Every service prints the broker password to its log when it connects (#394) 🐛 — `redactUrl` (shared) replaces the password before the URL reaches a log line
+
+- [x] Heartbeats flood every service's log twice a second (#395) 🐛 — routine heartbeat publishes and consumes are no longer logged (`logsTraffic`); failures still are
+
+- [x] Local image builds send stale `dist/` and `node_modules` into the image (#396) 🐛 — `.dockerignore` at the root and in `dashboard/` keep build output, dependencies, `.env`, local databases and tooling metadata out of the context
+
+- [x] The panel answers 502 after the orchestrator container is recreated (#403) 🐛
+
+### Panel — replace the browser's own dialogs
+
+- [x] Replace all 16 `window.confirm` / `window.prompt` calls with in-app dialogs (#299)
+
+### 🏨 Hosted edition — what is missing (`edition:hosted`)
+
+Found while running the hosted release bundle live for the first time (2026-08-26). Community is in
+far better shape than hosted; these are the gaps between "the code exists" and "a customer could use
+it". Every item carries the `edition:hosted` label on GitHub.
+
+- [x] The credit balance never refreshes on its own — a stale balance is a wrong answer stated with confidence (#296)
+- [x] Creating a server is never charged and the form shows no plan entitlements (RAM ceiling, storage, backups, databases) (#297) — memory ceiling across an account's servers + backups-per-server ceiling, shown in the form with a one-click fit, enforced against the owner's plan; the charging model stated in the form and on the Billing page. Storage deliberately not modelled: it cannot be enforced (#278)
+- [x] The FinVault integration has never been exercised end to end — written, not verified; a mismatched message key fails *silently* (#298) — run against FinVault's own code: encryption, confirmations and the cycle-to-suspend path work; a double-delivered confirmation credited twice (fixed); a wrong key now shows as *Not confirmed*
+- [x] The top bar overflowed between 900px and ~1300px for a hosted administrator — it now folds when it does not fit, measured (#352) 🐛
+- [x] FinVault never acts on NexusInfra's `payment.request`, so a top-up cannot complete (#351) 🐛 — the request now names the payer by the account's email; FinVault (its #89, #90) turns it into a payment request the customer pays or declines in the FinVault apps and answers with our reference. A failed top-up says why; one the broker never took fails at once
+- [x] The Billing Bridge forgot who owned a server when it restarted, and stopped billing it (#364) 🐛 — owner and size are stored; a start reported twice opens one interval; a resize reaches billing
+- [x] Prepaid credit was not enforced — an account with no credit ran servers for a month, and could restart a suspended one (#365) 🐛 — creating and starting need credit (402, owner's standing); running servers are suspended within five minutes of the credit running out; the Billing page shows what is left to spend. Servers are not restarted automatically after a top-up, on purpose
+- [x] The Billing page's cycle usage counted every hour a server ever ran, not this cycle's (#366) 🐛
+- [x] The Billing Bridge's HTTP API was unauthenticated — anyone who could reach its port could read any wallet or start a top-up for anyone (#372) 🐛 — internal token on every route but `/health` and `/metrics`, one `bridgeFetch` in the Orchestrator, CORS removed
+- [x] The monthly invoice event was published to nobody, and did not say whose it was (#375) — it carries the address the account topped up with; FinVault (its #94) records it as a hosting statement under the customer's receipts
+- [x] Verify a customer's email address at signup in the hosted edition (#367) — a self-registration is mailed a single-use link and cannot top up until it is opened; only where `SMTP_URL` and `PANEL_URL` are set (nothing is gated otherwise); administrator-made accounts and completed password resets count as confirmed
+- [x] Plans a customer can choose between, and a provider's view of their customers (#369) — administrators define, edit and retire plans; a customer switches on the Billing page when their servers fit; runtime is charged at the rate of the plan it ran under; a Customers page lists every account with plan, usage and balance, and adjusts credit by hand with a reason the customer sees
+- [x] Warn a customer before their credit runs out, and show how long it will last (#379) — the standing says how many hours what is left lasts at the running servers' rate (free hours first), shown under *Left to spend*; under `LOW_CREDIT_HOURS` (default 24) the account gets one `credit.low` notification per dip, remembered across a restart; the event is not offered in the community edition
+- [x] A server stopped for lack of credit looked like any other stopped server (#380) 🐛 — the suspension is recorded with the server and shown as *suspended* in the Servers list, the drawer and the server's page, saying whose credit ran out, until a start that passes the credit check
+- [x] Make the community build's stub aliases actually match their imports (#393) 🐛 — the stubbed modules are listed in `dashboard/editionStubs.ts` and matched on the specifier as written; a test checks every import is caught, and a community build with the `BILLING_INCLUDED` gates forced open still passes `verify-edition.mjs`
+- [x] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)
+- [x] `docs/billing.md` is missing from the documentation ownership table (#248)
+
+> **Labels.** Issues now carry `edition:community`, `edition:hosted` or `edition:both` alongside
+> their `type:*` label, so it is clear at a glance which product an item belongs to. Almost
+> everything is `edition:both` — one codebase — which is exactly why the hosted-only gaps above were
+> easy to lose sight of.
 
 ### Small cleanups / follow-ups
 
@@ -188,13 +341,26 @@ gateway work" above.)_
 
 ### Phase 5 — Production hardening (`feature/production`)
 
-- [~] Multi-node: agent calls now route to the deployment's owning node (#171 — **done**); still to do: run several agents and verify placement across them live (#21)
-- [~] Node Agent: offline event queue / replay on reconnect (#167 — **done**, in-memory outbox for lifecycle reports) + auto-restart on crash (still to do)
-- [~] Control Room: uptime % / history (#165 — **done**, in-memory) + alerting via the Notification/Mail service + DLQ monitoring (still to do)
-- [ ] Metrics: InfluxDB + Grafana dashboards
+- [x] Multi-node: agent calls route to the owning node (#171); **verified live** with two agents on two separate Docker daemons — exec, files, backups and restore reach the right node, and a server moved between them (#234) (#21)
+- [x] Node Agent: offline event queue / replay on reconnect (#167 — in-memory outbox for lifecycle reports) + restart on crash — both bundles restart it, and the documented `docker run` for a second node now does too (#357)
+- [x] Backups in the release bundles were lost when the node agent's container was recreated (#357) 🐛 — the image keeps them on a declared volume; every compose file and the second-node example mount it
+- [x] Control Room: uptime % / history (#165), DLQ monitoring (#243), and alerting — node offline/recovered and crashes are notified by webhook or email (#236)
+- [x] Metrics: Grafana dashboards over the Prometheus metrics, one compose profile away — InfluxDB dropped, #246 made it redundant (#355)
+- [x] Prometheus `/metrics` on every service — the cheap half of the above (#246)
 - [~] Security: service-to-service auth (#169 — **done**, token-guarded agent API) + rate limiting (done in the gateway, #20); secrets-at-rest, token rotation, mTLS/HTTPS still to do
-- [ ] Production docker-compose + deployment docs; migrate SQLite → PostgreSQL via Prisma
-- [ ] Integration tests: RabbitMQ / DB-backed end to end (Docker Compose test target)
+- [x] Production docker-compose + deployment docs; migrate SQLite → PostgreSQL via Prisma (#241) — PostgreSQL supported beside SQLite (the default): both clients generated, chosen by `DATABASE_URL`; a `postgres` profile in every compose file; `sqlite-to-postgres.mjs` moves an installation; CI runs the database suite on both and replays the PostgreSQL migrations
+- [x] Integration tests: RabbitMQ / DB-backed end to end — a CI job with a broker service container (#242)
+- [x] Nothing watches the dead-letter queue — surfaces DLQ depth in the panel (#243)
+- [x] Node Agent does not reconcile containers after its own crash (#244)
+- [x] Document TLS termination / reverse proxy — the installer ships plain HTTP (#245)
+- [x] Accessibility + small-screen audit of the panel (keyboard, focus, reduced motion) (#247) — axe clean (WCAG 2 A/AA) on every page and server tab in both themes, and inside open dialogs; no sideways scroll at 375px; focus trapped in and restored from modals; reduced motion stops every animation
+
+### Small cleanups / follow-ups (open)
+
+- [x] `docs/billing.md` is missing from the documentation ownership table in CLAUDE.md (#248)
+- [x] Two file-permission tests could not pass on Windows — the mode is asserted only where modes exist (#368)
+- [x] The PostgreSQL schema guards never ran on Windows — the sync script exited 0 without doing anything, and the migration check could not start Prisma (#361) 🐛
+- [x] The port backfill handed a clashing port to the newer server instead of the one holding it — it walked the list newest first; its test only passed when both servers shared a millisecond (#358) 🐛
 
 ---
 

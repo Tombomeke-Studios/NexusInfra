@@ -2,6 +2,7 @@ import { Routes, Route } from 'react-router-dom';
 import { RequireAuth } from './components/RequireAuth';
 import { Layout } from './components/Layout';
 import { Login } from './pages/Login';
+import { ResetPassword } from './pages/ResetPassword';
 import { Overview } from './pages/Overview';
 import { NewDeployment } from './pages/NewDeployment';
 import { Servers } from './pages/Servers';
@@ -9,7 +10,11 @@ import { ServerDetail } from './pages/ServerDetail';
 import { NodeDetail } from './pages/NodeDetail';
 import { Teams } from './pages/Teams';
 import { Preferences } from './pages/Preferences';
+import { Account } from './pages/Account';
+import { Users } from './pages/Users';
 import { Billing } from './pages/Billing';
+import { VerifyEmail } from './pages/VerifyEmail';
+import { Customers } from './pages/Customers';
 import { useEdition } from './edition';
 import { BILLING_INCLUDED } from './buildEdition';
 
@@ -20,6 +25,9 @@ export function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* Where the mailed reset link lands (#344) — public, like /login. */}
+      <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/verify-email" element={<VerifyEmail />} />
       {/* Self-registration is a hosted-edition affordance (#174): on a
           self-hosted panel an administrator creates the accounts. */}
       {isHosted && <Route path="/register" element={<Login mode="register" />} />}
@@ -32,10 +40,15 @@ export function AppRoutes() {
           <Route path="/nodes/:id" element={<NodeDetail />} />
           <Route path="/teams" element={<Teams />} />
           <Route path="/preferences" element={<Preferences />} />
+          <Route path="/account" element={<Account />} />
+          {/* The API answers 403 for non-administrators; the nav just doesn't offer it. */}
+          <Route path="/users" element={<Users />} />
           {/* Billing is hosted-edition only (#149) and is not in a community build at
               all (#190) — BILLING_INCLUDED is a compile-time constant, so this whole
               branch disappears from the community bundle. */}
           {BILLING_INCLUDED && isHosted && <Route path="/billing" element={<Billing />} />}
+          {/* The provider's side of billing (#369). The API is the gate; this only keeps it out of a community build. */}
+          {BILLING_INCLUDED && isHosted && <Route path="/customers" element={<Customers />} />}
         </Route>
       </Route>
     </Routes>

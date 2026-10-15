@@ -1,10 +1,19 @@
-import { Router, type Request, type Response } from 'express';
+import { Router, raw, type Request, type Response } from 'express';
 import type { ContainerRuntime } from './runtime.js';
 
 // Internal file-management HTTP for a container (#108), reached only via the
 // Orchestrator's proxy on the private network. Every handler is thin: it turns a
 // request into a ContainerRuntime call and maps failures to 400 (the runtime
 // throws with the container's own error message, e.g. "No such file").
+
+/**
+ * Cap on a single upload. The file is held in memory as a Buffer and again inside
+ * the tar, so an unbounded upload is an out-of-memory crash of the agent.
+ */
+const MAX_UPLOAD_BYTES = process.env.MAX_UPLOAD_BYTES || '64mb';
+
+/** Largest file one raw read may return (#235); it is held in memory whole. */
+const MAX_DOWNLOAD_BYTES = Number(process.env.MAX_DOWNLOAD_BYTES) || 256 * 1024 * 1024;
 
 const fail = (res: Response, err: unknown) =>
   res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
@@ -40,6 +49,43 @@ export function createFileRouter(runtime: ContainerRuntime): Router {
       await runtime.writeFile(req.params.containerId, path, typeof content === 'string' ? content : '');
       res.status(204).end();
     } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  // Create or overwrite a file from raw bytes — the upload path (#263). Reading a
+  // file as text and re-encoding it loses every byte that is not valid UTF-8, so
+  // uploads travel as octet-stream all the way to putArchive.
+  router.put(
+    '/files/:containerId/binary',
+    raw({ type: 'application/octet-stream', limit: MAX_UPLOAD_BYTES }),
+    async (req: Request, res: Response) => {
+      const path = String(req.query.path ?? '');
+      if (!path) return res.status(400).json({ error: 'path is required' });
+      const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      try {
+        await runtime.writeFileBytes(req.params.containerId, path, data);
+        res.status(204).end();
+      } catch (err) {
+        fail(res, err);
+      }
+    }
+  );
+
+  // A file's raw bytes — what SFTP downloads (#235). The text read above turns
+  // anything that is not UTF-8 into replacement characters.
+  router.get('/files/:containerId/binary', async (req: Request, res: Response) => {
+    const path = String(req.query.path ?? '');
+    if (!path) return res.status(400).json({ error: 'path is required' });
+    try {
+      const data = await runtime.readFileBytes(req.params.containerId, path, MAX_DOWNLOAD_BYTES);
+      res.setHeader('content-type', 'application/octet-stream');
+      res.setHeader('content-length', String(data.length));
+      res.end(data);
+    } catch (err) {
+      // Docker answers 404 for a path that is not there — say so, as the SFTP
+      // side needs to tell "no such file" from "something broke".
+      if ((err as { statusCode?: number }).statusCode === 404) return res.status(404).json({ error: `no such file: ${path}` });
       fail(res, err);
     }
   });

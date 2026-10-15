@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { Teams } from './Teams';
 import { ToastProvider } from '../components/Toast';
+import { DialogProvider } from '../components/Dialog';
 
 // The Teams page is driven against a mocked fetch keyed by path, so the tests
 // exercise the real component against realistic responses.
@@ -16,7 +17,9 @@ function renderTeams() {
   return render(
     <MemoryRouter>
       <ToastProvider>
-        <Teams />
+        <DialogProvider>
+          <Teams />
+        </DialogProvider>
       </ToastProvider>
     </MemoryRouter>
   );

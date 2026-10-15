@@ -6,7 +6,12 @@ import type { BillingPlan } from './pricing.js';
 // against an in-memory store in tests and SQLite in production.
 
 export type LedgerType = 'topup' | 'charge';
-export type LedgerStatus = 'pending' | 'confirmed' | 'failed';
+/**
+ * `expired` is a top-up FinVault has not confirmed in time (#298) — shown as
+ * unconfirmed rather than pending forever. It is not final: a confirmation that
+ * arrives later means the money did move, so it is still credited.
+ */
+export type LedgerStatus = 'pending' | 'confirmed' | 'failed' | 'expired';
 export type CycleStatus = 'open' | 'paid' | 'overdue';
 
 /** One runtime interval for a deployment (server_billing): open until stopped. */
@@ -19,6 +24,13 @@ export interface ServerBillingRecord {
   startedAt: string;
   stoppedAt: string | null;
   createdAt: string;
+}
+
+/** What billing knows about a deployment: its owner and its size (#364). */
+export interface BilledDeployment {
+  deploymentId: string;
+  userId: string;
+  limits: ResourceLimits;
 }
 
 /** A user's prepaid credit balance (credit_wallet). */
@@ -39,6 +51,8 @@ export interface CreditLedgerEntry {
   reference: string;
   status: LedgerStatus;
   description: string;
+  /** Why a top-up failed, as FinVault put it (#351); null otherwise. */
+  failureReason: string | null;
   createdAt: string;
 }
 
@@ -84,20 +98,50 @@ export interface CreateCycleInput {
 export interface Repository {
   // Plans
   getUserPlan(userId: string): Promise<BillingPlan>;
+  /** Every plan, retired ones included (#369). */
+  listPlans(): Promise<BillingPlan[]>;
+  getPlan(id: string): Promise<BillingPlan | null>;
+  /** Create the plan, or replace the one with this id. */
+  savePlan(plan: BillingPlan): Promise<BillingPlan>;
+  setUserPlan(userId: string, planId: string): Promise<void>;
+
+  // Deployments billing knows about (#364) — durable, so a restart forgets nothing.
+  saveDeployment(deployment: BilledDeployment): Promise<void>;
+  getDeployment(deploymentId: string): Promise<BilledDeployment | null>;
 
   // Runtime intervals (server_billing)
   openInterval(input: OpenIntervalInput): Promise<ServerBillingRecord>;
+  /** The interval still running for a deployment, if any. */
+  getOpenInterval(deploymentId: string): Promise<ServerBillingRecord | null>;
+  /** The most recent interval of a deployment, open or closed — how a server from before #364 is recognised. */
+  getLastInterval(deploymentId: string): Promise<ServerBillingRecord | null>;
   closeInterval(deploymentId: string, stoppedAt: string): Promise<ServerBillingRecord | null>;
   listIntervals(userId: string): Promise<ServerBillingRecord[]>;
 
   // Wallet
   getWallet(userId: string): Promise<CreditWallet>;
   setBalance(userId: string, balance: number): Promise<CreditWallet>;
+  /** Remember the address this account's top-ups are billed to (#375). */
+  setWalletEmail(userId: string, email: string): Promise<void>;
+  /** That address, or null when the account has never topped up. */
+  getWalletEmail(userId: string): Promise<string | null>;
+  /** When the account was last warned its credit is running low (#379), or null. */
+  getLowCreditWarnedAt(userId: string): Promise<string | null>;
+  setLowCreditWarnedAt(userId: string, at: string | null): Promise<void>;
 
   // Ledger
   createLedgerEntry(input: CreateLedgerInput): Promise<CreditLedgerEntry>;
   getLedgerByReference(reference: string): Promise<CreditLedgerEntry | null>;
   updateLedgerStatus(id: string, status: LedgerStatus): Promise<CreditLedgerEntry | null>;
+  /**
+   * Move an entry to `to` only if it is currently in one of `from` — true when
+   * this call made the change. The guard against crediting one top-up twice when
+   * its confirmation is delivered twice at once (#298). `failureReason` is
+   * recorded with the change when given.
+   */
+  transitionLedgerStatus(id: string, from: LedgerStatus[], to: LedgerStatus, failureReason?: string): Promise<boolean>;
+  /** Top-ups still pending that were requested before `createdBefore`. */
+  listPendingTopUps(createdBefore: string): Promise<CreditLedgerEntry[]>;
   listLedger(userId: string): Promise<CreditLedgerEntry[]>;
 
   // Cycles

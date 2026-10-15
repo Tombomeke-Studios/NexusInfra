@@ -2,23 +2,41 @@ import { createServer } from 'http';
 import express from 'express';
 import cors from 'cors';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
-import { assertEditionIsRunnable, buildEnvelope, buildInfo, consumeRabbitQueue, getInternalToken, INTERNAL_TOKEN_HEADER, publishRabbitEvent, readPayload, startHeartbeat, type EventEnvelope } from 'shared';
+import { assertEditionIsRunnable, buildEnvelope, buildInfo, consumeRabbitQueue, getInternalToken, isHosted, INTERNAL_TOKEN_HEADER, publishRabbitEvent, readPayload, startHeartbeat, type EventEnvelope, MetricsRegistry, registerBuildInfo, httpMetrics, metricsHandler } from 'shared';
 import { PrismaRepository } from './db.js';
 import { agentFetch, createApiRouter, resolveContainerTarget } from './api.js';
+import { catchAsync, errorHandler, installProcessGuards } from './errorBoundary.js';
 import { resolveAgentUrl } from './agentUrl.js';
 import { verifyToken } from './auth.js';
 import { can, resolveRole } from './access.js';
 import { pipeSockets, toWsUrl, type DuplexSocket } from './wsProxy.js';
 import { createBillingProxyRouter } from './billingProxy.js';
+import { createBillingPlansRouter } from './billingPlans.js';
 import { createMonitoringRouter } from './monitoring.js';
 import { createConfigRouter } from './config.js';
-import { createAccountRouter, createAuthRouter, createUserAdminRouter, requireAuth } from './auth.js';
-import { createUserService } from './users.js';
+import { createSftpServer, parseSftpPort } from './sftp.js';
+import { createAgentSftpFiles, createSftpAuthenticator, loadOrCreateHostKey } from './sftpBackend.js';
+import { createLoginLimiter } from './loginLimiter.js';
+import { createPasswordResetRouter, parsePanelUrl, resetAvailable } from './passwordReset.js';
+import { createEmailVerification, topUpProblem } from './emailVerification.js';
+import { createAccountRouter, createAuthRouter, createRequireAuth, createUserAdminRouter, requireTokenScope, requireTotpEnrolment } from './auth.js';
+import { createUserService, isTotpRequired } from './users.js';
 import { createTeamRouter } from './teams.js';
 import { createNodeRegistry } from './nodeRegistry.js';
 import { createLifecycle } from './lifecycle.js';
+import { createNotifier, defaultTransports } from './notifier.js';
+import { createNotificationRouter } from './notificationRoutes.js';
+import { nodeTransitions } from './notify.js';
+import { nodeHealth } from './nodeRegistry.js';
+import type { NodeHealth } from './types.js';
 import { createSuspendHandler, type SuspendPayload } from './suspend.js';
+import { creditLowSummary } from './credit.js';
 import { startScheduler, type ScheduleActions } from './scheduler.js';
+import { requestImageUpdate } from './imageUpdate.js';
+import { backfillPortAllocations } from './portAllocation.js';
+import { BackupPathMissingError, sweepRetention, takeBackup, type BackupDeps, type Snapshot } from './backups.js';
+import { fetchEntitlements } from './entitlements.js';
+import { createReconcileHandler } from './reconcile.js';
 
 // ── Orchestrator ────────────────────────────────────────────────────────────
 // Turns deployment requests into running containers. It keeps a node registry
@@ -36,10 +54,42 @@ try {
   process.exit(1);
 }
 
+// Nothing below should be able to end the process by rejecting (#294). Installed
+// before anything starts, so a failure during wiring is logged rather than fatal.
+installProcessGuards();
+
 const PORT = Number(process.env.PORT) || 9200;
 const NODE_AGENT_URL = process.env.NODE_AGENT_URL || 'http://node-agent:9100';
 
 const repo = new PrismaRepository();
+
+// Prometheus metrics (#246). Created first: the publishers and consumers below
+// count into it.
+const metrics = new MetricsRegistry();
+registerBuildInfo(metrics, 'orchestrator', buildInfo());
+const published = metrics.counter('nexusinfra_events_published_total', 'Events this service published, by routing key and outcome.');
+const reports = metrics.counter('nexusinfra_lifecycle_reports_total', 'Lifecycle reports received from node agents, by type.');
+const notificationOutcomes = metrics.counter('nexusinfra_notifications_total', 'Notification delivery attempts, by outcome and channel kind (#236).');
+/** publishRabbitEvent, counted: a publish that returns false is an event the broker never took. */
+const countedPublish: typeof publishRabbitEvent = async (routingKey, envelope) => {
+  const ok = await publishRabbitEvent(routingKey, envelope);
+  published.inc({ routing_key: routingKey, outcome: ok ? 'ok' : 'failed' });
+  return ok;
+};
+metrics.gauge('nexusinfra_deployments', 'Servers, by status.', ['status'], async () => {
+  const counts: Record<string, number> = { pending: 0, running: 0, stopped: 0, crashed: 0, failed: 0 };
+  for (const d of await repo.listDeployments()) counts[d.status] = (counts[d.status] ?? 0) + 1;
+  return Object.entries(counts).map(([status, value]) => ({ labels: { status }, value }));
+});
+metrics.gauge('nexusinfra_nodes', 'Nodes, by health; draining nodes counted separately.', ['health'], async () => {
+  const counts: Record<string, number> = { healthy: 0, degraded: 0, offline: 0, maintenance: 0 };
+  const now = Date.now();
+  for (const n of await repo.listNodes()) {
+    counts[nodeHealth(n, now)]++;
+    if (n.maintenance) counts.maintenance++;
+  }
+  return Object.entries(counts).map(([health, value]) => ({ labels: { health }, value }));
+});
 
 /** Base URL of the agent owning `nodeId`, falling back to the single-node default (#171). */
 async function agentUrlFor(nodeId: string | null): Promise<string> {
@@ -50,52 +100,157 @@ async function agentUrlFor(nodeId: string | null): Promise<string> {
 
 const users = createUserService({ repo });
 const registry = createNodeRegistry(repo);
-const lifecycle = createLifecycle(repo);
-const suspend = createSuspendHandler({ repo });
+const reconcile = createReconcileHandler({ repo, publish: countedPublish });
+// Notifications (#236): channels per account, durable deliveries, retried until
+// they land. Email is on when SMTP_URL is set.
+const transports = defaultTransports(process.env.SMTP_URL, process.env.SMTP_FROM || 'NexusInfra <nexusinfra@localhost>');
+const notifier = createNotifier({
+  repo,
+  transports,
+  emailEnabled: Boolean(process.env.SMTP_URL),
+  onOutcome: (outcome, kind) => notificationOutcomes.inc({ outcome, kind }),
+});
+const lifecycle = createLifecycle(repo, {
+  onCrashed: (deploymentId, reason) =>
+    void notifier.notifyServer(deploymentId, { event: 'server.crashed', summary: `crashed: ${reason}`, details: { reason } }).then(() => undefined),
+});
+const suspend = createSuspendHandler({
+  repo,
+  onSuspended: (deploymentId, reason) =>
+    void notifier.notifyServer(deploymentId, { event: 'server.suspended', summary: `was suspended: ${reason}`, details: { reason } }).then(() => undefined),
+});
 
 // Actions the schedule runner (#111) performs for a due schedule: restart the
 // server (over the bus) or snapshot a backup (via the owning node agent).
+// What backups need from the outside world (#232) — the owning node's agent.
+const backupDeps: BackupDeps = {
+  repo,
+  agentUrlFor,
+  // The plan's ceiling on backups per server (#297); none in community.
+  async backupCeiling(userId) {
+    return (await fetchEntitlements(userId))?.maxBackupsPerServer ?? null;
+  },
+  async snapshot({ agentUrl, ...spec }) {
+    const r = await agentFetch(`${agentUrl}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(spec) });
+    if (r.status === 404) throw new BackupPathMissingError(((await r.json().catch(() => ({}))) as { error?: string }).error ?? 'nothing to back up at that path');
+    if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? 'backup failed');
+    return (await r.json()) as Snapshot;
+  },
+  async remove(agentUrl, ref) {
+    const r = await agentFetch(`${agentUrl}/backups/${ref}`, { method: 'DELETE' });
+    if (!r.ok && r.status !== 404) throw new Error(`the node refused to delete backup ${ref} (${r.status})`);
+  },
+};
+
 const scheduleActions: ScheduleActions = {
   async restart(deploymentId) {
     const detail = await repo.getDeployment(deploymentId);
-    if (!detail?.containerId || !detail.nodeId) return;
-    await publishRabbitEvent(
+    // Status too: a row stopped before #321 still names a removed container.
+    if (detail?.status !== 'running' || !detail.containerId || !detail.nodeId) return;
+    await countedPublish(
       'infra.server.restart',
       buildEnvelope('orchestrator', { type: 'server.restart', payload: { deploymentId: detail.id, nodeId: detail.nodeId, containerId: detail.containerId } })
     );
     await repo.appendDeploymentEvent(detail.id, 'schedule-restart', 'restarted by schedule');
   },
+  async update(deploymentId) {
+    const outcome = await requestImageUpdate({ repo, publish: countedPublish }, deploymentId, 'schedule');
+    if (outcome.status >= 300) throw new Error(outcome.body.error ?? 'scheduled update failed');
+  },
   async backup(deploymentId) {
-    const detail = await repo.getDeployment(deploymentId);
-    if (!detail?.containerId) return;
-    const r = await agentFetch(`${await agentUrlFor(detail.nodeId)}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ containerId: detail.containerId }) });
-    if (!r.ok) throw new Error('scheduled backup failed');
-    const snap = (await r.json()) as { ref: string; sizeBytes: number; path: string };
-    await repo.createBackup({ deploymentId: detail.id, name: `backup-${new Date().toISOString().replace(/[:.]/g, '-')}`, path: snap.path, ref: snap.ref, sizeBytes: snap.sizeBytes });
-    await repo.appendDeploymentEvent(detail.id, 'schedule-backup', 'snapshot created by schedule');
+    // The same path as the Backups tab (#232): default data directory,
+    // off-site copy, then retention.
+    const outcome = await takeBackup(backupDeps, deploymentId, { by: 'schedule' });
+    if (!outcome.ok && outcome.status !== 409) throw new Error(`scheduled backup failed: ${outcome.error}`);
   },
 };
 
 // ── HTTP: API + health probe ──────────────────────────────────────────────────
 const app = express();
+/**
+ * Trust the proxy in front of us for the caller's address (#245).
+ *
+ * Rate limiting (#225) keys on `req.ip`, and behind a proxy every request appears
+ * to come from the proxy — one address carrying everyone's budget, so a handful of
+ * failures would lock out the whole installation together.
+ *
+ * Off by default, and it has to be: `X-Forwarded-For` is an ordinary request
+ * header. If the orchestrator is reachable directly, trusting it lets a caller
+ * pick which bucket to spend and defeats the limiter entirely. Turn it on only
+ * when nothing but the proxy can reach this process.
+ */
+if (process.env.TRUST_PROXY && process.env.TRUST_PROXY !== '0') {
+  // A number counts hops back from this process; the docs' single reverse proxy
+  // is 1. Anything else is passed to Express as-is (an IP, a subnet, 'loopback').
+  const value = process.env.TRUST_PROXY.trim();
+  app.set('trust proxy', /^\d+$/.test(value) ? Number(value) : value);
+}
+
+app.use(httpMetrics(metrics, 'orchestrator'));
 app.use(cors());
 app.use(express.json());
+// Aggregates only — no names, no ids. Behind METRICS_TOKEN when set, which it
+// should be: the dashboard's /api proxy makes this path public.
+app.get('/metrics', metricsHandler(metrics));
 app.get('/health', (_req, res) => {
   res.json({ service: 'orchestrator', status: 'healthy', ...buildInfo(), uptimeSec: Math.round(process.uptime()) });
 });
+// Self-service password reset (#344): only with mail *and* a known public
+// address — the link is never built from the request's Host header.
+const panelUrl = parsePanelUrl(process.env.PANEL_URL);
+if (process.env.PANEL_URL && !panelUrl) console.warn('[Orchestrator] PANEL_URL is not an http(s) address; password reset by email is off');
+const passwordReset = { repo, users, panelUrl, sendMail: process.env.SMTP_URL ? transports.mail : null };
 // Public runtime config (edition flag) — read by the dashboard before login.
-app.use(createConfigRouter());
+// SFTP (#235) is off unless SFTP_PORT is set. SFTP_PUBLIC_PORT is what the panel
+// tells people to connect to, when a port mapping makes it differ.
+const sftpPort = parseSftpPort(process.env.SFTP_PORT);
+const sftpPublicPort = parseSftpPort(process.env.SFTP_PUBLIC_PORT) ?? sftpPort;
+// Confirming an address (#367) needs the same two things; without them it is not
+// offered and nothing waits on it.
+const emailVerification = createEmailVerification({ repo, panelUrl, sendMail: passwordReset.sendMail });
+app.use(catchAsync(createConfigRouter(undefined, { passwordResetByEmail: resetAvailable(passwordReset), sftpPort: sftpPublicPort, emailVerification: emailVerification.available })));
+app.use(catchAsync(emailVerification.publicRouter()));
+// Public, like login: somebody who forgot their password has no token.
+app.use(catchAsync(createPasswordResetRouter(passwordReset)));
 // Public login/registration, then everything below requires a valid Bearer token.
-app.use(createAuthRouter({ users }));
-app.use(requireAuth);
-app.use(createAccountRouter({ users, repo }));
-app.use(createUserAdminRouter({ users, repo }));
-app.use(createTeamRouter({ repo }));
-app.use(createApiRouter({ repo, scheduleActions }));
+// One login budget for the panel and SFTP: two doors to the same passwords must
+// not give a guesser two budgets (#225, #235).
+const loginLimiter = createLoginLimiter();
+app.use(catchAsync(createAuthRouter({ users, repo, loginLimiter, onRegistered: (user) => emailVerification.sendAfterSignup(user) })));
+// Session-aware (#227): a valid signature is not enough, the session it names
+// must still exist — which is what makes signing out actually sign you out.
+app.use(createRequireAuth({ repo }));
+// Holds an API token to its scopes (#228). Mounted once, above every route, and
+// scoped by method rather than by a path table — a route added tomorrow is
+// covered without anyone remembering to add it. A person signing in has no
+// scopes and passes straight through.
+app.use(requireTokenScope);
+// Where this installation requires a second factor, an account that has not
+// enrolled can reach enrolment and nothing else (#229). Refusing to sign them
+// in instead would lock out everyone the moment the flag was turned on.
+app.use(requireTotpEnrolment);
+app.use(catchAsync(createAccountRouter({ users, repo })));
+app.use(catchAsync(emailVerification.accountRouter()));
+app.use(catchAsync(createNotificationRouter({ repo, notifier })));
+app.use(catchAsync(createUserAdminRouter({ users, repo })));
+app.use(catchAsync(createTeamRouter({ repo })));
+app.use(catchAsync(createApiRouter({ repo, scheduleActions, publish: countedPublish })));
 // Authenticated billing proxy → Billing Bridge (hosted edition; injects the JWT user id).
-app.use(createBillingProxyRouter());
+app.use(
+  catchAsync(
+    createBillingProxyRouter({
+      emailOf: async (userId) => (await repo.getUser(userId))?.email ?? null,
+      topUpProblem: async (userId) => topUpProblem(await repo.getUser(userId), emailVerification.available),
+    })
+  )
+);
+// Plans a customer picks from, and the provider's view of accounts (#369). Hosted only:
+// in community there is no bridge to ask, and no reason for the routes to exist.
+if (isHosted()) app.use(catchAsync(createBillingPlansRouter({ repo })));
 // Surfaces the Control Room's live service/node monitoring to the dashboard (#157).
-app.use(createMonitoringRouter());
+app.use(catchAsync(createMonitoringRouter()));
+// Last: turns anything the routes threw into a 500 for that caller only (#294).
+app.use(errorHandler);
 
 // ── WebSocket: interactive terminal proxy (#71) ───────────────────────────────
 // The dashboard opens ws://…/deployments/:id/terminal?token=<jwt>. We validate the
@@ -123,6 +278,11 @@ server.on('upgrade', async (req, socket, head) => {
 
   // Authentication: the JWT rides as a query param (browsers can't set WS
   // headers on the handshake).
+  //
+  // Only a JWT. An API token (#228) is not accepted here and is not meant to be:
+  // this opens an interactive root shell, the method-based scope rule would read
+  // the upgrade as a safe GET, and a script has `POST /exec` for the thing it
+  // actually needs.
   const token = url.searchParams.get('token');
   if (!token) return socket.destroy();
   let principal;
@@ -131,6 +291,11 @@ server.on('upgrade', async (req, socket, head) => {
   } catch {
     return socket.destroy();
   }
+
+  // A second factor, where the installation requires one (#229). This is the
+  // most dangerous surface in the panel — a root shell — so it is not a place to
+  // honour a token minted before the code was ever asked for.
+  if (isTotpRequired() && principal.mfa !== true) return socket.destroy();
 
   const detail = await repo.getDeployment(match[1]);
   const target = resolveContainerTarget(detail);
@@ -164,6 +329,19 @@ server.on('upgrade', async (req, socket, head) => {
 
 server.listen(PORT, () => console.log(`[Orchestrator] HTTP + WS listening on http://localhost:${PORT}`));
 
+// ── SFTP (#235) ───────────────────────────────────────────────────────────────
+if (sftpPort) {
+  const sftp = createSftpServer({
+    hostKey: loadOrCreateHostKey(process.env.SFTP_HOST_KEY_PATH || './data/sftp_host_ed25519_key'),
+    authenticate: createSftpAuthenticator({ repo, users, limiter: loginLimiter, totpRequired: isTotpRequired }),
+    filesFor: (identity) => createAgentSftpFiles({ repo, agentUrlFor, agentFetch }, identity),
+    onLogin: (identity, ip) => {
+      void repo.appendDeploymentEvent(identity.deploymentId, 'sftp-login', `SFTP session opened by ${identity.email} from ${ip}`).catch(() => undefined);
+    },
+  });
+  sftp.listen(sftpPort, '0.0.0.0', () => console.log(`[Orchestrator] SFTP listening on port ${sftpPort}`));
+}
+
 // ── First-run bootstrap ───────────────────────────────────────────────────────
 // Make sure there is always exactly one way in on a fresh install, and repair the
 // backfilled owner (which has no usable password) on an upgraded one.
@@ -184,6 +362,37 @@ void users
 
 // Evaluate schedules once a minute (restart/backup on a cron).
 startScheduler(repo, scheduleActions);
+
+// Deliver what is due, and retry what failed (#236).
+setInterval(() => void notifier.drain().catch((err) => console.warn('[Orchestrator] notification delivery:', err)), 15_000).unref();
+
+// Watch the fleet for nodes going offline and coming back (#236). The first look
+// only records, so an orchestrator restart does not announce every offline node.
+let nodeStates = new Map<string, NodeHealth>();
+setInterval(() => {
+  void repo
+    .listNodes()
+    .then(async (nodes) => {
+      const { changes, next } = nodeTransitions(nodeStates, nodes, Date.now());
+      nodeStates = next;
+      for (const c of changes) {
+        await notifier.notifyAdmins({
+          event: c.to === 'offline' ? 'node.offline' : 'node.recovered',
+          summary: c.to === 'offline' ? `Node ${c.name} is offline — its servers are unreachable` : `Node ${c.name} is back online`,
+          node: { id: c.nodeId, name: c.name },
+        });
+      }
+    })
+    .catch(() => undefined);
+}, 5_000).unref();
+// Servers from before #233 hold ports nothing recorded; record them once, so the
+// conflict check knows about them.
+void backfillPortAllocations(repo)
+  .then((n) => n && console.log(`[Orchestrator] Recorded ${n} host port${n === 1 ? '' : 's'} held by existing servers (#233)`))
+  .catch((err) => console.warn('[Orchestrator] Could not backfill port allocations:', err));
+// A "keep 30 days" policy has to expire backups even when none are being made
+// (#232). Hourly is plenty for a policy measured in days.
+setInterval(() => void sweepRetention(backupDeps, new Date()).catch(() => undefined), 60 * 60 * 1000).unref();
 console.log('[Orchestrator] Schedule runner started (1-minute tick)');
 
 // ── Event bus: node heartbeats + server lifecycle reports ─────────────────────
@@ -191,18 +400,40 @@ async function start() {
   try {
     await consumeRabbitQueue(
       'nexusinfra.orchestrator',
-      ['monitoring.heartbeat.node.#', 'infra.server.started', 'infra.server.stopped', 'infra.server.crashed', 'billing.server.suspend'],
+      [
+        'monitoring.heartbeat.node.#',
+        'infra.server.started',
+        'infra.server.stopped',
+        'infra.server.crashed',
+        // Image updates (#239): what was pulled, or why it could not be.
+        'infra.server.image-updated',
+        'infra.server.update-failed',
+        // What a node reports when its agent restarts, so our records stop
+        // describing a machine that no longer matches (#244).
+        'infra.node.inventory',
+        'billing.server.suspend',
+        // The Billing Bridge's warning that an account's credit is running low (#379).
+        'billing.credit.low',
+      ],
       async (envelope: EventEnvelope) => {
         if (envelope.event.type === 'heartbeat.node') {
           await registry.handleHeartbeat(envelope);
+        } else if (envelope.event.type === 'node.inventory') {
+          await reconcile(envelope);
         } else if (envelope.event.type === 'billing.server.suspend') {
           await suspend(readPayload(envelope.event) as unknown as SuspendPayload);
+        } else if (envelope.event.type === 'billing.credit.low') {
+          // Only the hosted edition has credit; a community stack never offers the event.
+          if (!isHosted()) return;
+          const low = readPayload(envelope.event) as { userId: string; hoursLeft: number; available: number; currency: string };
+          await notifier.notifyAccount(low.userId, { event: 'credit.low', summary: creditLowSummary(low), details: { hoursLeft: low.hoursLeft, available: low.available, currency: low.currency } });
         } else {
+          reports.inc({ type: envelope.event.type });
           await lifecycle.handleReport(envelope);
         }
       }
     );
-    console.log('[Orchestrator] Consuming node heartbeats + server lifecycle reports');
+    console.log('[Orchestrator] Consuming node heartbeats + server lifecycle reports + node inventories');
 
     startHeartbeat('orchestrator', 1000);
     console.log('[Orchestrator] Publishing heartbeat on monitoring.heartbeat.service.orchestrator');

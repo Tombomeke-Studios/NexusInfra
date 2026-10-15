@@ -1,14 +1,15 @@
+import { createServer } from 'node:http';
 import { assertEditionIsRunnable, startHeartbeat } from 'shared';
-import { createGatewayApp } from './gateway.js';
+import { createGateway } from './gateway.js';
 import { defaultRoutes } from './routes.js';
 import { RateLimiter } from './rateLimit.js';
 
 // ── API Gateway (#20) ─────────────────────────────────────────────────────────
 // Single external entry point for client traffic: CORS, per-client rate limiting,
-// JWT validation on protected routes, and a reverse proxy to the backend
+// token validation on protected routes, and a reverse proxy to the backend
 // (currently the Orchestrator, which itself fronts Billing Bridge + Control Room).
-// The WebSocket proxy for the interactive terminal (#69/#71) lands once that WS
-// backend exists; the HTTP path is here now.
+// Responses stream (live logs and stats are server-sent events), and WebSocket
+// upgrades — the interactive terminal — go through the same gate (#69).
 
 // Refuse to run this image as an edition it was not built for (#189).
 try {
@@ -23,12 +24,14 @@ const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || 'http://orchestrator:92
 const RATE_PER_SEC = Number(process.env.RATE_LIMIT_PER_SEC) || 50;
 const RATE_BURST = Number(process.env.RATE_LIMIT_BURST) || 100;
 
-const app = createGatewayApp({
+const { app, upgrade } = createGateway({
   routes: defaultRoutes(ORCHESTRATOR_URL),
   rateLimiter: new RateLimiter({ ratePerSec: RATE_PER_SEC, burst: RATE_BURST }),
 });
 
-app.listen(PORT, () => console.log(`[Gateway] Listening on http://localhost:${PORT} → ${ORCHESTRATOR_URL}`));
+const server = createServer(app);
+server.on('upgrade', upgrade);
+server.listen(PORT, () => console.log(`[Gateway] Listening on http://localhost:${PORT} → ${ORCHESTRATOR_URL}`));
 
 // Announce liveness on the shared bus so the Control Room sees the gateway too.
 try {

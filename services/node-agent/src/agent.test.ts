@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { buildEnvelope, type EventEnvelope, type NexusInfraEvent } from 'shared';
 import { createAgent } from './agent.js';
 import type { ContainerRuntime, NodeResources, StartSpec } from './runtime.js';
@@ -12,13 +12,51 @@ class FakeRuntime implements ContainerRuntime {
   lastStartSpec: StartSpec | null = null;
   async start(spec: StartSpec): Promise<string> {
     this.calls.push(`start:${spec.dockerImage}`);
+    this.lastSpec = spec;
     this.lastStartSpec = spec;
     if (this.failOn === 'start') throw new Error('image pull failed');
     return this.nextContainerId;
   }
+  lastSpec: unknown = null;
+  managed: { containerId: string; running: boolean }[] = [];
+  async listManaged(): Promise<{ containerId: string; running: boolean }[]> {
+    this.calls.push('listManaged');
+    return this.managed;
+  }
   async stop(containerId: string): Promise<void> {
     this.calls.push(`stop:${containerId}`);
     if (this.failOn === 'stop') throw new Error('no such container');
+  }
+  async kill(containerId: string): Promise<void> {
+    this.calls.push(`kill:${containerId}`);
+    if (this.failOn === 'kill') throw new Error('no such container');
+  }
+  async listDeploymentVolumes() {
+    return [];
+  }
+  async exportVolume(): Promise<NodeJS.ReadableStream> {
+    throw new Error('not in this test');
+  }
+  async importVolume(): Promise<void> {}
+  async removeDeploymentVolume(): Promise<void> {}
+  pulls: string[] = [];
+  async pullImage(image: string): Promise<{ imageId: string; digest: string | null }> {
+    this.calls.push(`pull:${image}`);
+    if (this.failOn === 'pull') throw new Error('manifest unknown');
+    return { imageId: 'img-new', digest: 'sha256:new' };
+  }
+  async imageFacts(image: string): Promise<import('./images.js').ImageFacts> {
+    return { image, remoteDigest: null, localRepoDigests: [], localImageId: null, containerImageId: null };
+  }
+  inspected = new Map<string, { running: boolean; exitCode: number; oomKilled: boolean } | null>();
+  async inspectContainer(id: string) {
+    return this.inspected.has(id) ? this.inspected.get(id)! : null;
+  }
+  watchContainers(): () => void {
+    return () => {};
+  }
+  async purgeDeployment(): Promise<{ containers: number; volumes: number }> {
+    return { containers: 0, volumes: 0 };
   }
   async restart(containerId: string): Promise<void> {
     this.calls.push(`restart:${containerId}`);
@@ -57,16 +95,19 @@ class FakeRuntime implements ContainerRuntime {
 
 const NODE_ID = 'node-1';
 
-function makeAgent() {
+function makeAgent(overrides: Partial<Parameters<typeof createAgent>[0]> = {}) {
   const runtime = new FakeRuntime();
   const published: Array<{ key: string; envelope: EventEnvelope }> = [];
   const agent = createAgent({
     nodeId: NODE_ID,
     runtime,
+    // No waiting in tests: the fake's inspect answers at once.
+    settleMs: 0,
     publish: async (key, envelope) => {
       published.push({ key, envelope });
       return true;
     },
+    ...overrides,
   });
   return { runtime, published, agent };
 }
@@ -94,6 +135,21 @@ describe('Node Agent command handling', () => {
     expect(published[0].envelope.event.type).toBe('server.started');
     expect((published[0].envelope.event.payload as any).containerId).toBe('container-xyz');
     expect((published[0].envelope.event.payload as any).nodeId).toBe(NODE_ID);
+  });
+
+  it('names the server and its persistent directories on the start spec (#324)', async () => {
+    const { runtime, agent } = makeAgent();
+    await agent.handleCommand(
+      cmd({ type: 'server.start', payload: { deploymentId: 'd-1', nodeId: NODE_ID, dockerImage: 'nginx', persistPaths: ['/data'] } })
+    );
+    expect(runtime.lastStartSpec?.deploymentId).toBe('d-1');
+    expect(runtime.lastStartSpec?.persistPaths).toEqual(['/data']);
+  });
+
+  it('starts with no extra directories when an older orchestrator sends none', async () => {
+    const { runtime, agent } = makeAgent();
+    await agent.handleCommand(cmd({ type: 'server.start', payload: { deploymentId: 'd-1', nodeId: NODE_ID, dockerImage: 'nginx' } }));
+    expect(runtime.lastStartSpec?.persistPaths).toEqual([]);
   });
 
   it('forwards the resource limits from the command to the runtime start spec (#107)', async () => {
@@ -135,6 +191,122 @@ describe('Node Agent command handling', () => {
     expect((published[0].envelope.event.payload as any).containerId).toBe('c-9');
   });
 
+  // Kill is a force-terminate for a container that ignores a graceful stop (#253).
+  // It reports the same server.stopped, because the outcome is the same: not running.
+  // Importing an existing directory bind-mounts it into the container (#268).
+  // The node re-checks the path even though the orchestrator already asked it to:
+  // the event crosses a broker and the failure mode is a host takeover.
+  describe('an imported data directory', () => {
+    it('mounts the resolved path', async () => {
+      const { runtime, agent } = makeAgent({ resolveMount: async () => '/mnt/data/import/mc' });
+      await agent.handleCommand(
+        cmd({
+          type: 'server.start',
+          payload: {
+            deploymentId: 'd-1',
+            nodeId: NODE_ID,
+            dockerImage: 'itzg/minecraft-server',
+            dataMount: { hostPath: '/srv/import/mc', containerPath: '/data' },
+          },
+        } as never)
+      );
+
+      expect((runtime.lastSpec as { dataMount?: unknown }).dataMount).toEqual({
+        // The *resolved* path is mounted, not the one that was asked for.
+        hostPath: '/mnt/data/import/mc',
+        containerPath: '/data',
+      });
+    });
+
+    it('refuses to start when the node rejects the path', async () => {
+      const { runtime, published, agent } = makeAgent({
+        resolveMount: async () => {
+          throw new Error('/etc is outside the import root /srv/import');
+        },
+      });
+      await agent.handleCommand(
+        cmd({
+          type: 'server.start',
+          payload: { deploymentId: 'd-1', nodeId: NODE_ID, dockerImage: 'nginx', dataMount: { hostPath: '/etc', containerPath: '/data' } },
+        } as never)
+      );
+
+      // Nothing started, and the reason is reported rather than swallowed.
+      expect(runtime.calls).toEqual([]);
+      expect(published[0].key).toBe('infra.server.crashed');
+      expect((published[0].envelope.event.payload as any).reason).toMatch(/outside the import root/);
+    });
+
+    it('starts normally when no directory is imported', async () => {
+      const { runtime, agent } = makeAgent();
+      await agent.handleCommand(
+        cmd({ type: 'server.start', payload: { deploymentId: 'd-1', nodeId: NODE_ID, dockerImage: 'nginx' } })
+      );
+      expect((runtime.lastSpec as { dataMount?: unknown }).dataMount).toBeUndefined();
+    });
+  });
+
+  // A crashed agent comes back with no memory of what it was doing, so it says
+  // what Docker can see and lets the orchestrator reconcile it (#244).
+  describe('reporting an inventory at startup', () => {
+    it('publishes what this node is actually running', async () => {
+      const { runtime, published, agent } = makeAgent();
+      runtime.managed = [
+        { containerId: 'c1', running: true },
+        { containerId: 'c2', running: false },
+      ];
+
+      await agent.reportInventory();
+
+      expect(published[0].key).toBe('infra.node.inventory');
+      const payload = published[0].envelope.event.payload as any;
+      expect(payload.nodeId).toBe(NODE_ID);
+      expect(payload.containers).toEqual(runtime.managed);
+    });
+
+    it('reports an empty node rather than staying silent', async () => {
+      // Silence and "nothing is running" mean very different things to the
+      // orchestrator; only one of them resolves a server stuck at 'running'.
+      const { published, agent } = makeAgent();
+      await agent.reportInventory();
+      expect((published[0].envelope.event.payload as any).containers).toEqual([]);
+    });
+
+    it('survives a runtime that cannot be introspected', async () => {
+      // An agent that cannot list containers must still serve commands.
+      const { runtime, published, agent } = makeAgent();
+      runtime.listManaged = async () => {
+        throw new Error('docker unreachable');
+      };
+
+      await expect(agent.reportInventory()).resolves.toBeUndefined();
+      expect(published).toHaveLength(0);
+    });
+  });
+
+  it('kills a container and reports server.stopped', async () => {
+    const { runtime, published, agent } = makeAgent();
+    await agent.handleCommand(
+      cmd({ type: 'server.kill', payload: { deploymentId: 'd-1', nodeId: NODE_ID, containerId: 'c-9' } })
+    );
+
+    expect(runtime.calls).toEqual(['kill:c-9']);
+    expect(published[0].key).toBe('infra.server.stopped');
+    expect((published[0].envelope.event.payload as any).containerId).toBe('c-9');
+  });
+
+  it('reports server.crashed when a kill fails', async () => {
+    const { runtime, published, agent } = makeAgent();
+    runtime.failOn = 'kill';
+    await agent.handleCommand(
+      cmd({ type: 'server.kill', payload: { deploymentId: 'd-1', nodeId: NODE_ID, containerId: 'gone' } })
+    );
+
+    expect(published[0].key).toBe('infra.server.crashed');
+    expect((published[0].envelope.event.payload as any).reason).toBe('no such container');
+    expect(runtime.calls).toEqual(['kill:gone']);
+  });
+
   it('restarts a container and reports server.started', async () => {
     const { runtime, published, agent } = makeAgent();
     await agent.handleCommand(
@@ -168,5 +340,148 @@ describe('Node Agent command handling', () => {
     await agent.handleCommand(envelope);
     expect(runtime.calls).toEqual(['stop:c-enc']);
     expect(published[0].key).toBe('infra.server.stopped');
+  });
+
+  describe('server.update (#239)', () => {
+    const update = (recreate: boolean) =>
+      cmd({
+        type: 'server.update',
+        payload: { deploymentId: 'd-1', nodeId: NODE_ID, dockerImage: 'nginx:alpine', containerName: 'nexus-web-d1', persistPaths: ['/data'], recreate },
+      });
+
+    it('pulls, recreates from the new image, and reports both', async () => {
+      const { runtime, published, agent } = makeAgent();
+      await agent.handleCommand(update(true));
+
+      expect(runtime.calls).toEqual(['pull:nginx:alpine', 'start:nginx:alpine']);
+      // The new container keeps the server's volumes (#324).
+      expect(runtime.lastStartSpec?.persistPaths).toEqual(['/data']);
+      expect(published.map((p) => p.key)).toEqual(['infra.server.started', 'infra.server.image-updated']);
+      expect(published[1].envelope.event.payload).toMatchObject({ deploymentId: 'd-1', digest: 'sha256:new', recreated: true });
+    });
+
+    it('only pulls for a server that is not running', async () => {
+      const { runtime, published, agent } = makeAgent();
+      await agent.handleCommand(update(false));
+
+      expect(runtime.calls).toEqual(['pull:nginx:alpine']);
+      expect(published.map((p) => p.key)).toEqual(['infra.server.image-updated']);
+    });
+
+    it('leaves a running server untouched when the pull fails', async () => {
+      const { runtime, published, agent } = makeAgent();
+      runtime.failOn = 'pull';
+      await agent.handleCommand(update(true));
+
+      expect(runtime.calls).toEqual(['pull:nginx:alpine']);
+      expect(published.map((p) => p.key)).toEqual(['infra.server.update-failed']);
+      expect(published[0].envelope.event.payload).toMatchObject({ reason: 'manifest unknown' });
+    });
+
+    it('reports a crash when the new container will not start', async () => {
+      const { runtime, published, agent } = makeAgent();
+      runtime.failOn = 'start';
+      await agent.handleCommand(update(true));
+      expect(published.map((p) => p.key)).toEqual(['infra.server.crashed']);
+    });
+
+    it('ignores an update for another node', async () => {
+      const { runtime, agent } = makeAgent();
+      await agent.handleCommand(cmd({ type: 'server.update', payload: { deploymentId: 'd-1', nodeId: 'elsewhere', dockerImage: 'nginx', recreate: true } }));
+      expect(runtime.calls).toEqual([]);
+    });
+  });
+
+  describe('containers that stop on their own (#332)', () => {
+    const die = (containerId: string, exitCode: number, deploymentId: string | null = 'd-1') => ({ action: 'die' as const, containerId, deploymentId, exitCode });
+
+    it('reports a crash, with the exit code, when nothing asked the container to stop', async () => {
+      const { runtime, published, agent } = makeAgent();
+      runtime.inspected.set('c1', { running: false, exitCode: 137, oomKilled: false });
+      await agent.handleContainerEvent(die('c1', 137));
+
+      expect(published.map((p) => p.key)).toEqual(['infra.server.crashed']);
+      expect(published[0].envelope.event.payload).toMatchObject({ deploymentId: 'd-1', containerId: 'c1', reason: 'exited with code 137' });
+    });
+
+    it('says when the OOM killer did it — the reason is the fix', async () => {
+      const { runtime, published, agent } = makeAgent();
+      runtime.inspected.set('c1', { running: false, exitCode: 137, oomKilled: true });
+      await agent.handleContainerEvent(die('c1', 137));
+      expect((published[0].envelope.event.payload as { reason: string }).reason).toMatch(/out of memory/);
+    });
+
+    it('reports a clean exit as stopped, not crashed', async () => {
+      const { runtime, published, agent } = makeAgent();
+      runtime.inspected.set('c1', { running: false, exitCode: 0, oomKilled: false });
+      await agent.handleContainerEvent(die('c1', 0));
+      expect(published.map((p) => p.key)).toEqual(['infra.server.stopped']);
+    });
+
+    it('ignores a container the agent removed itself — a stop, a kill, a recreate', async () => {
+      const { published, agent } = makeAgent();
+      await agent.handleContainerEvent(die('gone', 143));
+      expect(published).toEqual([]);
+    });
+
+    it('ignores the stop half of a restart the agent was asked for', async () => {
+      const { runtime, published, agent } = makeAgent();
+      await agent.handleCommand(cmd({ type: 'server.restart', payload: { deploymentId: 'd-1', nodeId: NODE_ID, containerId: 'c1' } }));
+      published.length = 0;
+      runtime.inspected.set('c1', { running: true, exitCode: 0, oomKilled: false });
+      await agent.handleContainerEvent(die('c1', 0));
+      await agent.handleContainerEvent({ action: 'start', containerId: 'c1', deploymentId: 'd-1' });
+      expect(published).toEqual([]);
+    });
+
+    it('still reports a crash that comes after a restart the agent made', async () => {
+      const { runtime, published, agent } = makeAgent();
+      await agent.handleCommand(cmd({ type: 'server.restart', payload: { deploymentId: 'd-1', nodeId: NODE_ID, containerId: 'c1' } }));
+      published.length = 0;
+      // Past the grace window: a later kill is a crash, not the restart's echo.
+      vi.useFakeTimers();
+      vi.setSystemTime(Date.now() + 10_000);
+      runtime.inspected.set('c1', { running: false, exitCode: 137, oomKilled: false });
+      await agent.handleContainerEvent(die('c1', 137));
+      vi.useRealTimers();
+      expect(published.map((p) => p.key)).toEqual(['infra.server.crashed']);
+    });
+
+    it('reports a crash and then running when a restart policy brings it back', async () => {
+      const { runtime, published, agent } = makeAgent();
+      runtime.inspected.set('c1', { running: false, exitCode: 1, oomKilled: false });
+      await agent.handleContainerEvent(die('c1', 1));
+      await agent.handleContainerEvent({ action: 'start', containerId: 'c1', deploymentId: 'd-1' });
+      expect(published.map((p) => p.key)).toEqual(['infra.server.crashed', 'infra.server.started']);
+      expect(published[1].envelope.event.payload).toMatchObject({ deploymentId: 'd-1', containerId: 'c1', nodeId: NODE_ID });
+    });
+
+    it('reports a crash it only saw after the policy had already restarted it', async () => {
+      const { runtime, published, agent } = makeAgent();
+      runtime.inspected.set('c1', { running: true, exitCode: 1, oomKilled: false });
+      await agent.handleContainerEvent(die('c1', 1));
+      expect(published.map((p) => p.key)).toEqual(['infra.server.crashed', 'infra.server.started']);
+      expect((published[0].envelope.event.payload as { reason: string }).reason).toMatch(/restarted by its restart policy/);
+    });
+
+    it('calls a clean exit its policy restarted a stop, not a crash', async () => {
+      const { runtime, published, agent } = makeAgent();
+      runtime.inspected.set('c1', { running: true, exitCode: 0, oomKilled: false });
+      await agent.handleContainerEvent(die('c1', 0));
+      expect(published.map((p) => p.key)).toEqual(['infra.server.stopped', 'infra.server.started']);
+    });
+
+    it('ignores the start of a container it did not see go down', async () => {
+      const { published, agent } = makeAgent();
+      await agent.handleContainerEvent({ action: 'start', containerId: 'new', deploymentId: 'd-1' });
+      expect(published).toEqual([]);
+    });
+
+    it('reports a container from before #324 by its id, for the orchestrator to match', async () => {
+      const { runtime, published, agent } = makeAgent();
+      runtime.inspected.set('old', { running: false, exitCode: 2, oomKilled: false });
+      await agent.handleContainerEvent(die('old', 2, null));
+      expect(published[0].envelope.event.payload).toMatchObject({ deploymentId: '', containerId: 'old' });
+    });
   });
 });

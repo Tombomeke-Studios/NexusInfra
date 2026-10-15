@@ -11,6 +11,34 @@ const DLQ = 'finvault.events.dlq';
 const RABBITMQ_URL = process.env.RABBITMQ_URL;
 const RABBITMQ_URL_WITH_DEFAULT = RABBITMQ_URL || 'amqp://guest:guest@rabbitmq:5672';
 
+/**
+ * A connection URL fit for a log line: the password is replaced, everything else
+ * kept so the line still says which broker or database was meant (#394). Logs get
+ * pasted into issues, and in the hosted edition the broker is shared with FinVault.
+ * Anything that does not parse as a URL is cut at the credentials by hand rather
+ * than printed as given.
+ */
+export function redactUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    if (!url.password) return raw;
+    url.password = '***';
+    return url.toString();
+  } catch {
+    return raw.replace(/\/\/([^:/@]*):[^@]*@/, '//$1:***@');
+  }
+}
+
+/**
+ * Whether a routine publish or consume of this event is worth a log line (#395).
+ * Heartbeats are not: one a second from every service and every node buried
+ * everything else in `docker compose logs`, and a missing heartbeat already shows
+ * as a status change in the Control Room. Failures are logged for every event.
+ */
+export function logsTraffic(eventType: string): boolean {
+  return !eventType.startsWith('heartbeat.');
+}
+
 let connection: any = null;
 let channel: any = null;
 
@@ -26,7 +54,7 @@ export async function connectRabbitMQ(retryCount = 8, delayMs = 3000): Promise<{
 
   for (let i = 1; i <= retryCount; i++) {
     try {
-      console.log(`[RabbitMQ] Connecting to ${RABBITMQ_URL_WITH_DEFAULT} (Attempt ${i}/${retryCount})...`);
+      console.log(`[RabbitMQ] Connecting to ${redactUrl(RABBITMQ_URL_WITH_DEFAULT)} (Attempt ${i}/${retryCount})...`);
       const conn = await amqp.connect(RABBITMQ_URL_WITH_DEFAULT);
       const ch = await conn.createChannel();
 
@@ -59,7 +87,7 @@ export async function publishRabbitEvent(routingKey: string, envelope: EventEnve
     const success = ch.publish(EXCHANGE, routingKey, message, { persistent: true });
 
     if (success) {
-      console.log(`[RabbitMQ Publish] Published ${envelope.event.type} with key: ${routingKey}`);
+      if (logsTraffic(envelope.event.type)) console.log(`[RabbitMQ Publish] Published ${envelope.event.type} with key: ${routingKey}`);
       return true;
     }
     console.error('[RabbitMQ Publish] Write buffer full, publish returned false.');
@@ -94,7 +122,7 @@ export async function consumeRabbitQueue(
       if (!msg) return;
       try {
         const envelope = JSON.parse(msg.content.toString()) as EventEnvelope;
-        console.log(`[RabbitMQ Consume] Processing ${envelope.event.type} from queue ${queueName}`);
+        if (logsTraffic(envelope.event.type)) console.log(`[RabbitMQ Consume] Processing ${envelope.event.type} from queue ${queueName}`);
         await onMessage(envelope);
         ch.ack(msg);
       } catch (error: any) {

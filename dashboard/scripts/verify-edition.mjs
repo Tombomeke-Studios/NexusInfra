@@ -19,7 +19,25 @@ if (edition !== 'community' && edition !== 'hosted') {
 }
 
 /** Strings that only the real billing page and its client produce. */
-const BILLING_MARKERS = ['Credit balance', 'Top up via FinVault', '/billing/wallet', '/billing/topup', '/billing/ledger'];
+const BILLING_MARKERS = [
+  'Credit balance',
+  'Top up via FinVault',
+  '/billing/wallet',
+  '/billing/topup',
+  '/billing/ledger',
+  // The plan panel and its client (#297).
+  '/me/entitlements',
+  'for each hour a server runs',
+  // Plans and the provider's Customers page (#369).
+  '/billing/plans',
+  '/billing/admin/',
+  'per server-hour',
+  'Credit held',
+  // How long the credit lasts, on the Billing page (#379).
+  'at the rate your servers are using it',
+  // A server billing suspended (#380).
+  'ran out of credit',
+];
 
 /** Present in every build, so a bundle with none of these was not read properly. */
 const CONTROL_MARKERS = ['New Deployment', 'Shared with me'];
@@ -56,7 +74,7 @@ const found = BILLING_MARKERS.filter((m) => source.includes(m));
 if (edition === 'community') {
   if (found.length) {
     console.error(`✖ community bundle still contains hosted code: ${found.join(', ')}`);
-    console.error('  The billing module is reaching the bundle — check the alias in vite.config.ts.');
+    console.error('  The billing module is reaching the bundle — check its entry in editionStubs.ts.');
     process.exit(1);
   }
   console.log(`✔ community bundle contains no billing code (checked ${files.length} files, ${BILLING_MARKERS.length} markers)`);

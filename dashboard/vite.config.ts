@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath, URL } from 'node:url';
+import { EDITION_STUBS, stubPattern } from './editionStubs';
 
 // Dashboard dev server on 5173; proxy /api to the Orchestrator (:9200) so the
 // browser talks to a same-origin path in dev without CORS surprises. The API
@@ -12,8 +13,10 @@ import { fileURLToPath, URL } from 'node:url';
 //
 //   1. `__BUILD_EDITION__` becomes a literal, so the billing route is statically
 //      unreachable and the bundler drops it.
-//   2. The billing page is aliased to a stub, so the real module never enters
-//      the module graph at all.
+//   2. Each hosted-only module is aliased to a stub, so the real module never
+//      enters the module graph at all. The list and how an alias is matched are
+//      in editionStubs.ts — an alias sees the import as written, not a resolved
+//      path, so a new entry goes there and is checked by its test (#393).
 //
 // Verified rather than assumed — `npm run verify:edition` greps the built bundle.
 const edition = process.env.NEXUS_EDITION === 'hosted' ? 'hosted' : 'community';
@@ -29,7 +32,7 @@ export default defineConfig({
     alias:
       edition === 'hosted'
         ? []
-        : [{ find: fromHere('./src/pages/Billing.tsx'), replacement: fromHere('./src/pages/Billing.stub.tsx') }],
+        : EDITION_STUBS.map(({ module, stub }) => ({ find: stubPattern(module), replacement: fromHere(`./${stub}`) })),
   },
   server: {
     port: 5173,

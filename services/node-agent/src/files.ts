@@ -63,8 +63,15 @@ export function parseLsOutput(raw: string): FileEntry[] {
  * the header is filled in — name, mode, size, mtime, checksum — for the daemon to
  * extract one regular file; the stream is terminated with the two zero blocks.
  */
-export function buildTarball(fileName: string, content: string): Buffer {
-  const data = Buffer.from(content, 'utf8');
+/**
+ * A single-file ustar archive, for putArchive into a container.
+ *
+ * `content` is either text or raw bytes. Bytes matter: an upload read as text and
+ * re-encoded loses every byte that is not valid UTF-8, which silently corrupts
+ * anything binary (#263). Buffer.from(buffer) copies verbatim.
+ */
+export function buildTarball(fileName: string, content: string | Buffer): Buffer {
+  const data = Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf8');
   const header = Buffer.alloc(512, 0);
 
   header.write(fileName.replace(/^\//, '').slice(0, 100), 0, 'utf8');
@@ -85,4 +92,27 @@ export function buildTarball(fileName: string, content: string): Buffer {
   const body = Buffer.alloc(Math.ceil(data.length / 512) * 512, 0);
   data.copy(body);
   return Buffer.concat([header, body, Buffer.alloc(1024, 0)]);
+}
+
+/**
+ * The bytes of the one file in a Docker archive (#235) — what `getArchive` of a
+ * single path returns. Skips the extended headers Docker adds for long names
+ * and attributes (`x`, `g`, `L`, `K`); refuses a directory rather than handing
+ * back its first member as if it were the file.
+ */
+export function extractSingleFile(tar: Buffer): Buffer {
+  let offset = 0;
+  while (offset + 512 <= tar.length) {
+    const header = tar.subarray(offset, offset + 512);
+    if (header.every((b) => b === 0)) break;
+    const size = parseInt(header.subarray(124, 136).toString('ascii').replace(/\0.*$/, '').trim() || '0', 8);
+    const type = String.fromCharCode(header[156] || 48); // NUL means a regular file
+    const dataStart = offset + 512;
+    if (type === '0' || type === '7') return Buffer.from(tar.subarray(dataStart, dataStart + size));
+    if (type === '5') throw new Error('that path is a directory');
+    if (type === '2' || type === '1') throw new Error('that path is a link, not a file');
+    // Extended/long-name headers: skip their payload and read on.
+    offset = dataStart + Math.ceil(size / 512) * 512;
+  }
+  throw new Error('the archive holds no file');
 }

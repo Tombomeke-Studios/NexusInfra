@@ -17,32 +17,81 @@ export type NexusInfraEvent =
   // Orchestrator can route per-deployment calls to the owning node (#171).
   | { type: 'heartbeat.node'; payload: { nodeId: string; status: 'healthy'; timestamp: string; agentUrl?: string; resources?: NodeResources } }
   // ── Server lifecycle — commands (Orchestrator → Node Agent) ──────────
-  | { type: 'server.start'; payload: { deploymentId: string; nodeId: string; dockerImage: string; containerName?: string; env?: Record<string, string>; ports?: Record<string, string>; resourceLimits?: ResourceLimits } }
+  // `dataMount` bind-mounts an existing host directory into the container, for a
+  // server whose files already live on the node (#268). Admin-only and confined to
+  // the node's IMPORT_ROOT — the agent re-validates it rather than trusting this.
+  // persistPaths (#324): container directories kept in named volumes owned by the
+  // deployment, so they survive the container being removed on stop.
+  | { type: 'server.start'; payload: ServerStartPayload }
+  // Pull the image afresh and, when `recreate`, replace the running container
+  // with one from the new image (#239). The pull happens first, so a registry
+  // that is down never takes a running server with it. Data survives the
+  // recreate because it lives in the server's volumes (#324).
+  | { type: 'server.update'; payload: ServerStartPayload & { recreate: boolean } }
   | { type: 'server.stop'; payload: { deploymentId: string; nodeId: string; containerId: string } }
+  // Force-terminate rather than ask: SIGKILL, for a container that will not stop
+  // gracefully. Distinct from server.stop so the audit trail records which it was (#253).
+  | { type: 'server.kill'; payload: { deploymentId: string; nodeId: string; containerId: string } }
   | { type: 'server.restart'; payload: { deploymentId: string; nodeId: string; containerId: string } }
+  // Sent by an agent when it starts: what this node is actually running (#244).
+  // The outbox protects reports from a broker outage; nothing protected them from
+  // the agent process itself dying, after which our records described a machine
+  // that no longer matched.
+  | { type: 'node.inventory'; payload: { nodeId: string; containers: { containerId: string; running: boolean }[] } }
   // ── Server lifecycle — reports (Node Agent → Orchestrator) ───────────
   | { type: 'server.started'; payload: { deploymentId: string; containerId: string; nodeId: string } }
   | { type: 'server.stopped'; payload: { deploymentId: string; containerId: string } }
   | { type: 'server.crashed'; payload: { deploymentId: string; containerId: string; reason: string } }
+  // The outcome of a server.update (#239). A failed pull leaves the server as it was.
+  | { type: 'server.image-updated'; payload: { deploymentId: string; image: string; digest: string | null; recreated: boolean } }
+  | { type: 'server.update-failed'; payload: { deploymentId: string; image: string; reason: string } }
   | { type: 'deployment.created'; payload: { deploymentId: string; userId: string; resourceLimits?: ResourceLimits } }
+  // A server's size changed (#364) — billing charges by size, so it has to hear.
+  | { type: 'deployment.updated'; payload: { deploymentId: string; userId: string; resourceLimits?: ResourceLimits } }
   | { type: 'deployment.failed'; payload: { deploymentId: string; reason: string } }
   // ── Billing bridge → FinVault (payload shapes match FinVault's events.ts) ──
-  | { type: 'payment.request'; payload: { reference: string; senderWalletId: string; receiverWalletId: string; amount: number; currency: string; description: string } }
+  // `customerEmail` names who should pay in a way FinVault can resolve (#351): a
+  // NexusInfra user id means nothing there until the two share an identity (#17).
+  | { type: 'payment.request'; payload: { reference: string; senderWalletId: string; receiverWalletId: string; amount: number; currency: string; description: string; customerEmail?: string } }
   | { type: 'payment.confirmed'; payload: { transactionId: string; reference: string; amount: number; senderWalletId: string; receiverWalletId: string } }
   | { type: 'payment.failed'; payload: { transactionId: string; reference: string; reason: string } }
   // ── Billing (hosted edition, NexusInfra-only routing keys) ───────────
   // Envelope + encryption are unchanged; these are internal to NexusInfra.
   // Billing Bridge → Orchestrator: stop this user's servers when credit runs out.
   | { type: 'billing.server.suspend'; payload: { userId: string; deploymentIds: string[]; reason: string } }
+  // Billing Bridge → Orchestrator: an account's credit lasts less than the
+  // warning threshold at its running servers' rate (#379). Sent once per dip.
+  | { type: 'billing.credit.low'; payload: { userId: string; hoursLeft: number; available: number; currency: string } }
   // NexusInfra → FinVault: a monthly invoice record for a closed billing cycle.
-  | { type: 'invoice.generate'; payload: { reference: string; userId: string; periodStart: string; periodEnd: string; amount: number; currency: string } };
+  // `customerEmail` is how FinVault finds whose statement it is (#375).
+  | { type: 'invoice.generate'; payload: { reference: string; userId: string; periodStart: string; periodEnd: string; amount: number; currency: string; customerEmail?: string } };
+
+/** What an agent needs to start a server's container (see orchestrator startCommand.ts). */
+export interface ServerStartPayload {
+  deploymentId: string;
+  nodeId: string;
+  dockerImage: string;
+  containerName?: string;
+  env?: Record<string, string>;
+  ports?: Record<string, string>;
+  resourceLimits?: ResourceLimits;
+  dataMount?: { hostPath: string; containerPath: string };
+  /** Container directories kept in named volumes owned by the deployment (#324). */
+  persistPaths?: string[];
+}
 
 export interface NodeResources {
   cpuPercent: number;
+  /** How many CPUs the host actually has (#261). Optional: older agents omit it. */
+  cpuCores?: number;
   ramUsedMb: number;
   ramTotalMb: number;
-  diskUsedGb: number;
-  diskTotalGb: number;
+  /**
+   * Optional on purpose (#276): a node that cannot measure its disk omits these
+   * rather than reporting 0, which the panel used to render as an empty disk.
+   */
+  diskUsedGb?: number;
+  diskTotalGb?: number;
 }
 
 /**
@@ -51,7 +100,21 @@ export interface NodeResources {
  * start (#107). Percentages are of the host node; every field is optional.
  */
 export interface ResourceLimits {
+  /**
+   * Absolute memory for this server, in MB (#275).
+   *
+   * Preferred over `ramPercent` and wins when both are set. Nobody decides "give
+   * it 37% of the box"; they decide "give it 6 GB", and an absolute value also
+   * survives being moved to a node of a different size, which a percentage does
+   * not — 50% means something else the moment the server is re-placed.
+   */
+  ramMb?: number;
+  /** Absolute CPU for this server, in cores. Fractional allowed (1.5 = one and a half). */
+  cpuCores?: number;
+
+  /** Share of the node's CPU. Used only when `cpuCores` is absent. */
   cpuPercent?: number;
+  /** Share of the node's memory. Used only when `ramMb` is absent. */
   ramPercent?: number;
   diskPercent?: number;
   swapPercent?: number;
@@ -134,7 +197,16 @@ export function readPayload(event: NexusInfraEvent): Record<string, unknown> {
     if (!messageKey) {
       throw new Error('Encrypted event payload received but FINVAULT_MESSAGE_KEY is not set');
     }
-    return decryptPayload(payload.data, messageKey);
+    try {
+      return decryptPayload(payload.data, messageKey);
+    } catch {
+      // Node's own message ("Unsupported state or unable to authenticate data")
+      // says nothing about the one cause that matters in practice (#298).
+      throw new Error(
+        'Could not decrypt an event payload: FINVAULT_MESSAGE_KEY differs from the sender\'s, or the payload was altered. ' +
+          'Both platforms must use the same key.'
+      );
+    }
   }
   return payload;
 }

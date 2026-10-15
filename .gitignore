@@ -33,3 +33,6 @@ npm-debug.log*
 # Local SQLite dev databases (Prisma) — schema lives in prisma/migrations
 *.db
 *.db-journal
+
+# Agent worktrees created by Claude Code
+.claude/worktrees/

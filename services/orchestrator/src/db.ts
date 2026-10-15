@@ -1,6 +1,10 @@
 import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
-import type {
+import { createRequire } from 'module';
+import { isPostgresUrl } from 'shared';
+import { parseRetention, type BackupRetention } from './retention.js';
+import { PortConflictError } from './portPool.js';
+import type { NotificationChannelRecord, NotificationDeliveryRecord, PortAllocationRecord,
   CreateServerConfigInput,
   DeploymentDetail,
   DeploymentRecord,
@@ -14,6 +18,12 @@ import type {
   CreateUserInput,
   NodeRecord,
   RegisterNodeInput,
+  SessionRecord,
+  ApiTokenRecord,
+  CreateApiTokenInput,
+  CreateSessionInput,
+  TransferOwnershipInput,
+  UpdateServerConfigInput,
   Repository,
   ResourceLimits,
   ServerBackupRecord,
@@ -35,9 +45,19 @@ import type {
 
 let prisma: PrismaClient | null = null;
 
-/** Lazily-created Prisma client singleton. */
+/**
+ * The client for the database DATABASE_URL names (#241). Prisma fixes the
+ * provider when a client is generated, so both are generated and one is picked
+ * here. The models are the same (the PostgreSQL schema is derived from the
+ * SQLite one and checked in CI), so either satisfies the same type.
+ */
 export function getPrisma(): PrismaClient {
-  if (!prisma) prisma = new PrismaClient();
+  if (!prisma) {
+    const Client = isPostgresUrl(process.env.DATABASE_URL)
+      ? (createRequire(import.meta.url)('../generated/postgres/index.js') as { PrismaClient: new () => unknown }).PrismaClient
+      : PrismaClient;
+    prisma = new Client() as PrismaClient;
+  }
   return prisma;
 }
 
@@ -89,11 +109,58 @@ function toUserRecord(u: PrismaUser): UserRecord {
     passwordHash: u.passwordHash,
     platformRole: u.platformRole,
     createdAt: u.createdAt.toISOString(),
+    totpSecret: u.totpSecret,
+    totpEnabledAt: iso(u.totpEnabledAt),
+    emailVerifiedAt: iso(u.emailVerifiedAt),
+  };
+}
+
+function toSessionRecord(s: {
+  id: string;
+  userId: string;
+  createdAt: Date;
+  lastSeenAt: Date;
+  userAgent: string | null;
+  ipAddress: string | null;
+}): SessionRecord {
+  return {
+    id: s.id,
+    userId: s.userId,
+    createdAt: s.createdAt.toISOString(),
+    lastSeenAt: s.lastSeenAt.toISOString(),
+    userAgent: s.userAgent,
+    ipAddress: s.ipAddress,
+  };
+}
+
+function toApiTokenRecord(t: {
+  id: string;
+  userId: string;
+  name: string;
+  tokenHash: string;
+  scopes: string;
+  createdAt: Date;
+  lastUsedAt: Date | null;
+  expiresAt: Date | null;
+}): ApiTokenRecord {
+  return {
+    id: t.id,
+    userId: t.userId,
+    name: t.name,
+    tokenHash: t.tokenHash,
+    scopes: t.scopes,
+    createdAt: t.createdAt.toISOString(),
+    lastUsedAt: iso(t.lastUsedAt),
+    expiresAt: iso(t.expiresAt),
   };
 }
 
 function toNodeRecord(n: PrismaNode): NodeRecord {
   return {
+    maintenance: n.maintenance,
+    portRangeStart: n.portRangeStart ?? null,
+    portRangeEnd: n.portRangeEnd ?? null,
+    cpuCores: n.cpuCores,
     id: n.id,
     name: n.name,
     location: n.location,
@@ -108,6 +175,51 @@ function toNodeRecord(n: PrismaNode): NodeRecord {
   };
 }
 
+/** A stored JSON list of strings; anything else reads as empty rather than throwing. */
+function parseStringList(raw: string | null | undefined): string[] {
+  try {
+    const value = JSON.parse(raw ?? '[]');
+    return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** A stored retention policy; anything unreadable keeps every backup rather than deleting any. */
+function parseRetentionColumn(raw: string | null | undefined): BackupRetention {
+  try {
+    const parsed = parseRetention(JSON.parse(raw ?? '{}'));
+    return parsed.ok ? parsed.policy : {};
+  } catch {
+    return {};
+  }
+}
+
+function toChannelRecord(c: {
+  id: string; userId: string; kind: string; target: string; format: string; events: string; secret: string | null;
+  allowPrivate: boolean; enabled: boolean; lastDeliveryAt: Date | null; lastError: string | null; createdAt: Date;
+}): NotificationChannelRecord {
+  return {
+    ...c,
+    events: parseStringList(c.events),
+    lastDeliveryAt: c.lastDeliveryAt?.toISOString() ?? null,
+    createdAt: c.createdAt.toISOString(),
+  };
+}
+
+function toDeliveryRecord(d: {
+  id: string; channelId: string; event: string; payload: string; status: string; attempts: number;
+  nextAttemptAt: Date; lastError: string | null; createdAt: Date; sentAt: Date | null;
+}): NotificationDeliveryRecord {
+  return {
+    ...d,
+    status: d.status as NotificationDeliveryRecord['status'],
+    nextAttemptAt: d.nextAttemptAt.toISOString(),
+    createdAt: d.createdAt.toISOString(),
+    sentAt: d.sentAt?.toISOString() ?? null,
+  };
+}
+
 function toConfigRecord(c: PrismaConfig): ServerConfigRecord {
   return {
     id: c.id,
@@ -119,6 +231,9 @@ function toConfigRecord(c: PrismaConfig): ServerConfigRecord {
     env: parseJson(c.environmentVars),
     resourceLimits: parseLimits(c.resourceLimits),
     autoRestart: c.autoRestart,
+    dataPath: c.dataPath,
+    persistPaths: parseStringList(c.persistPaths),
+    backupRetention: parseRetentionColumn(c.backupRetention),
     type: c.type,
     createdAt: c.createdAt.toISOString(),
   };
@@ -150,6 +265,7 @@ function toBackupRecord(b: PrismaBackup): ServerBackupRecord {
     sizeBytes: b.sizeBytes,
     status: b.status,
     createdAt: b.createdAt.toISOString(),
+    offsite: b.offsite ?? null,
   };
 }
 
@@ -188,6 +304,8 @@ function toDeploymentRecord(d: PrismaDeployment): DeploymentRecord {
     startedAt: iso(d.startedAt),
     stoppedAt: iso(d.stoppedAt),
     createdAt: d.createdAt.toISOString(),
+    suspendedAt: iso(d.suspendedAt),
+    suspendedReason: d.suspendedReason,
   };
 }
 
@@ -196,7 +314,8 @@ export class PrismaRepository implements Repository {
 
   // ── Accounts (#174) ─────────────────────────────────────────────────────────
   async createUser(input: CreateUserInput): Promise<UserRecord> {
-    return toUserRecord(await this.client.user.create({ data: input }));
+    const { emailVerifiedAt, ...fields } = input;
+    return toUserRecord(await this.client.user.create({ data: { ...fields, emailVerifiedAt: emailVerifiedAt ? new Date(emailVerifiedAt) : null } }));
   }
 
   async getUser(id: string): Promise<UserRecord | null> {
@@ -296,6 +415,7 @@ export class PrismaRepository implements Repository {
       ...(provided(input.ipAddress) ? { ipAddress: input.ipAddress } : {}),
       ...(provided(input.agentUrl) ? { agentUrl: input.agentUrl } : {}),
       ...(provided(input.cpuPercent) ? { cpuPercent: input.cpuPercent } : {}),
+      ...(provided(input.cpuCores) ? { cpuCores: input.cpuCores } : {}),
       ...(provided(input.ramUsedMb) ? { ramUsedMb: input.ramUsedMb } : {}),
       ...(provided(input.ramTotalMb) ? { ramTotalMb: input.ramTotalMb } : {}),
       ...(provided(input.diskUsedGb) ? { diskUsedGb: input.diskUsedGb } : {}),
@@ -326,6 +446,158 @@ export class PrismaRepository implements Repository {
     return nodes.map(toNodeRecord);
   }
 
+  // ── Sessions (#227) ────────────────────────────────────────────────────────
+  async createSession(input: CreateSessionInput): Promise<SessionRecord> {
+    const row = await this.client.session.create({
+      data: { id: randomUUID(), userId: input.userId, userAgent: input.userAgent ?? null, ipAddress: input.ipAddress ?? null },
+    });
+    return toSessionRecord(row);
+  }
+
+  async getSession(id: string): Promise<SessionRecord | null> {
+    const row = await this.client.session.findUnique({ where: { id } });
+    return row ? toSessionRecord(row) : null;
+  }
+
+  async listSessions(userId: string): Promise<SessionRecord[]> {
+    const rows = await this.client.session.findMany({ where: { userId }, orderBy: { lastSeenAt: 'desc' } });
+    return rows.map(toSessionRecord);
+  }
+
+  async deleteSession(id: string): Promise<void> {
+    await this.client.session.deleteMany({ where: { id } });
+  }
+
+  async deleteSessionsForUser(userId: string, exceptId?: string): Promise<void> {
+    await this.client.session.deleteMany({
+      where: { userId, ...(exceptId ? { id: { not: exceptId } } : {}) },
+    });
+  }
+
+  async touchSession(id: string, at: string): Promise<void> {
+    await this.client.session.updateMany({ where: { id }, data: { lastSeenAt: new Date(at) } });
+  }
+
+  // ── Password resets (#344) ─────────────────────────────────────────────────
+
+  async createPasswordReset(input: { userId: string; tokenHash: string; expiresAt: string }): Promise<void> {
+    // A new link supersedes the old ones: only the most recent mail works.
+    await this.client.$transaction([
+      this.client.passwordReset.deleteMany({ where: { userId: input.userId, usedAt: null } }),
+      this.client.passwordReset.create({
+        data: { id: randomUUID(), userId: input.userId, tokenHash: input.tokenHash, expiresAt: new Date(input.expiresAt) },
+      }),
+    ]);
+  }
+
+  async consumePasswordReset(tokenHash: string, now: string): Promise<string | null> {
+    const at = new Date(now);
+    // The claim is the update: only one caller can move usedAt off null.
+    const claimed = await this.client.passwordReset.updateMany({
+      where: { tokenHash, usedAt: null, expiresAt: { gt: at } },
+      data: { usedAt: at },
+    });
+    if (claimed.count !== 1) return null;
+    return (await this.client.passwordReset.findUnique({ where: { tokenHash } }))?.userId ?? null;
+  }
+
+  // ── Email confirmation (#367) ──────────────────────────────────────────────
+  async createEmailVerification(input: { userId: string; tokenHash: string; expiresAt: string }): Promise<void> {
+    // A new link supersedes the old ones: only the most recent mail works.
+    await this.client.$transaction([
+      this.client.emailVerification.deleteMany({ where: { userId: input.userId, usedAt: null } }),
+      this.client.emailVerification.create({
+        data: { id: randomUUID(), userId: input.userId, tokenHash: input.tokenHash, expiresAt: new Date(input.expiresAt) },
+      }),
+    ]);
+  }
+
+  async consumeEmailVerification(tokenHash: string, now: string): Promise<string | null> {
+    const at = new Date(now);
+    // The claim is the update: only one caller can move usedAt off null.
+    const claimed = await this.client.emailVerification.updateMany({
+      where: { tokenHash, usedAt: null, expiresAt: { gt: at } },
+      data: { usedAt: at },
+    });
+    if (claimed.count !== 1) return null;
+    return (await this.client.emailVerification.findUnique({ where: { tokenHash } }))?.userId ?? null;
+  }
+
+  async setUserEmailVerified(id: string, at: string): Promise<void> {
+    await this.client.user.updateMany({ where: { id, emailVerifiedAt: null }, data: { emailVerifiedAt: new Date(at) } });
+  }
+
+  // ── API tokens (#228) ──────────────────────────────────────────────────────
+  async createApiToken(input: CreateApiTokenInput): Promise<ApiTokenRecord> {
+    const token = await this.client.apiToken.create({
+      data: {
+        id: randomUUID(),
+        userId: input.userId,
+        name: input.name,
+        tokenHash: input.tokenHash,
+        scopes: input.scopes,
+        expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
+      },
+    });
+    return toApiTokenRecord(token);
+  }
+
+  async getApiTokenByHash(tokenHash: string): Promise<ApiTokenRecord | null> {
+    const token = await this.client.apiToken.findUnique({ where: { tokenHash } });
+    return token ? toApiTokenRecord(token) : null;
+  }
+
+  async listApiTokens(userId: string): Promise<ApiTokenRecord[]> {
+    const rows = await this.client.apiToken.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } });
+    return rows.map(toApiTokenRecord);
+  }
+
+  async getApiToken(id: string): Promise<ApiTokenRecord | null> {
+    const token = await this.client.apiToken.findUnique({ where: { id } });
+    return token ? toApiTokenRecord(token) : null;
+  }
+
+  async deleteApiToken(id: string): Promise<void> {
+    await this.client.apiToken.deleteMany({ where: { id } });
+  }
+
+  async touchApiToken(id: string, at: string): Promise<void> {
+    await this.client.apiToken.updateMany({ where: { id }, data: { lastUsedAt: new Date(at) } });
+  }
+
+  // ── Two-factor (#229) ──────────────────────────────────────────────────────
+  async setUserTotp(id: string, totp: { secret: string | null; enabledAt: string | null }): Promise<UserRecord | null> {
+    try {
+      const user = await this.client.user.update({
+        where: { id },
+        data: { totpSecret: totp.secret, totpEnabledAt: totp.enabledAt ? new Date(totp.enabledAt) : null },
+      });
+      return toUserRecord(user);
+    } catch {
+      return null; // no such user
+    }
+  }
+
+  async replaceRecoveryCodes(userId: string, codeHashes: string[]): Promise<void> {
+    // One transaction: a person left with the old codes deleted and the new ones
+    // unwritten has no way back into their own account.
+    await this.client.$transaction([
+      this.client.recoveryCode.deleteMany({ where: { userId } }),
+      ...codeHashes.map((codeHash) => this.client.recoveryCode.create({ data: { id: randomUUID(), userId, codeHash } })),
+    ]);
+  }
+
+  async consumeRecoveryCode(userId: string, codeHash: string): Promise<boolean> {
+    // deleteMany rather than find-then-delete: the delete is the check, so two
+    // simultaneous logins cannot both spend the same code.
+    const { count } = await this.client.recoveryCode.deleteMany({ where: { userId, codeHash } });
+    return count > 0;
+  }
+
+  async countRecoveryCodes(userId: string): Promise<number> {
+    return this.client.recoveryCode.count({ where: { userId } });
+  }
+
   async registerNode(input: RegisterNodeInput): Promise<NodeRecord> {
     const node = await this.client.node.upsert({
       where: { id: input.id },
@@ -334,6 +606,9 @@ export class PrismaRepository implements Repository {
         name: input.name ?? input.id,
         location: input.location ?? null,
         agentUrl: input.agentUrl ?? null,
+        maintenance: input.maintenance ?? false,
+        portRangeStart: input.portRange?.start ?? null,
+        portRangeEnd: input.portRange?.end ?? null,
         // Registered-but-unseen → epoch so it reads offline until its agent beats.
         lastHeartbeat: new Date(0),
       },
@@ -341,6 +616,10 @@ export class PrismaRepository implements Repository {
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.location !== undefined ? { location: input.location } : {}),
         ...(input.agentUrl !== undefined ? { agentUrl: input.agentUrl } : {}),
+        ...(input.maintenance !== undefined ? { maintenance: input.maintenance } : {}),
+        ...(input.portRange !== undefined
+          ? { portRangeStart: input.portRange?.start ?? null, portRangeEnd: input.portRange?.end ?? null }
+          : {}),
       },
     });
     return toNodeRecord(node);
@@ -349,6 +628,8 @@ export class PrismaRepository implements Repository {
   async deleteNode(id: string): Promise<void> {
     // Detach deployments first so the FK doesn't block the delete.
     await this.client.deployment.updateMany({ where: { nodeId: id }, data: { nodeId: null } });
+    // Ports on a machine that is gone are held by nothing (#233).
+    await this.client.portAllocation.deleteMany({ where: { nodeId: id } });
     await this.client.node.delete({ where: { id } });
   }
 
@@ -364,6 +645,8 @@ export class PrismaRepository implements Repository {
         environmentVars: JSON.stringify(input.env ?? {}),
         resourceLimits: JSON.stringify(input.resourceLimits ?? {}),
         autoRestart: input.autoRestart ?? false,
+        dataPath: input.dataPath ?? null,
+        persistPaths: JSON.stringify(input.persistPaths ?? []),
         type: input.type ?? 'generic',
       },
     });
@@ -388,6 +671,8 @@ export class PrismaRepository implements Repository {
         ...(patch.containerId !== undefined ? { containerId: patch.containerId } : {}),
         ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt ? new Date(patch.startedAt) : null } : {}),
         ...(patch.stoppedAt !== undefined ? { stoppedAt: patch.stoppedAt ? new Date(patch.stoppedAt) : null } : {}),
+        ...(patch.suspendedAt !== undefined ? { suspendedAt: patch.suspendedAt ? new Date(patch.suspendedAt) : null } : {}),
+        ...(patch.suspendedReason !== undefined ? { suspendedReason: patch.suspendedReason } : {}),
       },
     });
     return toDeploymentRecord(deployment);
@@ -411,6 +696,8 @@ export class PrismaRepository implements Repository {
       userId: d.serverConfig.userId,
       teamId: d.serverConfig.teamId,
       type: d.serverConfig.type,
+      resourceLimits: parseLimits(d.serverConfig.resourceLimits),
+      autoRestart: d.serverConfig.autoRestart,
     }));
   }
 
@@ -435,7 +722,64 @@ export class PrismaRepository implements Repository {
       userId: d.serverConfig.userId,
       teamId: d.serverConfig.teamId,
       type: d.serverConfig.type,
+      resourceLimits: parseLimits(d.serverConfig.resourceLimits),
+      autoRestart: d.serverConfig.autoRestart,
     }));
+  }
+
+  async updateDeploymentConfig(deploymentId: string, patch: UpdateServerConfigInput): Promise<ServerConfigRecord | null> {
+    const d = await this.client.deployment.findUnique({ where: { id: deploymentId } });
+    if (!d) return null;
+    // Undefined means "leave it": only keys explicitly provided are written, so a
+    // partial edit cannot blank the rest of the config.
+    const provided = <T>(v: T | undefined): v is T => v !== undefined;
+    const updated = await this.client.serverConfig.update({
+      where: { id: d.serverConfigId },
+      data: {
+        ...(provided(patch.name) ? { name: patch.name } : {}),
+        ...(provided(patch.dockerImage) ? { dockerImage: patch.dockerImage } : {}),
+        ...(provided(patch.ports) ? { ports: JSON.stringify(patch.ports) } : {}),
+        ...(provided(patch.env) ? { environmentVars: JSON.stringify(patch.env) } : {}),
+        ...(provided(patch.resourceLimits) ? { resourceLimits: JSON.stringify(patch.resourceLimits) } : {}),
+        ...(provided(patch.autoRestart) ? { autoRestart: patch.autoRestart } : {}),
+        ...(provided(patch.persistPaths) ? { persistPaths: JSON.stringify(patch.persistPaths) } : {}),
+        ...(provided(patch.backupRetention) ? { backupRetention: JSON.stringify(patch.backupRetention) } : {}),
+      },
+    });
+    return toConfigRecord(updated);
+  }
+
+  async transferDeploymentOwner(input: TransferOwnershipInput): Promise<ServerConfigRecord | null> {
+    const d = await this.client.deployment.findUnique({ where: { id: input.deploymentId } });
+    if (!d) return null;
+
+    // One transaction (#230). A server whose owner moved but whose outgoing owner
+    // never received their retained share is a server that person has silently
+    // lost — and nothing outside can tell that is what happened.
+    const [updated] = await this.client.$transaction([
+      this.client.serverConfig.update({
+        where: { id: d.serverConfigId },
+        data: { userId: input.newOwnerId },
+      }),
+      ...(input.dropShareId ? [this.client.serverSubuser.delete({ where: { id: input.dropShareId } })] : []),
+      ...(input.retainedShare
+        ? [
+            this.client.serverSubuser.upsert({
+              where: { deploymentId_email: { deploymentId: input.deploymentId, email: input.retainedShare.email } },
+              create: {
+                id: randomUUID(),
+                deploymentId: input.deploymentId,
+                email: input.retainedShare.email,
+                userId: input.retainedShare.userId,
+                role: input.retainedShare.role,
+                status: 'active',
+              },
+              update: { userId: input.retainedShare.userId, role: input.retainedShare.role, status: 'active' },
+            }),
+          ]
+        : []),
+    ]);
+    return toConfigRecord(updated);
   }
 
   async getDeploymentConfig(deploymentId: string): Promise<ServerConfigRecord | null> {
@@ -451,12 +795,24 @@ export class PrismaRepository implements Repository {
     if (!deployment) return;
     // Remove child rows first (FKs have no cascade), then the deployment and its
     // now-orphan server config.
-    await this.client.deploymentEvent.deleteMany({ where: { deploymentId: id } });
-    await this.client.serverDatabase.deleteMany({ where: { deploymentId: id } });
-    await this.client.serverBackup.deleteMany({ where: { deploymentId: id } });
-    await this.client.serverSchedule.deleteMany({ where: { deploymentId: id } });
-    await this.client.serverSubuser.deleteMany({ where: { deploymentId: id } });
-    await this.client.deployment.delete({ where: { id } });
+    //
+    // All of it in ONE transaction (#293). Deleting a *running* server also emits
+    // server.stop, and the agent's server.stopped/crashed comes back while this
+    // is still executing — the lifecycle consumer then appends a DeploymentEvent
+    // for the deployment being deleted, reopening a reference the deleteMany just
+    // closed, and the final delete fails on the foreign key. As separate
+    // statements there is a window for that; as a transaction the write either
+    // lands before this (and is deleted with the rest) or after it (and finds no
+    // deployment to attach to, which `lifecycle.ts` already handles).
+    await this.client.$transaction([
+      this.client.deploymentEvent.deleteMany({ where: { deploymentId: id } }),
+      this.client.serverDatabase.deleteMany({ where: { deploymentId: id } }),
+      this.client.serverBackup.deleteMany({ where: { deploymentId: id } }),
+      this.client.serverSchedule.deleteMany({ where: { deploymentId: id } }),
+      this.client.serverSubuser.deleteMany({ where: { deploymentId: id } }),
+      this.client.portAllocation.deleteMany({ where: { deploymentId: id } }),
+      this.client.deployment.delete({ where: { id } }),
+    ]);
     await this.client.serverConfig.delete({ where: { id: deployment.serverConfigId } }).catch(() => {
       // Config may be shared/already gone; ignore.
     });
@@ -479,6 +835,127 @@ export class PrismaRepository implements Repository {
 
   async deleteDatabase(id: string): Promise<void> {
     await this.client.serverDatabase.delete({ where: { id } });
+  }
+
+  async createNotificationChannel(input: Omit<NotificationChannelRecord, 'id' | 'lastDeliveryAt' | 'lastError' | 'createdAt'>): Promise<NotificationChannelRecord> {
+    const row = await this.client.notificationChannel.create({ data: { ...input, id: randomUUID(), events: JSON.stringify(input.events) } });
+    return toChannelRecord(row);
+  }
+
+  async listNotificationChannels(userIds: string[]): Promise<NotificationChannelRecord[]> {
+    const rows = await this.client.notificationChannel.findMany({ where: { userId: { in: userIds } }, orderBy: { createdAt: 'asc' } });
+    return rows.map(toChannelRecord);
+  }
+
+  async getNotificationChannel(id: string): Promise<NotificationChannelRecord | null> {
+    const row = await this.client.notificationChannel.findUnique({ where: { id } });
+    return row ? toChannelRecord(row) : null;
+  }
+
+  async updateNotificationChannel(
+    id: string,
+    patch: Partial<Pick<NotificationChannelRecord, 'events' | 'enabled' | 'lastDeliveryAt' | 'lastError'>>,
+  ): Promise<NotificationChannelRecord | null> {
+    const existing = await this.client.notificationChannel.findUnique({ where: { id } });
+    if (!existing) return null;
+    const row = await this.client.notificationChannel.update({
+      where: { id },
+      data: {
+        ...(patch.events !== undefined ? { events: JSON.stringify(patch.events) } : {}),
+        ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+        ...(patch.lastDeliveryAt !== undefined ? { lastDeliveryAt: patch.lastDeliveryAt ? new Date(patch.lastDeliveryAt) : null } : {}),
+        ...(patch.lastError !== undefined ? { lastError: patch.lastError } : {}),
+      },
+    });
+    return toChannelRecord(row);
+  }
+
+  async deleteNotificationChannel(id: string): Promise<void> {
+    await this.client.$transaction([
+      this.client.notificationDelivery.deleteMany({ where: { channelId: id } }),
+      this.client.notificationChannel.deleteMany({ where: { id } }),
+    ]);
+  }
+
+  async enqueueDeliveries(rows: Array<{ channelId: string; event: string; payload: string }>): Promise<NotificationDeliveryRecord[]> {
+    const created = await this.client.$transaction(rows.map((r) => this.client.notificationDelivery.create({ data: { ...r, id: randomUUID() } })));
+    return created.map(toDeliveryRecord);
+  }
+
+  async listDueDeliveries(now: string, limit: number): Promise<NotificationDeliveryRecord[]> {
+    const rows = await this.client.notificationDelivery.findMany({
+      where: { status: 'pending', nextAttemptAt: { lte: new Date(now) } },
+      orderBy: { nextAttemptAt: 'asc' },
+      take: limit,
+    });
+    return rows.map(toDeliveryRecord);
+  }
+
+  async claimDelivery(id: string, attempts: number): Promise<boolean> {
+    // A conditional update is atomic in the database: of two drains that read the
+    // same row, exactly one changes it.
+    const { count } = await this.client.notificationDelivery.updateMany({ where: { id, status: 'pending', attempts }, data: { attempts: attempts + 1 } });
+    return count === 1;
+  }
+
+  async updateDelivery(id: string, patch: Partial<Pick<NotificationDeliveryRecord, 'status' | 'attempts' | 'nextAttemptAt' | 'lastError' | 'sentAt'>>): Promise<void> {
+    await this.client.notificationDelivery.updateMany({
+      where: { id },
+      data: {
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.attempts !== undefined ? { attempts: patch.attempts } : {}),
+        ...(patch.nextAttemptAt !== undefined ? { nextAttemptAt: new Date(patch.nextAttemptAt) } : {}),
+        ...(patch.lastError !== undefined ? { lastError: patch.lastError } : {}),
+        ...(patch.sentAt !== undefined ? { sentAt: patch.sentAt ? new Date(patch.sentAt) : null } : {}),
+      },
+    });
+  }
+
+  async listDeliveries(channelId: string, limit: number): Promise<NotificationDeliveryRecord[]> {
+    const rows = await this.client.notificationDelivery.findMany({ where: { channelId }, orderBy: { createdAt: 'desc' }, take: limit });
+    return rows.map(toDeliveryRecord);
+  }
+
+  async listPortAllocations(filter: { nodeId?: string; deploymentId?: string }): Promise<PortAllocationRecord[]> {
+    const rows = await this.client.portAllocation.findMany({
+      where: { ...(filter.nodeId ? { nodeId: filter.nodeId } : {}), ...(filter.deploymentId ? { deploymentId: filter.deploymentId } : {}) },
+      orderBy: { port: 'asc' },
+    });
+    return rows.map((a) => ({ ...a, createdAt: a.createdAt.toISOString() }));
+  }
+
+  async replacePortAllocations(deploymentId: string, nodeId: string | null, ports: number[]): Promise<PortAllocationRecord[]> {
+    const current = await this.client.portAllocation.findMany({ where: { deploymentId } });
+    const primary = current.find((a) => a.primary)?.port;
+    const keepPrimary = primary !== undefined && ports.includes(primary) ? primary : ports[0];
+    const rows = nodeId
+      ? ports.map((port) => ({ id: randomUUID(), nodeId, port, deploymentId, primary: port === keepPrimary }))
+      : [];
+    try {
+      // One transaction: the old set goes and the new set lands together, and the
+      // unique (node, port) index refuses a port someone else holds.
+      await this.client.$transaction([
+        this.client.portAllocation.deleteMany({ where: { deploymentId } }),
+        ...rows.map((data) => this.client.portAllocation.create({ data })),
+      ]);
+    } catch (err) {
+      if ((err as { code?: string }).code === 'P2002' && nodeId) {
+        const held = await this.client.portAllocation.findMany({ where: { nodeId, port: { in: ports }, NOT: { deploymentId } } });
+        throw new PortConflictError(held[0]?.port ?? ports[0], nodeId);
+      }
+      throw err;
+    }
+    return this.listPortAllocations({ deploymentId });
+  }
+
+  async setPrimaryPort(deploymentId: string, port: number): Promise<boolean> {
+    const mine = await this.client.portAllocation.findMany({ where: { deploymentId } });
+    if (!mine.some((a) => a.port === port)) return false;
+    await this.client.$transaction([
+      this.client.portAllocation.updateMany({ where: { deploymentId }, data: { primary: false } }),
+      this.client.portAllocation.updateMany({ where: { deploymentId, port }, data: { primary: true } }),
+    ]);
+    return true;
   }
 
   async createBackup(input: CreateServerBackupInput): Promise<ServerBackupRecord> {
@@ -603,13 +1080,20 @@ export class PrismaRepository implements Repository {
       include: { serverConfig: true, events: { orderBy: { timestamp: 'asc' } } },
     });
     if (!d) return null;
+    const config = toConfigRecord(d.serverConfig);
     return {
       ...toDeploymentRecord(d),
-      name: d.serverConfig.name,
-      dockerImage: d.serverConfig.dockerImage,
-      userId: d.serverConfig.userId,
-      teamId: d.serverConfig.teamId,
-      type: d.serverConfig.type,
+      name: config.name,
+      dockerImage: config.dockerImage,
+      userId: config.userId,
+      teamId: config.teamId,
+      type: config.type,
+      ports: config.ports,
+      env: config.env,
+      resourceLimits: config.resourceLimits,
+      autoRestart: config.autoRestart,
+      persistPaths: config.persistPaths,
+      backupRetention: config.backupRetention,
       events: d.events.map((e) => ({
         id: e.id,
         deploymentId: e.deploymentId,

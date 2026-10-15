@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { withinQuota, type QuotaResource } from './quotas.js';
-import type { BillingService } from './service.js';
+import { chargingModel } from './pricing.js';
+import { BillingError, type BillingService } from './service.js';
 import type { Repository } from './types.js';
 
 // HTTP API for the Billing Bridge (hosted edition). The dashboard's Billing page
@@ -16,6 +17,41 @@ export interface BillingApiDeps {
 export function createBillingRouter({ repo, service }: BillingApiDeps): Router {
   const router = Router();
 
+  /** Answer with the result, or with the status a refusal names. */
+  const answer = (res: Response, work: () => Promise<unknown>, okStatus = 200) =>
+    work().then(
+      (body) => res.status(okStatus).json(body),
+      (err) => {
+        if (err instanceof BillingError) return res.status(err.status).json({ error: err.message });
+        // Express 4 does not await handlers: rethrowing here would be an
+        // unhandled rejection, which ends the process.
+        console.error('[BillingBridge] request failed:', err);
+        return res.status(500).json({ error: 'internal error' });
+      }
+    );
+
+  // ── Plans and the provider's view (#369) ─────────────────────────────────
+  // Who may call these is the Orchestrator's business: it lets every signed-in
+  // account read the catalogue and change its own plan, and platform
+  // administrators do the rest.
+  router.get('/plans', async (_req: Request, res: Response) => {
+    res.json(await repo.listPlans());
+  });
+  router.post('/plans', (req: Request, res: Response) => answer(res, () => service.createPlan(req.body), 201));
+  router.put('/plans/:id', (req: Request, res: Response) => answer(res, () => service.updatePlan(req.params.id, req.body)));
+  router.get('/accounts', async (_req: Request, res: Response) => {
+    res.json(await service.listAccounts());
+  });
+  router.put('/billing/:userId/plan', (req: Request, res: Response) => {
+    const planId = (req.body ?? {}).planId;
+    if (typeof planId !== 'string' || !planId) return res.status(400).json({ error: 'planId is required' });
+    return answer(res, () => service.changePlan(req.params.userId, planId));
+  });
+  router.post('/billing/:userId/adjust', (req: Request, res: Response) => {
+    const { amount, reason, by } = (req.body ?? {}) as { amount?: unknown; reason?: unknown; by?: unknown };
+    return answer(res, () => service.adjustCredit(req.params.userId, amount as number, reason as string, typeof by === 'string' ? by : ''));
+  });
+
   router.get('/billing/:userId/wallet', async (req: Request, res: Response) => {
     res.json(await repo.getWallet(req.params.userId));
   });
@@ -24,12 +60,34 @@ export function createBillingRouter({ repo, service }: BillingApiDeps): Router {
     res.json(await service.getUsage(req.params.userId));
   });
 
+  // What is left to spend and whether the account may run servers (#365). The
+  // Orchestrator asks before a start; the Billing page shows it.
+  router.get('/billing/:userId/standing', async (req: Request, res: Response) => {
+    res.json(await service.getStanding(req.params.userId));
+  });
+
   router.get('/billing/:userId/ledger', async (req: Request, res: Response) => {
     res.json(await repo.listLedger(req.params.userId));
   });
 
   router.get('/billing/:userId/plan', async (req: Request, res: Response) => {
     res.json(await repo.getUserPlan(req.params.userId));
+  });
+
+  // What the plan entitles this user to, and how it charges (#297). The
+  // Orchestrator measures usage against it — it is the one that knows what the
+  // user has — and the panel shows both before anyone picks a size.
+  router.get('/billing/:userId/entitlements', async (req: Request, res: Response) => {
+    const plan = await repo.getUserPlan(req.params.userId);
+    res.json({
+      planId: plan.id,
+      planName: plan.name,
+      maxServers: plan.maxServers,
+      maxDatabases: plan.maxDatabases,
+      maxRamMb: plan.maxRamMb,
+      maxBackupsPerServer: plan.maxBackupsPerServer,
+      charging: chargingModel(plan),
+    });
   });
 
   // Quota check for the Orchestrator: is creating one more `resource` allowed
@@ -49,17 +107,22 @@ export function createBillingRouter({ repo, service }: BillingApiDeps): Router {
   });
 
   // Start a credit top-up (funded via FinVault). Credit is added on
-  // payment.confirmed, not here.
+  // payment.confirmed, not here. `email` is who FinVault asks to pay (#351); the
+  // Orchestrator fills it in from the signed-in account.
   router.post('/billing/:userId/topup', async (req: Request, res: Response) => {
-    const { amount, currency } = req.body ?? {};
+    const { amount, currency, email } = req.body ?? {};
     if (typeof amount !== 'number' || !(amount > 0)) {
       return res.status(400).json({ error: 'amount must be a positive number' });
     }
+    if (typeof email !== 'string' || !email.includes('@')) {
+      return res.status(400).json({ error: 'a top-up needs the email address FinVault should ask to pay' });
+    }
     try {
-      const { reference, entry } = await service.requestTopUp(req.params.userId, amount, typeof currency === 'string' ? currency : undefined);
-      return res.status(202).json({ status: 'pending', reference, entry });
+      const { reference, entry } = await service.requestTopUp(req.params.userId, amount, typeof currency === 'string' ? currency : undefined, email.trim().toLowerCase());
+      return res.status(202).json({ status: 'pending', reference, entry, payerEmail: email.trim().toLowerCase() });
     } catch (err) {
-      return res.status(400).json({ error: err instanceof Error ? err.message : 'top-up failed' });
+      const status = err instanceof BillingError ? err.status : 400;
+      return res.status(status).json({ error: err instanceof Error ? err.message : 'top-up failed' });
     }
   });
 
