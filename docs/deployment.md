@@ -41,6 +41,12 @@ Every service uses the same **multi-stage workspace build** (see
 `services/control-room/Dockerfile`): builder stage compiles `shared` then the service; runtime stage
 copies only `dist/` + production deps. Build context is always the **repo root**.
 
+The image builds everything itself, so the build context leaves out what a working tree collects:
+`.dockerignore` (and `dashboard/.dockerignore`, whose context is that directory) excludes
+`node_modules`, `dist`, `.env` files, local databases, `.git` and `.claude` (#396). Without it a
+local build copied the host's build output in — a community image built after `npm run build`
+contained, and started, the billing bridge. A new top-level directory with local state belongs there.
+
 The **Orchestrator** image is based on Debian slim (not Alpine) with `openssl` installed, because
 Prisma's query/schema engines require OpenSSL and do not run on Alpine/musl. It applies
 `prisma migrate deploy` on startup before serving. The **dashboard** builds to static assets served
@@ -296,8 +302,9 @@ would mean a half-enabled billing system rather than a working one. Running from
 unaffected: with no stamp, `NEXUS_EDITION` decides as it always has.
 
 **The community build genuinely does not contain the hosted code.** This matters most for the
-dashboard, which is served to a browser: the billing page is aliased to a stub at build time and its
-route is compiled out, and the image build runs `verify-edition.mjs` against the built bundle so a
+dashboard, which is served to a browser: every hosted-only module is aliased to a stub at build time (`dashboard/editionStubs.ts`, matched on
+the import as written, #393) and the billing routes are compiled out — each alone keeps the code
+out — and the image build runs `verify-edition.mjs` against the built bundle so a
 regression fails the build instead of shipping quietly. `billing-bridge` is built for hosted only —
 a community build of it would be a build of nothing.
 

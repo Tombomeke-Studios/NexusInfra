@@ -74,7 +74,7 @@ const found = BILLING_MARKERS.filter((m) => source.includes(m));
 if (edition === 'community') {
   if (found.length) {
     console.error(`✖ community bundle still contains hosted code: ${found.join(', ')}`);
-    console.error('  The billing module is reaching the bundle — check the alias in vite.config.ts.');
+    console.error('  The billing module is reaching the bundle — check its entry in editionStubs.ts.');
     process.exit(1);
   }
   console.log(`✔ community bundle contains no billing code (checked ${files.length} files, ${BILLING_MARKERS.length} markers)`);

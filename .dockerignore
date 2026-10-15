@@ -1,0 +1,30 @@
+# What a local `docker build` from the repo root must not send (#396).
+#
+# The Dockerfiles copy `shared/`, `services/…` and `dashboard/` whole, so anything
+# lying in the working tree went into the image: a community all-in-one image built
+# after `npm run build` contained services/billing-bridge/dist and started it; dist
+# files tsc no longer emits survived; Windows-built Prisma engines landed in a Linux
+# image. The image builds everything it needs itself. CI never noticed — a clean
+# checkout has none of this.
+
+# Installed and built output — the image installs and builds its own.
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+**/coverage
+
+# Secrets and local state.
+**/.env
+**/.env.*
+!**/.env.example
+**/*.db
+**/*.db-journal
+**/*.log
+
+# Repository and tooling metadata.
+.git
+.github
+.claude
+**/.vscode
+**/.idea
+graphify-out

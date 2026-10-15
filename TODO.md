@@ -294,11 +294,11 @@ scrolling log lines describing events that never happened.
 
 - [x] Out of the box every panel user shares one login rate-limit bucket (#401) 🐛
 
-- [ ] Every service prints the broker password to its log when it connects (#394) 🐛
+- [x] Every service prints the broker password to its log when it connects (#394) 🐛 — `redactUrl` (shared) replaces the password before the URL reaches a log line
 
-- [ ] Heartbeats flood every service's log twice a second (#395) 🐛
+- [x] Heartbeats flood every service's log twice a second (#395) 🐛 — routine heartbeat publishes and consumes are no longer logged (`logsTraffic`); failures still are
 
-- [ ] Local image builds send stale `dist/` and `node_modules` into the image (#396) 🐛
+- [x] Local image builds send stale `dist/` and `node_modules` into the image (#396) 🐛 — `.dockerignore` at the root and in `dashboard/` keep build output, dependencies, `.env`, local databases and tooling metadata out of the context
 
 - [x] The panel answers 502 after the orchestrator container is recreated (#403) 🐛
 
@@ -326,7 +326,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [x] Plans a customer can choose between, and a provider's view of their customers (#369) — administrators define, edit and retire plans; a customer switches on the Billing page when their servers fit; runtime is charged at the rate of the plan it ran under; a Customers page lists every account with plan, usage and balance, and adjusts credit by hand with a reason the customer sees
 - [x] Warn a customer before their credit runs out, and show how long it will last (#379) — the standing says how many hours what is left lasts at the running servers' rate (free hours first), shown under *Left to spend*; under `LOW_CREDIT_HOURS` (default 24) the account gets one `credit.low` notification per dip, remembered across a restart; the event is not offered in the community edition
 - [x] A server stopped for lack of credit looked like any other stopped server (#380) 🐛 — the suspension is recorded with the server and shown as *suspended* in the Servers list, the drawer and the server's page, saying whose credit ran out, until a start that passes the credit check
-- [ ] Make the community build's stub aliases actually match their imports (#393) 🐛 — the string `find`s are absolute paths and never match `'./pages/Billing'`; only `BILLING_INCLUDED` keeps those pages out today
+- [x] Make the community build's stub aliases actually match their imports (#393) 🐛 — the stubbed modules are listed in `dashboard/editionStubs.ts` and matched on the specifier as written; a test checks every import is caught, and a community build with the `BILLING_INCLUDED` gates forced open still passes `verify-edition.mjs`
 - [x] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)
 - [x] `docs/billing.md` is missing from the documentation ownership table (#248)
 
