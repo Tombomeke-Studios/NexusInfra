@@ -302,14 +302,6 @@ scrolling log lines describing events that never happened.
 
 - [x] The panel answers 502 after the orchestrator container is recreated (#403) 🐛
 
-### NexusFleet support (`feature/fleet-support`) — what adding nodes from another machine needs
-
-- [x] Let node agents on other machines reach the broker (#409) — `BROKER_BIND` (default `127.0.0.1`) and `BROKER_PORT` in both bundles
-
-- [x] Generate the broker credentials in the installer (#410) — `RABBITMQ_USER=nexusinfra` and a random `RABBITMQ_PASS`, appended by both installers
-
-- [x] Answer 404 when deleting a node that does not exist (#411) 🐛
-
 ### Panel — replace the browser's own dialogs
 
 - [x] Replace all 16 `window.confirm` / `window.prompt` calls with in-app dialogs (#299)
@@ -373,6 +365,11 @@ it". Every item carries the `edition:hosted` label on GitHub.
 ---
 
 ## Done
+
+### `feature/fleet-support` — merged in #412 (what NexusFleet needs to add nodes from another machine)
+- [x] Let node agents on other machines reach the broker (#409) — `BROKER_BIND` (default `127.0.0.1`) and `BROKER_PORT` in both bundles
+- [x] Generate the broker credentials in the installer (#410) — `RABBITMQ_USER=nexusinfra` and a random `RABBITMQ_PASS`, appended by both installers
+- [x] Answer 404 when deleting a node that does not exist (#411) 🐛
 
 ### `feature/files-console-ux` — merged in #143 (fixes)
 
