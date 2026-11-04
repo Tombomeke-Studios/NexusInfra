@@ -306,7 +306,7 @@ scrolling log lines describing events that never happened.
 
 - [x] Let node agents on other machines reach the broker (#409) — `BROKER_BIND` (default `127.0.0.1`) and `BROKER_PORT` in both bundles
 
-- [ ] Generate the broker credentials in the installer (#410)
+- [x] Generate the broker credentials in the installer (#410) — `RABBITMQ_USER=nexusinfra` and a random `RABBITMQ_PASS`, appended by both installers
 
 - [x] Answer 404 when deleting a node that does not exist (#411) 🐛
 

@@ -88,6 +88,18 @@ describe('the release bundles', () => {
     expect(block).not.toContain('15672');
   });
 
+  // #410: the installers generated every secret but the broker's, so a fresh
+  // install ran on guest/guest — which RabbitMQ refuses from any other machine,
+  // so no agent elsewhere could ever connect. The example lists the two values
+  // commented out, so each installer has to write them itself, with a random password.
+  it.each([
+    ['install.sh', /^\s*printf .*RABBITMQ_USER=nexusinfra.*RABBITMQ_PASS=%s.*"\$\(random_secret\)" >> \.env/m],
+    ['install.ps1', /^\s*\$env_ \+= .*RABBITMQ_USER=nexusinfra.*RABBITMQ_PASS=\$\(New-Secret\)/m],
+  ])('%s generates the broker credentials', (installer, line) => {
+    const script = readFileSync(join(DEPLOY, installer), 'utf8').replace(/\r\n/g, '\n');
+    expect(script).toMatch(line);
+  });
+
   it('ships a billing-bridge in the hosted bundle and not in the community one', () => {
     const hosted = readFileSync(join(DEPLOY, 'hosted', 'docker-compose.yml'), 'utf8');
     const community = readFileSync(join(DEPLOY, 'community', 'docker-compose.yml'), 'utf8');
