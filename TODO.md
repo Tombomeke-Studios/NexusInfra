@@ -302,6 +302,14 @@ scrolling log lines describing events that never happened.
 
 - [x] The panel answers 502 after the orchestrator container is recreated (#403) 🐛
 
+### NexusFleet support (`feature/fleet-support`) — what adding nodes from another machine needs
+
+- [ ] Let node agents on other machines reach the broker (#409)
+
+- [ ] Generate the broker credentials in the installer (#410)
+
+- [x] Answer 404 when deleting a node that does not exist (#411) 🐛
+
 ### Panel — replace the browser's own dialogs
 
 - [x] Replace all 16 `window.confirm` / `window.prompt` calls with in-app dialogs (#299)

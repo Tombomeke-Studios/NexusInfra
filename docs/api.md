@@ -882,8 +882,9 @@ CPU/RAM/disk are then reported automatically and never overwrite the name/locati
 
 ### `DELETE /nodes/:id`
 
-Deregister a node (remove its record; detaches it from any deployments). `409` if it still hosts a
-running/pending deployment, otherwise `204`. The machine itself is untouched.
+Deregister a node (remove its record; detaches it from any deployments). `404` if there is no node
+with that id, `409` if it still hosts a running/pending deployment, otherwise `204`. The machine
+itself is untouched.
 
 ---
 
