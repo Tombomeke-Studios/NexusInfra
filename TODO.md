@@ -369,6 +369,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 ### `feature/fleet-support` — merged in #412 (what NexusFleet needs to add nodes from another machine)
 - [x] Let node agents on other machines reach the broker (#409) — `BROKER_BIND` (default `127.0.0.1`) and `BROKER_PORT` in both bundles
 - [x] Generate the broker credentials in the installer (#410) — `RABBITMQ_USER=nexusinfra` and a random `RABBITMQ_PASS`, appended by both installers
+- [x] Ask the installers where to publish the broker (#414) — both ask for an IPv4 address, write `BROKER_BIND`, and print the agents' `RABBITMQ_URL` without the password
 - [x] Answer 404 when deleting a node that does not exist (#411) 🐛
 
 ### `feature/files-console-ux` — merged in #143 (fixes)

@@ -100,6 +100,20 @@ describe('the release bundles', () => {
     expect(script).toMatch(line);
   });
 
+  // #414: the bundles keep the broker on 127.0.0.1 unless BROKER_BIND is set,
+  // but nothing asked for it, so a setup with agents on other machines was only
+  // finished after editing .env by hand. Each installer asks, accepts only an
+  // IPv4 address (blank keeps the default), and appends it to the new .env.
+  it.each([
+    ['install.sh', /read -rp "[^"]*broker[^"]*" BROKER_BIND/i, 'is_ipv4 "$BROKER_BIND"', `printf 'BROKER_BIND=%s\\n' "$BROKER_BIND" >> .env`],
+    ['install.ps1', /\$brokerBind = Read-Host '[^']*broker[^']*'/i, 'Test-IPv4 $brokerBind', '$env_ += "BROKER_BIND=$brokerBind"'],
+  ])('%s asks where to publish the broker', (installer, question, check, write) => {
+    const script = readFileSync(join(DEPLOY, installer), 'utf8').replace(/\r\n/g, '\n');
+    expect(script).toMatch(question);
+    expect(script).toContain(check);
+    expect(script).toContain(write);
+  });
+
   it('ships a billing-bridge in the hosted bundle and not in the community one', () => {
     const hosted = readFileSync(join(DEPLOY, 'hosted', 'docker-compose.yml'), 'utf8');
     const community = readFileSync(join(DEPLOY, 'community', 'docker-compose.yml'), 'utf8');
