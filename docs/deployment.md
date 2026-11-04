@@ -95,11 +95,12 @@ publish nothing else.
 | node-agent `9100` | **Never.** It starts containers and opens shells; see [images.md](images.md) |
 | control-room `9000`, billing-bridge `9300` | No |
 | grafana `3000` (the `monitoring` profile, #355) | Behind the proxy if at all — it holds a password of its own. Prometheus is never published |
-| RabbitMQ `5672` / `15672` | No. Management UI least of all — it ships with `guest/guest` |
+| RabbitMQ `5672` / `15672` | Not to the internet. `5672` only to the machines that run node agents, with a user of your own (#409). The management UI never — it ships with `guest/guest` |
 
 The release bundles already follow this table (#392): they publish the dashboard, SFTP and the gateway
-(`DASHBOARD_PORT`, `SFTP_PUBLIC_PORT`, `GATEWAY_PORT`), bind the orchestrator to `127.0.0.1`
-(`ORCHESTRATOR_PORT`) and do not publish the Control Room at all. The dev compose file at the repo root
+(`DASHBOARD_PORT`, `SFTP_PUBLIC_PORT`, `GATEWAY_PORT`), bind the orchestrator and the broker to
+`127.0.0.1` (`ORCHESTRATOR_PORT`; `BROKER_BIND`/`BROKER_PORT`, widened for agents on other machines)
+and do not publish the Control Room at all. The dev compose file at the repo root
 still publishes everything, for poking at services directly. For an exposed host, bind whatever you
 are not proxying to localhost so a stray firewall rule cannot turn it into an entry point.
 
