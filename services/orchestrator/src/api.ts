@@ -1239,8 +1239,12 @@ export function createApiRouter(deps: ApiDeps): Router {
     return res.json({ ...node, health: nodeHealth(node, Date.now()) });
   });
 
-  // Deregister a node — refused while it still hosts a running deployment.
+  // Deregister a node — refused while it still hosts a running deployment. An id
+  // with no node is a 404 like on every other node route (#411): Prisma's delete
+  // throws on a missing row, which used to answer 500.
   router.delete('/nodes/:id', requirePlatformAdmin, async (req: Request, res: Response) => {
+    const existing = (await repo.listNodes()).find((n) => n.id === req.params.id);
+    if (!existing) return res.status(404).json({ error: 'node not found' });
     const running = (await repo.listDeployments()).some((d) => d.nodeId === req.params.id && (d.status === 'running' || d.status === 'pending'));
     if (running) return res.status(409).json({ error: 'node still hosts a running deployment' });
     await repo.deleteNode(req.params.id);

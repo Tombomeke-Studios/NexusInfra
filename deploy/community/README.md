@@ -34,10 +34,20 @@ the panel, then share servers with them.
 
 ## Adding more machines
 
-A node is just a Node Agent process pointed at this broker. To add a second machine, run the
-`nexusinfra/node-agent` image there with a distinct `NODE_ID`, the same `INTERNAL_API_TOKEN`, and
-`RABBITMQ_URL` pointing at this host's broker — over an authenticated, TLS-protected connection, not
-the defaults in `.env.example`. It registers itself, and the scheduler starts placing servers on it.
+A node is just a Node Agent process pointed at this broker. To add a second machine:
+
+1. **Let it reach the broker.** The broker listens on `127.0.0.1` only. Set `BROKER_BIND` in `.env` to
+   this machine's address on the network the nodes share (or `0.0.0.0`), then `docker compose up -d`.
+   Keep port 5672 off the internet.
+2. **Not with `guest/guest`.** RabbitMQ refuses `guest` from any other machine. The installer sets
+   `RABBITMQ_USER`/`RABBITMQ_PASS` for you; an `.env` written by hand needs them before the first start
+   (see `.env.example`).
+3. **Run the `nexusinfra/node-agent` image there** with a distinct `NODE_ID`, the same
+   `INTERNAL_API_TOKEN`, `RABBITMQ_URL=amqp://<user>:<pass>@<this host>:5672` and an `AGENT_URL` this
+   machine can reach. The full command, and the three options that fail quietly when forgotten, are in
+   [docs/images.md](https://github.com/Tombomeke-Studios/NexusInfra/blob/main/docs/images.md#adding-a-machine).
+
+It registers itself, and the scheduler starts placing servers on it.
 
 ## Database
 
@@ -62,7 +72,8 @@ Database migrations are applied automatically when the Orchestrator starts.
 
 - The Node Agent's port is deliberately **not** published: it is an internal API that can start
   containers and open shells in them. Only the Orchestrator should reach it.
-- The broker is likewise unpublished. Publish it only if you run agents on other machines.
+- The broker is published on `127.0.0.1` only. Widen `BROKER_BIND` only if you run agents on other
+  machines, never with the default `guest/guest`, and never on a public interface.
 - What is published: the panel (`DASHBOARD_PORT`, 8095), SFTP (`SFTP_PUBLIC_PORT`, 2022) and the API
   gateway (`GATEWAY_PORT`, 9400). The orchestrator's own API answers on `127.0.0.1:9200` only, and the
   Control Room is not published at all — change any of these ports in `.env` if they are taken.

@@ -256,7 +256,15 @@ service to the same value FinVault uses.
 
 ## Adding a machine
 
-On the second host, with the same broker and token:
+First the control plane, once: the new host's agent has to reach the broker (#409).
+
+- The bundles publish the broker on `127.0.0.1` only. Set `BROKER_BIND` in `.env` to the control
+  plane's address on the network the hosts share (or `0.0.0.0`), and `BROKER_PORT` if 5672 is taken,
+  then `docker compose up -d`. Keep the port off the internet.
+- Use a broker user of your own (`RABBITMQ_USER`/`RABBITMQ_PASS`, which the installer generates).
+  RabbitMQ lets `guest` in over loopback only, so an agent elsewhere is refused with `guest/guest`.
+
+Then on the second host, with the same broker and token:
 
 ```bash
 docker run -d --name nexusinfra-node-agent \

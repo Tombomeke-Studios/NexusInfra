@@ -75,6 +75,31 @@ describe('the release bundles', () => {
     expect(block('orchestrator')).toMatch(/'127\.0\.0\.1:\$\{ORCHESTRATOR_PORT:-9200\}:9200'/);
   });
 
+  // #409: a node agent on another machine has to reach the broker, and neither
+  // bundle published it, so "Adding a machine" (docs/images.md) needed an edited
+  // compose file. The broker is published through two variables, on loopback
+  // unless the operator says otherwise — other machines only when asked for.
+  it.each(COMPOSE_FILES.slice(1))('publishes the broker on loopback unless BROKER_BIND says otherwise: %s', (file) => {
+    const compose = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+    const block = compose.match(/^ {2}rabbitmq:\n((?: {4}.*\n|\n)+)/m)?.[1] ?? '';
+    const published = [...block.matchAll(/^\s*- '([^']+)'/gm)].map((m) => m[1]);
+    expect(published).toEqual(['${BROKER_BIND:-127.0.0.1}:${BROKER_PORT:-5672}:5672']);
+    // The management UI stays unpublished: nothing on another machine needs it.
+    expect(block).not.toContain('15672');
+  });
+
+  // #410: the installers generated every secret but the broker's, so a fresh
+  // install ran on guest/guest — which RabbitMQ refuses from any other machine,
+  // so no agent elsewhere could ever connect. The example lists the two values
+  // commented out, so each installer has to write them itself, with a random password.
+  it.each([
+    ['install.sh', /^\s*printf .*RABBITMQ_USER=nexusinfra.*RABBITMQ_PASS=%s.*"\$\(random_secret\)" >> \.env/m],
+    ['install.ps1', /^\s*\$env_ \+= .*RABBITMQ_USER=nexusinfra.*RABBITMQ_PASS=\$\(New-Secret\)/m],
+  ])('%s generates the broker credentials', (installer, line) => {
+    const script = readFileSync(join(DEPLOY, installer), 'utf8').replace(/\r\n/g, '\n');
+    expect(script).toMatch(line);
+  });
+
   it('ships a billing-bridge in the hosted bundle and not in the community one', () => {
     const hosted = readFileSync(join(DEPLOY, 'hosted', 'docker-compose.yml'), 'utf8');
     const community = readFileSync(join(DEPLOY, 'community', 'docker-compose.yml'), 'utf8');
