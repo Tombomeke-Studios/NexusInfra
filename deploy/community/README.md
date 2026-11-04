@@ -36,9 +36,10 @@ the panel, then share servers with them.
 
 A node is just a Node Agent process pointed at this broker. To add a second machine:
 
-1. **Let it reach the broker.** The broker listens on `127.0.0.1` only. Set `BROKER_BIND` in `.env` to
-   this machine's address on the network the nodes share (or `0.0.0.0`), then `docker compose up -d`.
-   Keep port 5672 off the internet.
+1. **Let it reach the broker.** The broker listens on `127.0.0.1` only. The installer asks for the
+   address to publish it on; with an `.env` of your own, set `BROKER_BIND` to this machine's address
+   on the network the nodes share (or `0.0.0.0`), then `docker compose up -d`. Keep port 5672 off the
+   internet.
 2. **Not with `guest/guest`.** RabbitMQ refuses `guest` from any other machine. The installer sets
    `RABBITMQ_USER`/`RABBITMQ_PASS` for you; an `.env` written by hand needs them before the first start
    (see `.env.example`).

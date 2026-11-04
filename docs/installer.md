@@ -33,10 +33,14 @@ In order:
    (`RABBITMQ_USER=nexusinfra`, a random `RABBITMQ_PASS`, #410): RabbitMQ refuses `guest` from any
    other machine, so with the default no node agent elsewhere could ever connect. The broker keeps
    the credentials its data volume was first created with, so this matters on a fresh install.
-5. **Asks for `FINVAULT_MESSAGE_KEY`** in the hosted edition, warning that it must match FinVault's
+5. **Asks where to publish the broker** (#414), showing this machine's IPv4 addresses. Node agents on
+   other machines need it; blank keeps the broker on `127.0.0.1`. Only an IPv4 address is accepted, and
+   it is written as `BROKER_BIND`. With an address, the installer prints the `RABBITMQ_URL` the agents
+   need, naming the password in `.env` rather than showing it.
+6. **Asks for `FINVAULT_MESSAGE_KEY`** in the hosted edition, warning that it must match FinVault's
    exactly, and lets you fill it in later.
-6. **Writes `.env`** in the chosen edition's directory, `chmod 600`.
-7. **Offers to start the stack**, and prints the panel address and the account to sign in with.
+7. **Writes `.env`** in the chosen edition's directory, `chmod 600`.
+8. **Offers to start the stack**, and prints the panel address and the account to sign in with.
 
 ## Running it more than once
 
