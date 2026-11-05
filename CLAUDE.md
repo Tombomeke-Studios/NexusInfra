@@ -415,7 +415,7 @@ is the migrations directory.
 | `deploy/monitoring/` · `deploy/monitoring.test.ts` | The `monitoring` compose profile (#355): Prometheus scrape config (billing-bridge in its own hosted-only file), Grafana provisioning and the NexusInfra dashboard. The test fails when a panel queries a metric no service registers — **rename a metric and the dashboard changes with it**. Shipped beside both bundles in the release archive |
 | `deploy/community/` · `deploy/hosted/` | Self-contained release bundles: compose pinned to published images + `.env.example` + README. Neither needs a checkout of this repo; both are attached to each GitHub release (#179) |
 | `.github/workflows/release.yml` | On a `v*` tag: re-run CI in both editions, then publish `nexusinfra/<service>:X.Y.Z-{community,hosted}` to GHCR (nested so the six read as one family, #200). `billing-bridge` builds hosted only (#179) |
-| `.github/workflows/ci.yml` | CI: npm ci → build → lint (if present) → test, on PRs and pushes to dev/staging/main |
+| `.github/workflows/ci.yml` | CI: npm ci → build → lint (if present) → test, on PRs and pushes to dev/staging/main; the `images` job builds and starts the four service images (the images run Node 18, CI runs 20) |
 | `eslint.config.js` | Flat ESLint config (typescript-eslint recommended) covering all workspaces |
 
 ### docs/
