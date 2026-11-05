@@ -125,6 +125,13 @@ model Node {
   // any free port may be named, and "auto" has nothing to choose from.
   portRangeStart Int?
   portRangeEnd   Int?
+  // How the control plane reaches this node's agent (#416): "direct" calls it on
+  // agentUrl; "outbound" means the agent dials in over an agent link, because
+  // the node (behind NAT) has no address anybody can call.
+  connection    String       @default("direct")
+  // The digest of this node's agent link token — never the token. Null until an
+  // administrator mints one.
+  linkTokenHash String?
   createdAt     DateTime     @default(now())
   deployments   Deployment[]
 }
