@@ -15,7 +15,12 @@ export type NexusInfraEvent =
   | { type: 'heartbeat.service'; payload: { name: string; status: 'healthy'; timestamp: string } }
   // `agentUrl` lets a node advertise where its agent HTTP API is reachable, so the
   // Orchestrator can route per-deployment calls to the owning node (#171).
-  | { type: 'heartbeat.node'; payload: { nodeId: string; status: 'healthy'; timestamp: string; agentUrl?: string; resources?: NodeResources } }
+  // `connection: 'outbound'` says the agent dials the control plane itself over
+  // an agent link (#416) and has no address to advertise; absent means direct.
+  | {
+      type: 'heartbeat.node';
+      payload: { nodeId: string; status: 'healthy'; timestamp: string; agentUrl?: string; connection?: 'outbound'; resources?: NodeResources };
+    }
   // ── Server lifecycle — commands (Orchestrator → Node Agent) ──────────
   // `dataMount` bind-mounts an existing host directory into the container, for a
   // server whose files already live on the node (#268). Admin-only and confined to

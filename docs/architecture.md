@@ -182,6 +182,13 @@ advertises its agent's base URL on its heartbeat (`AGENT_URL`; `POST /nodes` can
 Orchestrator resolves the owning node per request, falling back to `NODE_AGENT_URL` when a node reports
 none — so single-node setups behave exactly as before.
 
+**Agent links (#416).** A node behind NAT has no address to advertise. Its agent (`AGENT_LINK_URL`) opens
+one WebSocket to the gateway's public `/agent-link` route instead, which the orchestrator accepts against
+a per-node token. Such a node is recorded as `connection: outbound`; its agent URL resolves to a name only
+the link understands, and `agentFetch` and the terminal proxy carry the same requests over link streams
+that the agent pipes into its own HTTP server. Heartbeats and server commands still use the broker.
+Details: [agent-link.md](agent-link.md).
+
 In the hosted edition the Billing Bridge keeps its own SQLite store: tunable pricing/quota plans,
 per-deployment runtime intervals, a per-user credit wallet, an append-only credit ledger (top-ups +
 charges), and monthly billing cycles. Same "schema lives in `prisma/migrations`, not in docs" rule.

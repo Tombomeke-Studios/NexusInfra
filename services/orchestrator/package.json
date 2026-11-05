@@ -24,6 +24,7 @@
     "prisma": "^5.18.0",
     "shared": "file:../../shared",
     "ssh2": "^1.17.0",
+    "undici": "^6.29.1",
     "ws": "^8.18.0"
   },
   "devDependencies": {

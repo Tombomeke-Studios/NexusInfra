@@ -22,8 +22,12 @@ services:
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
-    # Not published: only the services on this network need the broker. Publish
-    # it only if you run node agents on other machines, and put TLS in front.
+    # Loopback only by default: the services on this network need nothing else.
+    # Node agents on other machines need the broker too (#409): set BROKER_BIND to
+    # this machine's LAN address (or 0.0.0.0) in .env, never with guest/guest,
+    # and keep the port off the internet. docs/images.md, "Adding a machine".
+    ports:
+      - '${BROKER_BIND:-127.0.0.1}:${BROKER_PORT:-5672}:5672'
 
   control-room:
     image: ghcr.io/tombomeke-studios/nexusinfra/control-room:${NEXUSINFRA_VERSION:-hosted}

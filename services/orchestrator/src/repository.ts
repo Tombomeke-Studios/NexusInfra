@@ -165,6 +165,7 @@ export class InMemoryRepository implements Repository {
       // An administrator's setting, like maintenance: a heartbeat never touches it.
       portRangeStart: existing?.portRangeStart ?? null,
       portRangeEnd: existing?.portRangeEnd ?? null,
+      connection: input.connection ?? existing?.connection ?? 'direct',
     };
     this.nodes.set(node.id, node);
     return node;
@@ -332,6 +333,7 @@ export class InMemoryRepository implements Repository {
           location: input.location !== undefined ? input.location : existing.location,
           agentUrl: input.agentUrl !== undefined ? input.agentUrl : existing.agentUrl,
           maintenance: input.maintenance !== undefined ? input.maintenance : existing.maintenance,
+          connection: input.connection ?? existing.connection,
           ...(input.portRange !== undefined
             ? { portRangeStart: input.portRange?.start ?? null, portRangeEnd: input.portRange?.end ?? null }
             : {}),
@@ -353,6 +355,7 @@ export class InMemoryRepository implements Repository {
           maintenance: input.maintenance ?? false,
           portRangeStart: input.portRange?.start ?? null,
           portRangeEnd: input.portRange?.end ?? null,
+          connection: input.connection ?? 'direct',
         };
     this.nodes.set(node.id, node);
     return node;
@@ -366,6 +369,17 @@ export class InMemoryRepository implements Repository {
     // Ports on a machine that is gone are held by nothing (#233).
     for (const [key, a] of this.portAllocations) if (a.nodeId === id) this.portAllocations.delete(key);
     this.nodes.delete(id);
+    this.linkTokenHashes.delete(id);
+  }
+
+  private linkTokenHashes = new Map<string, string>();
+
+  async setNodeLinkTokenHash(id: string, hash: string): Promise<void> {
+    if (this.nodes.has(id)) this.linkTokenHashes.set(id, hash);
+  }
+
+  async getNodeLinkTokenHash(id: string): Promise<string | null> {
+    return this.linkTokenHashes.get(id) ?? null;
   }
 
   async createServerConfig(input: CreateServerConfigInput): Promise<ServerConfigRecord> {

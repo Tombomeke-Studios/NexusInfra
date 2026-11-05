@@ -144,7 +144,10 @@ Volume: `/data` — the database, which also holds notifications waiting to be r
 |---|---|---|
 | `NODE_ID` | yes | Unique per host. |
 | `INTERNAL_API_TOKEN` | yes | Must match the orchestrator's. |
-| `AGENT_URL` | no | How the orchestrator reaches this agent, advertised on its heartbeat. Defaults to `http://<hostname>:<PORT>`, which works on a Compose network; set it explicitly for anything else. |
+| `AGENT_URL` | no | How the orchestrator reaches this agent, advertised on its heartbeat. Defaults to `http://<hostname>:<PORT>`, which works on a Compose network; set it explicitly for anything else. Ignored with `AGENT_LINK_URL`. |
+| `AGENT_LINK_URL` | no | Turns on the **agent link** (#416, [agent-link.md](agent-link.md)): the agent dials the control plane itself, e.g. `wss://panel.example.com/agent-link`, and is controlled over that connection — for a node behind NAT. Only `wss://`, unless the host is loopback or `AGENT_LINK_ALLOW_INSECURE=true`. Unset: a direct agent, as before. |
+| `AGENT_LINK_TOKEN` | with a link URL | This node's link token, from `POST /nodes/:id/link-token`. Pass it in an env file, not on a command line. |
+| `AGENT_LINK_ALLOW_INSECURE` | no | `true` allows a `ws://` link URL to a non-loopback host. For a lab network only: in clear text the link carries every file and shell on the node. |
 | `BACKUP_DIR` | no | Where backup tarballs live. Defaults to `/var/lib/nexusinfra/backups`, which the image declares as a volume (#357): mount a **named** volume or a host directory there. Without a mount Docker gives each new container its own anonymous volume, so the backups of the previous container are left behind on upgrade. |
 | `BACKUP_S3_BUCKET` | no | Turns on **off-site backups** (#232): every backup is also copied to this S3-compatible bucket (AWS, Backblaze B2, Wasabi, Cloudflare R2, a self-hosted store). Off unless the bucket and both keys are set. Restore and download fall back to it when the node's own copy is gone. |
 | `BACKUP_S3_ACCESS_KEY_ID` / `BACKUP_S3_SECRET_ACCESS_KEY` | with a bucket | Credentials for the bucket. Give them access to that bucket (and prefix) only. |
@@ -256,7 +259,15 @@ service to the same value FinVault uses.
 
 ## Adding a machine
 
-On the second host, with the same broker and token:
+First the control plane, once: the new host's agent has to reach the broker (#409).
+
+- The bundles publish the broker on `127.0.0.1` only. The installer asks for the address to publish it
+  on (#414); otherwise set `BROKER_BIND` in `.env` to the control plane's address on the network the
+  hosts share (or `0.0.0.0`), and `BROKER_PORT` if 5672 is taken, then `docker compose up -d`. Keep the port off the internet.
+- Use a broker user of your own (`RABBITMQ_USER`/`RABBITMQ_PASS`, which the installer generates).
+  RabbitMQ lets `guest` in over loopback only, so an agent elsewhere is refused with `guest/guest`.
+
+Then on the second host, with the same broker and token:
 
 ```bash
 docker run -d --name nexusinfra-node-agent \
@@ -284,6 +295,41 @@ Three of those lines are easy to leave out and each fails quietly (#357):
 It registers via heartbeats and becomes a placement target. `AGENT_URL` must be an address the
 orchestrator can actually reach, and that path should not cross an untrusted network — see
 [security.md](security.md).
+
+### A machine behind NAT
+
+A host nobody can call — a laptop on someone else's network, a home server, a 4G line — becomes
+*healthy* this way but cannot be controlled. Give it an **agent link** instead (#416,
+[agent-link.md](agent-link.md)): the agent dials the control plane, and no port is published.
+
+Register it as outbound and mint its token, as a platform administrator:
+
+```bash
+curl -X POST https://panel.example.com/nodes -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' -d '{"id":"node-laptop","connection":"outbound"}'
+curl -X POST https://panel.example.com/nodes/node-laptop/link-token -H "authorization: Bearer $TOKEN"
+```
+
+The second answers `{ "token": "nxl_…" }` once. Put it in an env file readable only by root (mode 600),
+never on the command line, and start the agent **without** `-p 9100:9100` and without `AGENT_URL`:
+
+```bash
+docker run -d --name nexusinfra-node-agent \
+  --restart unless-stopped \
+  -e NODE_ID=node-laptop \
+  -e RABBITMQ_URL=amqp://user:pass@broker.example.com:5672 \
+  -e AGENT_LINK_URL=wss://panel.example.com/agent-link \
+  --env-file /etc/nexusinfra/agent-link.env \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v nexusinfra-backups:/var/lib/nexusinfra/backups \
+  --add-host=host.docker.internal:host-gateway \
+  ghcr.io/tombomeke-studios/nexusinfra/node-agent:community
+```
+
+`agent-link.env` holds `AGENT_LINK_TOKEN=…` and `INTERNAL_API_TOKEN=…`. `GET /nodes` then shows
+`"linked": true`, and `GET /nodes/node-laptop/disk` answers. The broker still needs its own port, as
+above; only the control plane's calls to the agent move onto the link. `wss://` needs TLS in front of the
+gateway — see [Before exposing any of this](#before-exposing-any-of-this).
 
 ---
 

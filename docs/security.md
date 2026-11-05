@@ -320,6 +320,33 @@ Now:
 **Remaining gap:** the token is a static shared secret with no rotation, and AMQP/HTTP hops are still
 plaintext on the private network. mTLS and rotation belong with the production hardening (#21).
 
+### Agent links (#416)
+
+A node behind NAT cannot be called, so its agent dials the control plane over one WebSocket and the
+orchestrator's calls come back over it ([agent-link.md](agent-link.md)). That moves the most dangerous
+traffic in the system — files and root shells — onto a connection that may cross the internet, so:
+
+- **A credential per node, not the shared secret.** Any node holding `INTERNAL_API_TOKEN` could open a
+  link claiming to be another node and be sent that node's files and shells. A link token is minted for
+  one node id (`POST /nodes/:id/link-token`, platform administrators) and the handshake is accepted only
+  when it matches the digest stored for the node id it names, compared in constant time. A leaked token
+  exposes one node's link, never another's.
+- **Only the digest is stored** (SHA-256; the token is 256 random bits, so a slow hash would protect
+  nothing). The token is shown once, is never part of a node record, and rides in a handshake header,
+  never a URL. Minting again rotates it and closes the node's current link.
+- **`wss://` only.** The agent refuses a `ws://` link URL unless the host is loopback or
+  `AGENT_LINK_ALLOW_INSECURE=true` is set for a lab. In clear text the link would carry the internal
+  token and everything after it.
+- **The agent opens nothing but its own API.** A stream is piped to `127.0.0.1:<PORT>` and nowhere else,
+  and that API still checks `INTERNAL_API_TOKEN` on every request, exactly as when it is called directly.
+  The orchestrator never accepts a stream opened by an agent.
+- **A refusal says nothing.** An unknown node, a wrong token and a missing header all get the same `401`.
+  The gateway's rate limit by address applies to the handshake.
+- One link per node: a new one replaces the old, so a stale connection cannot linger beside a fresh one.
+
+**Remaining gap:** the broker port is still needed and still plain AMQP unless you put TLS on it
+(see Transport security).
+
 
 ### Confirming an email address (#367)
 

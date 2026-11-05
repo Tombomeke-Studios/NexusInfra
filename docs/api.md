@@ -92,8 +92,12 @@ Runtime config the dashboard reads before login to decide whether billing UI ren
 Contains no sensitive data.
 
 ```json
-{ "edition": "community", "passwordResetByEmail": false, "sftpPort": 2022 }
+{ "edition": "community", "passwordResetByEmail": false, "sftpPort": 2022, "emailVerification": false, "features": ["agent-link"] }
 ```
+
+`features` lists what this control plane supports beyond the basics, so a client can ask instead of
+guessing from a version: `agent-link` means nodes behind NAT may connect outbound (#416,
+[agent-link.md](agent-link.md)).
 
 `edition` ∈ `community | hosted`, resolved from the service's `NEXUS_EDITION` (default `community`).
 `passwordResetByEmail` says whether "Forgot your password?" can send a link (#344) — true only with
@@ -872,18 +876,43 @@ node and the off-site store the same way (#390). An imported host directory (#26
 ### `GET /nodes`
 
 Registered nodes with their latest resources and derived `health` (`healthy | degraded | offline`).
+Each carries `connection` (`direct | outbound`, #416); an outbound node also carries `linked` — whether its
+agent link is up right now. For an outbound node *healthy* only means its heartbeats arrive; `linked` is
+whether it can be controlled.
 
 ### `POST /nodes`
 
-Register (or relabel) a node's metadata (#113) — body `{ id?, name?, location?, agentUrl? }`. `agentUrl`
+Register (or relabel) a node's metadata (#113) — body `{ id?, name?, location?, agentUrl?, connection? }`. `agentUrl`
 pins where that node's agent is reachable (#171); normally the node advertises it on its own heartbeat. `id` is generated when
 omitted. The node reads **offline** until an agent started with `NODE_ID=<id>` heartbeats in; its
 CPU/RAM/disk are then reported automatically and never overwrite the name/location. `201` with the node.
 
+`connection` (#416) is `direct` (the default for a new node) or `outbound`: a node whose agent dials in
+over an [agent link](agent-link.md) because nobody can call it. With `outbound`, `agentUrl` is not needed
+and is ignored. Leaving `connection` out when relabelling keeps what the node was; anything else is `400`.
+
+### `POST /nodes/:id/link-token`  *(platform administrators · API token scope `write`)*
+
+Mint a new agent link token for the node (#416) and close its current link. `201` with `{ "token": "nxl_…" }`
+— shown **once**; only its digest is stored, and the answer is `cache-control: no-store`. Calling it
+again rotates: the old token stops working at once. The token opens that node's link and no other.
+`404` for an unknown node.
+
+A call that has to reach an outbound node's agent while it has no link answers `502`
+`{ "error": "node has no agent link" }` — including `GET /nodes/:id/disk`, which therefore answers only
+when the node can really be controlled.
+
+### `WS /agent-link`  *(node agents only)*
+
+Where an outbound node's agent connects (through the gateway, public route). Headers
+`x-nexus-node-id: <node id>` and `authorization: Bearer <link token>`; anything that does not match the
+digest stored for that node is a bare `401`. The framing is in [agent-link.md](agent-link.md).
+
 ### `DELETE /nodes/:id`
 
-Deregister a node (remove its record; detaches it from any deployments). `409` if it still hosts a
-running/pending deployment, otherwise `204`. The machine itself is untouched.
+Deregister a node (remove its record; detaches it from any deployments). `404` if there is no node
+with that id, `409` if it still hosts a running/pending deployment, otherwise `204`. The machine
+itself is untouched.
 
 ---
 
