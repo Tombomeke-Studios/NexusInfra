@@ -1,4 +1,5 @@
 import type { NodeRecord } from './types.js';
+import { linkBaseUrl } from './agentLink.js';
 
 // Resolving which Node Agent to talk to (#171).
 //
@@ -20,8 +21,17 @@ export function normalizeAgentUrl(url: string): string {
 /**
  * The base URL for a node's agent: the node's own `agentUrl` when known,
  * otherwise `fallback` (the single-node `NODE_AGENT_URL`).
+ *
+ * An outbound node (#416) has no address to call; its URL names the node's agent
+ * link instead, and `agentFetch` sends the request over that link. Its
+ * `agentUrl`, if any was ever stored, is ignored — a stale address would be the
+ * wrong machine, or nothing.
  */
-export function resolveAgentUrl(node: Pick<NodeRecord, 'agentUrl'> | null | undefined, fallback: string): string {
+export function resolveAgentUrl(
+  node: (Pick<NodeRecord, 'agentUrl'> & Partial<Pick<NodeRecord, 'id' | 'connection'>>) | null | undefined,
+  fallback: string
+): string {
+  if (node?.connection === 'outbound' && node.id) return linkBaseUrl(node.id);
   const own = node?.agentUrl;
   if (typeof own === 'string' && own.trim().length > 0) return normalizeAgentUrl(own);
   return normalizeAgentUrl(fallback);

@@ -6,6 +6,7 @@ import { generateDatabaseCredentials, isDatabaseEngine } from './dbProvision.js'
 import { isValidCron } from './cron.js';
 import { runScheduleAction, type ScheduleActions } from './scheduler.js';
 import { resolveAgentUrl } from './agentUrl.js';
+import { agentLinks, linkFetch, linkNodeOf, mintLinkToken, NO_LINK, type LinkRegistry } from './agentLink.js';
 import { principalOf, requirePlatformAdmin } from './auth.js';
 import { accessGuard, accessOf, requirePermission, resolveAccess } from './accessGuard.js';
 import { can, isGrantableRole, resolveRole, type Permission } from './access.js';
@@ -51,10 +52,15 @@ const NODE_AGENT_URL = process.env.NODE_AGENT_URL || 'http://node-agent:9100';
  * rejected with 401.
  */
 export function agentFetch(url: string, init: RequestInit = {}): Promise<globalThis.Response> {
-  return fetch(url, {
+  const withToken: RequestInit = {
     ...init,
     headers: { ...(init.headers ?? {}), [INTERNAL_TOKEN_HEADER]: getInternalToken() },
-  });
+  };
+  // An outbound node's agent is reached over its agent link (#416); the request
+  // and its internal token are the same, only the connection under them differs.
+  const linkedNode = linkNodeOf(url);
+  if (linkedNode !== null) return linkFetch(agentLinks, linkedNode, url, withToken);
+  return fetch(url, withToken);
 }
 
 // Where the Billing Bridge's internal HTTP lives (hosted edition only).
