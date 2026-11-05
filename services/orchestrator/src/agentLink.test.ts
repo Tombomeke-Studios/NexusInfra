@@ -225,4 +225,23 @@ describe('agent calls over a link', () => {
     expect(registry.isLinked('nat')).toBe(true);
     expect(registry.size).toBe(1);
   });
+
+  it('takes a socket error as the end of the link, not as an uncaught exception (#424)', async () => {
+    // A reset link (NAT timeout, a dropped mobile line) emits `error`; an
+    // EventEmitter with no listener throws it. `close` follows and cleans up.
+    const { EventEmitter } = await import('node:events');
+    const socket = Object.assign(new EventEmitter(), {
+      bufferedAmount: 0,
+      send: () => undefined,
+      ping: () => undefined,
+      terminate: () => undefined,
+      close: () => undefined,
+    });
+    const registry = new LinkRegistry();
+    registry.attach('nat', socket, { keepAlive: false });
+    const reset = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+    expect(() => socket.emit('error', reset)).not.toThrow();
+    socket.emit('close');
+    expect(registry.isLinked('nat')).toBe(false);
+  });
 });

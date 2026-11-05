@@ -105,6 +105,7 @@ export interface LinkWebSocket extends LinkSocket, PingableSocket {
   on(event: 'message', cb: (data: Buffer, isBinary: boolean) => void): unknown;
   on(event: 'close', cb: () => void): unknown;
   on(event: 'pong' | 'ping', cb: () => void): unknown;
+  on(event: 'error', cb: (err: Error) => void): unknown;
   close(code?: number, reason?: string): void;
 }
 
@@ -126,6 +127,12 @@ export class LinkRegistry {
     const stopKeepAlive = options.keepAlive === false ? () => undefined : keepLinkAlive(socket);
     socket.on('message', (data, isBinary) => {
       if (isBinary) session.receive(data);
+    });
+    // A link that resets (a NAT timeout, a dropped mobile line) emits `error`
+    // before `close`; without a listener that is an uncaught exception (#424).
+    // `close` follows and does the cleanup.
+    socket.on('error', (err) => {
+      console.warn(`[Orchestrator] agent link error for node ${nodeId}: ${err.message}`);
     });
     socket.on('close', () => {
       stopKeepAlive();
