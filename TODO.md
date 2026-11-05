@@ -366,6 +366,9 @@ it". Every item carries the `edition:hosted` label on GitHub.
 
 ## Done
 
+### `feature/agent-link` — agent links for nodes behind NAT (fleet-support, NexusFleet K11)
+- [x] Agent link: let a node agent connect outbound to the control plane (#416) — `AGENT_LINK_URL`/`AGENT_LINK_TOKEN`, `connection: outbound` nodes, `POST /nodes/:id/link-token`, gateway `/agent-link`, `features: ["agent-link"]`; see [docs/agent-link.md](docs/agent-link.md)
+
 ### `feature/fleet-support` — merged in #412 (what NexusFleet needs to add nodes from another machine)
 - [x] Let node agents on other machines reach the broker (#409) — `BROKER_BIND` (default `127.0.0.1`) and `BROKER_PORT` in both bundles
 - [x] Generate the broker credentials in the installer (#410) — `RABBITMQ_USER=nexusinfra` and a random `RABBITMQ_PASS`, appended by both installers

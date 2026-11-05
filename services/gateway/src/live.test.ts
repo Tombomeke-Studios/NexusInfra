@@ -141,6 +141,24 @@ describe('WebSocket upgrades (#69)', () => {
     client.close();
   });
 
+  it('passes an agent link through with its own credential, no JWT needed (#416)', async () => {
+    const backend = await echoBackend();
+    const { app, upgrade } = createGateway({ routes: [{ prefix: '/agent-link', target: backend.url, public: true }], verify });
+    const server = http.createServer(app);
+    server.on('upgrade', upgrade);
+    const gateway = await listen(server);
+    const link = await open(`${ws(gateway)}/agent-link`, { 'x-nexus-node-id': 'nat', authorization: 'Bearer nxl_not-a-jwt' });
+
+    const frame = new Promise<Buffer>((r) => link.once('message', (d) => r(d as Buffer)));
+    link.send(Buffer.from([2, 0, 0, 0, 1, 104, 105]));
+    expect([...(await frame)]).toEqual([2, 0, 0, 0, 1, 104, 105]);
+    // The orchestrator decides on these, so they arrive as sent.
+    expect(backend.seen.headers?.['x-nexus-node-id']).toBe('nat');
+    expect(backend.seen.headers?.authorization).toBe('Bearer nxl_not-a-jwt');
+    expect(backend.seen.headers?.['x-user-id']).toBeUndefined();
+    link.close();
+  });
+
   it('closes the backend session when the browser closes', async () => {
     // A closed tab must not keep a root shell alive on the node.
     const backend = await echoBackend();

@@ -6,6 +6,7 @@ import { generateDatabaseCredentials, isDatabaseEngine } from './dbProvision.js'
 import { isValidCron } from './cron.js';
 import { runScheduleAction, type ScheduleActions } from './scheduler.js';
 import { resolveAgentUrl } from './agentUrl.js';
+import { agentLinks, linkFetch, linkNodeOf, mintLinkToken, NO_LINK, type LinkRegistry } from './agentLink.js';
 import { principalOf, requirePlatformAdmin } from './auth.js';
 import { accessGuard, accessOf, requirePermission, resolveAccess } from './accessGuard.js';
 import { can, isGrantableRole, resolveRole, type Permission } from './access.js';
@@ -51,10 +52,15 @@ const NODE_AGENT_URL = process.env.NODE_AGENT_URL || 'http://node-agent:9100';
  * rejected with 401.
  */
 export function agentFetch(url: string, init: RequestInit = {}): Promise<globalThis.Response> {
-  return fetch(url, {
+  const withToken: RequestInit = {
     ...init,
     headers: { ...(init.headers ?? {}), [INTERNAL_TOKEN_HEADER]: getInternalToken() },
-  });
+  };
+  // An outbound node's agent is reached over its agent link (#416); the request
+  // and its internal token are the same, only the connection under them differs.
+  const linkedNode = linkNodeOf(url);
+  if (linkedNode !== null) return linkFetch(agentLinks, linkedNode, url, withToken);
+  return fetch(url, withToken);
 }
 
 // Where the Billing Bridge's internal HTTP lives (hosted edition only).
@@ -220,6 +226,8 @@ export interface ApiDeps {
   migrationTransport?: MigrationTransport;
   /** Runs a planned migration; tests await it, production lets it run in the background. */
   runMigration?: (run: () => Promise<void>) => void;
+  /** The agent links up right now (#416); the process's own registry by default. */
+  links?: LinkRegistry;
 }
 
 // Default quota check: in the community edition everything is allowed (no
@@ -385,6 +393,7 @@ export function createApiRouter(deps: ApiDeps): Router {
   const gameQuery = deps.gameQuery ?? defaultGameQuery;
   const gameQueryCache = createQueryCache({ ttlMs: deps.gameQueryTtlMs });
   const migrationTransport = deps.migrationTransport ?? defaultMigrationTransport;
+  const links = deps.links ?? agentLinks;
   const runMigration =
     deps.runMigration ??
     ((run: () => Promise<void>) => {
@@ -1154,6 +1163,10 @@ export function createApiRouter(deps: ApiDeps): Router {
         const capacity = nodeCapacity(n, deployments);
         return {
           ...n,
+          // Whether an outbound node's agent link is up right now (#416) — the
+          // difference between "healthy" and "can be controlled" for a node
+          // behind NAT. A direct node has no link to report.
+          ...(n.connection === 'outbound' ? { linked: links.isLinked(n.id) } : {}),
           health: nodeHealth(n, now),
           capacity: {
             ...capacity,
@@ -1167,17 +1180,43 @@ export function createApiRouter(deps: ApiDeps): Router {
   });
 
   // Register (or relabel) a node's metadata (#113). It reads offline until an agent
-  // started with NODE_ID=<id> heartbeats in. Body: { id?, name?, location? }.
+  // started with NODE_ID=<id> heartbeats in. Body: { id?, name?, location?,
+  // agentUrl?, connection? }. `connection: "outbound"` (#416) is a node whose
+  // agent dials in over an agent link; it has no address, so agentUrl is ignored.
   router.post('/nodes', requirePlatformAdmin, async (req: Request, res: Response) => {
-    const { id, name, location, agentUrl } = req.body ?? {};
+    const { id, name, location, agentUrl, connection } = req.body ?? {};
+    if (connection !== undefined && connection !== 'direct' && connection !== 'outbound') {
+      return res.status(400).json({ error: 'connection must be "direct" or "outbound"' });
+    }
     const nodeId = typeof id === 'string' && id.trim() ? id.trim() : `node-${randomToken()}`;
+    const existing = (await repo.listNodes()).find((n) => n.id === nodeId);
+    const outbound = connection === 'outbound' || (connection === undefined && existing?.connection === 'outbound');
     const node = await repo.registerNode({
       id: nodeId,
       name: typeof name === 'string' && name.trim() ? name.trim() : undefined,
       location: typeof location === 'string' ? location.trim() || null : undefined,
-      agentUrl: typeof agentUrl === 'string' ? agentUrl.trim() || null : undefined,
+      agentUrl: !outbound && typeof agentUrl === 'string' ? agentUrl.trim() || null : undefined,
+      // A new node is direct unless told otherwise; an existing one keeps what it was.
+      connection: connection ?? (existing ? undefined : 'direct'),
     });
-    return res.status(201).json({ ...node, health: nodeHealth(node, Date.now()) });
+    return res.status(201).json({
+      ...node,
+      ...(node.connection === 'outbound' ? { linked: links.isLinked(node.id) } : {}),
+      health: nodeHealth(node, Date.now()),
+    });
+  });
+
+  // Mint (or rotate) a node's agent link token (#416). Returned once, stored only
+  // as a digest. Whatever link the node had is closed: a rotation that left the
+  // old link up would not have revoked anything.
+  router.post('/nodes/:id/link-token', requirePlatformAdmin, async (req: Request, res: Response) => {
+    const existing = (await repo.listNodes()).find((n) => n.id === req.params.id);
+    if (!existing) return res.status(404).json({ error: 'node not found' });
+    const { token, hash } = mintLinkToken();
+    await repo.setNodeLinkTokenHash(existing.id, hash);
+    links.close(existing.id, 'link token rotated');
+    res.setHeader('cache-control', 'no-store');
+    return res.status(201).json({ token });
   });
 
   // A node's host-port pool (#233). Existing allocations outside a new range
@@ -1190,6 +1229,9 @@ export function createApiRouter(deps: ApiDeps): Router {
   router.get('/nodes/:id/disk', requirePlatformAdmin, async (req: Request, res: Response) => {
     const node = (await repo.listNodes()).find((n) => n.id === req.params.id);
     if (!node) return res.status(404).json({ error: 'node not found' });
+    // This answer is how a client proves it can control a node (NexusFleet relies
+    // on it), so an outbound node with no link says so rather than guessing.
+    if (node.connection === 'outbound' && !links.isLinked(node.id)) return res.status(502).json({ error: NO_LINK });
     let usage: Record<string, unknown>;
     try {
       usage = await diskUsage(await agentUrlFor(node.id));

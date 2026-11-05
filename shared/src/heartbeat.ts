@@ -41,6 +41,12 @@ export interface NodeHeartbeatOptions {
    * setups, where the Orchestrator falls back to its configured NODE_AGENT_URL.
    */
   agentUrl?: string;
+  /**
+   * The agent reaches the control plane over an agent link (#416). The pulse then
+   * says `connection: 'outbound'` and advertises no `agentUrl` — nobody can call
+   * a node behind NAT, so an address would only be a wrong one.
+   */
+  outbound?: boolean;
 }
 
 /**
@@ -60,7 +66,8 @@ export function startNodeHeartbeat(
   const beatMs = options.beatMs ?? 1000;
   const resourceMs = options.resourceMs ?? 5000;
   const publish = options.publish ?? publishRabbitEvent;
-  const agentUrl = options.agentUrl;
+  const agentUrl = options.outbound ? undefined : options.agentUrl;
+  const connection = options.outbound ? ('outbound' as const) : undefined;
   const routingKey = `monitoring.heartbeat.node.${nodeId}`;
 
   let elapsed = 0;
@@ -69,7 +76,7 @@ export function startNodeHeartbeat(
     const resources = withResources ? await collectResources() : undefined;
     const envelope = buildEnvelope(`node-agent:${nodeId}`, {
       type: 'heartbeat.node',
-      payload: { nodeId, status: 'healthy', timestamp: new Date().toISOString(), agentUrl, resources },
+      payload: { nodeId, status: 'healthy', timestamp: new Date().toISOString(), agentUrl, ...(connection ? { connection } : {}), resources },
     });
     await publish(routingKey, envelope);
   };

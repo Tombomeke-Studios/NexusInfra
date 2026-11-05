@@ -10,6 +10,7 @@ import { resolveAgentUrl } from './agentUrl.js';
 import { verifyToken } from './auth.js';
 import { can, resolveRole } from './access.js';
 import { pipeSockets, toWsUrl, type DuplexSocket } from './wsProxy.js';
+import { agentLinks, authorizeLink, linkConnection, linkNodeOf } from './agentLink.js';
 import { createBillingProxyRouter } from './billingProxy.js';
 import { createBillingPlansRouter } from './billingPlans.js';
 import { createMonitoringRouter } from './monitoring.js';
@@ -271,8 +272,36 @@ function toDuplex(ws: WebSocket): DuplexSocket {
   };
 }
 
+// ── Agent links (#416) ────────────────────────────────────────────────────────
+// A node behind NAT dials in here (through the gateway's public /agent-link
+// route); its agent is then controlled over this socket. No user token: the
+// link token, matched against the digest stored for the node id it names, is
+// the credential. A refusal says nothing about why.
+const CRLF = '\r\n';
+const linkWss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 });
+
+async function acceptAgentLink(req: import('http').IncomingMessage, socket: import('stream').Duplex, head: Buffer): Promise<void> {
+  let nodeId: string | null = null;
+  try {
+    nodeId = await authorizeLink(req.headers, (id) => repo.getNodeLinkTokenHash(id));
+  } catch (err) {
+    console.error('[Orchestrator] could not check an agent link:', err instanceof Error ? err.message : err);
+  }
+  if (!nodeId) {
+    socket.end('HTTP/1.1 401 Unauthorized' + CRLF + 'Connection: close' + CRLF + 'Content-Length: 0' + CRLF + CRLF);
+    return;
+  }
+  const linked = nodeId;
+  linkWss.handleUpgrade(req, socket, head, (ws) => {
+    agentLinks.attach(linked, ws);
+    console.log(`[Orchestrator] agent link up for node ${linked}`);
+    ws.on('close', () => console.log(`[Orchestrator] agent link down for node ${linked}`));
+  });
+}
+
 server.on('upgrade', async (req, socket, head) => {
   const url = new URL(req.url ?? '', 'http://orchestrator');
+  if (url.pathname === '/agent-link') return acceptAgentLink(req, socket, head);
   const match = /^\/deployments\/([^/]+)\/terminal$/.exec(url.pathname);
   if (!match) return socket.destroy();
 
@@ -319,8 +348,14 @@ server.on('upgrade', async (req, socket, head) => {
     // The agent authorizes this upgrade with the shared internal token (#169) —
     // this hop is server-to-server, so a header is available (unlike the browser's
     // handshake, which carries its JWT as a query param).
+    // An outbound node's terminal rides its agent link (#416): same handshake,
+    // same token, a link stream where the TCP connection would be.
+    const linkedNode = linkNodeOf(agentUrl);
+    const createConnection = linkedNode !== null ? linkConnection(agentLinks, linkedNode) : undefined;
+    if (createConnection === null) return clientWs.close(1011, 'node has no agent link');
     const upstream = new WebSocket(`${toWsUrl(agentUrl)}/terminal/${target.containerId}?cols=${cols}&rows=${rows}`, {
       headers: { [INTERNAL_TOKEN_HEADER]: getInternalToken() },
+      ...(createConnection ? { createConnection: createConnection as unknown as typeof import('net').createConnection } : {}),
     });
     upstream.on('open', () => pipeSockets(toDuplex(clientWs), toDuplex(upstream)));
     upstream.on('error', () => clientWs.close());

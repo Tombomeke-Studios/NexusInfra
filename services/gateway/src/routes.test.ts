@@ -23,6 +23,8 @@ describe('matchRoute', () => {
   it('marks login and config as public', () => {
     expect(matchRoute('/auth/login', routes)?.public).toBe(true);
     expect(matchRoute('/config', routes)?.public).toBe(true);
+    // The agent link carries its own credential, checked by the orchestrator (#416).
+    expect(matchRoute('/agent-link', routes)).toEqual({ target: 'http://orchestrator:9200', public: true, prefix: '/agent-link' });
   });
 
   it('marks billing/monitoring as protected', () => {

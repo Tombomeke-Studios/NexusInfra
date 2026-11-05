@@ -220,6 +220,7 @@ is the migrations directory.
 | `shared/src/version.ts` | Build identity: `getVersion()` (reads `APP_VERSION`, baked by the release build) + `buildInfo()` → `{ version, edition }`, spread into every service's `/health` (#173) |
 | `shared/src/outbox.ts` | `PublishOutbox` + `startOutboxFlusher` — holds a failed publish and replays it **in order** when the broker returns; bounded (drop-oldest + `droppedCount`). Wrap publishers whose events carry state (#167) |
 | `shared/src/metrics.ts` | Prometheus metrics for every service (#246): dependency-free `MetricsRegistry` (counters, histograms, scrape-time gauges that fail soft), `httpMetrics` (labels by **route pattern**, never the raw path), `metricsHandler` (`METRICS_TOKEN`), `registerBuildInfo` |
+| `shared/src/agentLink.ts` | The agent link's wire (#416, [docs/agent-link.md](docs/agent-link.md)): frames `[type u8][streamId u32 BE][payload]` (OPEN/DATA/END/RESET = 1–4), `LinkSession` (streams over one WebSocket) and `LinkStream` (a `Duplex` with the socket no-ops undici and `http` call), the 1 MiB backpressure mark, `keepLinkAlive` (15 s ping, 45 s silence). **The numbers are a contract with NexusFleet** |
 | `shared/src/internalToken.ts` | Service-to-service shared secret: `INTERNAL_TOKEN_HEADER`, `getInternalToken`, `tokensMatch` (constant-time). Guards the Node Agent's internal API (#169) |
 | `shared/src/events.test.ts` | Wire-compatibility guard tests (encryption round-trip, ciphertext layout, envelope shape) |
 
@@ -254,6 +255,7 @@ is the migrations directory.
 | `src/diskUsage.ts` | Per-server disk use (#347): pure `diskByDeployment` over Docker's `system df` (volumes by deployment label + the writable layer), a one-minute cache that shares an in-flight walk, and the internal `GET /disk` · `/deployments/:id/disk`. Docker's `-1` stays **unknown**, never `0`. Measured, not enforced — `StorageOpt` would cap only the writable layer, and the data is in volumes (#278) |
 | `src/query.ts` | Game status wire formats (#382), pure: VarInt + Minecraft Server List Ping framing, Bedrock's RakNet unconnected ping/pong, Steam A2S_INFO (+ the 2020 challenge). A field the game did not report is `null` — a hidden player count is never `0` |
 | `src/queryRoutes.ts` | The sockets (`net`/`dgram`, one hard deadline per question, A2S challenge round) + internal `GET /query?protocol=&port=` → `online` with what the game said, or `offline` with why. Asks `QUERY_HOST` → `host.docker.internal` → `127.0.0.1`: **loopback in the agent's container is the container**, so the compose files map the name to the host gateway (a bundle test keeps it there) |
+| `src/link.ts` | The agent's half of the agent link (#416): `linkConfigFromEnv` (`AGENT_LINK_URL`/`_TOKEN`/`_ALLOW_INSECURE`; `wss://` unless loopback or the opt-in — a wrong one stops the agent), `nextRetryMs` (1 s doubling to 30 s), `startAgentLink`, and `answerStream`, which pipes an OPEN to `127.0.0.1:<PORT>` and **nothing else** |
 | `src/execRoutes.ts` | `createExecRouter` — internal console HTTP: one-shot `sh -c` command exec in a container (#68) |
 | `src/terminal.ts` | `attachTerminal` — pure bridge wiring a WebSocket to an interactive TTY session (`runtime.execInteractive`); JSON `input`/`resize` frames in, raw output out (#71) |
 | `src/internalAuth.ts` | `requireInternalToken` (Express) + `upgradeAuthorized` (WS handshake) — every internal route/upgrade needs the shared token; `/health` stays open (#169) |
@@ -271,7 +273,8 @@ is the migrations directory.
 | `src/db.ts` | `getPrisma()` + `PrismaRepository` (SQLite-backed `Repository`) |
 | `src/nodeRegistry.ts` | Consumes `monitoring.heartbeat.node.#`, upserts nodes (liveness/resources only — never clobbers a registered name/location), derives health (3s/10s) |
 | `src/nodeSelection.ts` | Pure least-loaded `selectNode` (healthy nodes, ranked by CPU+RAM load) |
-| `src/agentUrl.ts` | Pure `resolveAgentUrl`/`normalizeAgentUrl` — which node's agent to call, falling back to `NODE_AGENT_URL` for single-node (#171) |
+| `src/agentUrl.ts` | Pure `resolveAgentUrl`/`normalizeAgentUrl` — which node's agent to call, falling back to `NODE_AGENT_URL` for single-node (#171). An outbound node resolves to its link URL (#416) |
+| `src/agentLink.ts` | The orchestrator's half of the agent link (#416): `linkBaseUrl` (`http://<hex id>.agent-link.invalid` — a name only the link understands, so call sites stay unchanged), link tokens (`mintLinkToken`, digest only, `authorizeLink` per node id, constant-time), `LinkRegistry` (one link per node; `agentLinks` is the process's), `linkFetch` (undici `Agent` whose `connect` opens a stream; 502 `node has no agent link` without one) and `linkConnection` for the terminal's `ws` |
 | `src/dbProvision.ts` | Pure managed-DB helpers: `isDatabaseEngine` guard + `generateDatabaseCredentials` (safe name/user/password) |
 | `src/minecraftVersions.ts` | Which Minecraft versions the panel offers (#311). Asks Mojang's manifest, caches 6h, **falls back to a baked list offline** — a community install is somebody's own machine and may have no route out. Releases only (the manifest is mostly snapshots) and in Mojang's order, since `1.9`/`1.10` do not sort as text. The list is a **suggestion, never a gate**: `eggs.ts` validates a version by shape, so a cold cache cannot refuse a version the image would install |
 | `src/eggs.ts` | Egg catalogue (#231) — the recipes a server is created from (image, ports, dataPath, typed variables with defaults/validation) + `buildEggDeployment`. **Pure.** A variable may declare `showWhen` (#311) so it is neither asked for nor sent when it does not apply — `NEOFORGE_VERSION` means nothing to a Paper server, and it is one character from `FORGE_VERSION`, which installs the wrong loader. Lives here, not in the browser: the recipe validates server-side, so a caller that skips the form cannot skip `EULA=TRUE` or inject arbitrary container env. Replaced `dashboard/src/gameSpec.ts`. Eleven eggs: Minecraft Java + Bedrock, Palworld, Valheim, Rust, CS2 (#315), Terraria, Factorio, Satisfactory, Project Zomboid, Enshrouded (#384) — Bedrock keeps its **own** version list, since Java's numbering would be a plausible wrong answer. A string variable may declare `minLength`/`maxLength`/`pattern` (+ `patternHint`), matched against the whole value; every string refuses control characters, because images write values straight into config files (#384). `generate: 'password'` (#388) fills a blank answer with a random secret instead of a default — no egg ships a fixed password; the generator is injectable for tests |
@@ -346,7 +349,7 @@ is the migrations directory.
 ### services/gateway (API gateway — single entry point, #20)
 | Path | Contents |
 |---|---|
-| `src/routes.ts` | Pure routing table + `matchRoute` (longest-prefix, public/protected) |
+| `src/routes.ts` | Pure routing table + `matchRoute` (longest-prefix, public/protected). `/agent-link` is public (#416): the orchestrator checks the node's link token |
 | `src/auth.ts` | `verifyToken`/`bearerToken` — validates the same JWTs the orchestrator issues (FinVault JWT later, #17) |
 | `src/rateLimit.ts` | Pure token-bucket `RateLimiter` (per-IP/user, injected clock) |
 | `src/gateway.ts` | `createGateway` → `{ app, upgrade }` (and `createGatewayApp` for just the app) — CORS → rate limit → token (protected routes) → **streaming** reverse proxy to the matched backend. One `gate` decides for HTTP and WebSocket upgrades alike, so a socket is no way around the limiter. A JWT is verified; an `nxi_` API token is opaque here and passed through for the orchestrator to judge. A client disconnect aborts the backend request — a log tail never ends on its own |
@@ -462,6 +465,11 @@ is the migrations directory.
 - **Agent calls must target the *owning* node** — resolve it with `agentUrlFor(deployment.nodeId)`,
   never the bare `NODE_AGENT_URL` constant (that is only the single-node fallback). Getting this wrong
   operates on the wrong host and fails silently with 2+ nodes (#171).
+- **An outbound node's agent is reached over its agent link, never by address (#416).** Its agent URL is
+  `http://<hex>.agent-link.invalid`, which only `agentFetch` (and `linkConnection` for a WebSocket)
+  know how to dial — a bare `fetch` to it fails DNS. undici's `connect` callback must be called
+  asynchronously, or the request is never written. A node's link token digest is not part of
+  `NodeRecord` on purpose: node records go out over HTTP.
 - **Every Orchestrator → Billing Bridge call must go through `bridgeFetch`** (`bridge.ts`, #372). The
   bridge believes the user id in the path, so it serves only callers with the internal token. A bare
   `fetch` answers 401 — and the billing checks fail *open*, so the symptom is billing quietly not enforced.

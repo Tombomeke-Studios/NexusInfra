@@ -81,6 +81,20 @@ describe('createNodeRegistry', () => {
     expect(node.cpuPercent).toBe(12);
   });
 
+  it('records an agent that dials in as outbound, and never turns a node back (#416)', async () => {
+    const beat = (nodeId: string, connection?: string) =>
+      buildEnvelope(`node-agent:${nodeId}`, {
+        type: 'heartbeat.node',
+        payload: { nodeId, status: 'healthy', timestamp: '2026-11-05T00:00:00.000Z', ...(connection ? { connection } : {}) } as never,
+      });
+    await registry.handleHeartbeat(beat('nat'));
+    expect((await repo.listNodes())[0].connection).toBe('direct');
+    await registry.handleHeartbeat(beat('nat', 'outbound'));
+    expect((await repo.listNodes())[0].connection).toBe('outbound');
+    await registry.handleHeartbeat(beat('nat'));
+    expect((await repo.listNodes())[0].connection).toBe('outbound');
+  });
+
   it('ignores non-node-heartbeat events', async () => {
     const service = buildEnvelope('control-room', {
       type: 'heartbeat.service',
