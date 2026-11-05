@@ -107,6 +107,7 @@ export function startAgentLink(options: AgentLinkOptions): AgentLink {
     socket = ws;
     const session = new LinkSession(ws, { onOpen: (stream) => answerStream(stream, options.localPort) });
     let stopKeepAlive: (() => void) | null = null;
+    let refused = false;
 
     ws.on('open', () => {
       connected = true;
@@ -120,11 +121,13 @@ export function startAgentLink(options: AgentLinkOptions): AgentLink {
     ws.on('unexpected-response', (_req, res) => {
       // 401 is a token the control plane does not know for this node: minted for
       // another one, or rotated since. Retrying keeps the node visible as trying.
+      refused = true;
       log(`[agent link] the control plane refused the link (${res.statusCode}); retrying`);
       ws.terminate();
     });
     ws.on('error', (err) => {
-      if (!connected) log(`[agent link] could not connect: ${err.message}`);
+      // A refusal was already said; the abort it causes is not news.
+      if (!connected && !refused) log(`[agent link] could not connect: ${err.message}`);
     });
     ws.on('close', () => {
       if (connected) log('[agent link] disconnected; reconnecting');
