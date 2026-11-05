@@ -350,6 +350,10 @@ development.
   wire, dead-lettering, every migration from an empty file, unique-index races, and the full
   command → agent → report loop. It sets `REQUIRE_BROKER`, so a job that lost its broker fails
   instead of skipping. Locally: `RABBITMQ_URL=amqp://guest:guest@localhost:5672 npm run test:integration`
+- The **images** job builds the orchestrator, gateway, control-room and node-agent images and starts
+  each one, which must answer `/health` within a minute. The images run their own Node (18) with
+  production dependencies only, so a dependency that needs a newer Node passes every test and still
+  crashes the image at start — undici 7 did exactly that to the orchestrator (#416).
   (the broker suites skip without it; the database suite always runs).
 - Releases: merges reach `main` only via `staging`; tag `vX.Y.Z` after each main merge
   (see CLAUDE.md branch strategy).
