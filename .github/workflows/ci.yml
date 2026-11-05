@@ -105,3 +105,38 @@ jobs:
           REQUIRE_BROKER: '1'
           TEST_POSTGRES_URL: postgresql://nexus:nexus@localhost:5432/nexus
           REQUIRE_POSTGRES: '1'
+
+  # The images run a different Node than CI does, with only their production
+  # dependencies. A dependency that needs a newer Node passed every test above
+  # and still crashed the orchestrator image at start (#416). Each image the
+  # node lab pulls is built and started here, and must answer /health.
+  images:
+    name: Images start (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { service: orchestrator, port: 9200 }
+          - { service: gateway, port: 9400 }
+          - { service: control-room, port: 9000 }
+          - { service: node-agent, port: 9100 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -f services/${{ matrix.service }}/Dockerfile -t ci/${{ matrix.service }} .
+
+      # No broker and no Docker socket: each service keeps its HTTP up without
+      # them, so a container that exits here failed to load, not to connect.
+      - name: Start it and wait for /health
+        run: |
+          docker run -d --name svc -p ${{ matrix.port }}:${{ matrix.port }} ci/${{ matrix.service }}
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:${{ matrix.port }}/health > /dev/null; then echo "healthy after ${i}s"; exit 0; fi
+            if [ "$(docker inspect -f '{{.State.Running}}' svc)" != "true" ]; then echo "::error::the ${{ matrix.service }} image exited at start"; docker logs svc; exit 1; fi
+            sleep 1
+          done
+          echo "::error::the ${{ matrix.service }} image did not answer /health within 60s"
+          docker logs svc
+          exit 1

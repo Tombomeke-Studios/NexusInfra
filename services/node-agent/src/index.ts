@@ -17,6 +17,7 @@ import { createImageRouter } from './images.js';
 import { createMigrationRouter } from './migrateRoutes.js';
 import { createQueryRouter, resolveQueryHost } from './queryRoutes.js';
 import { attachTerminal, type TerminalSocket } from './terminal.js';
+import { linkConfigFromEnv, startAgentLink } from './link.js';
 
 // ── Node Agent ────────────────────────────────────────────────────────────────
 // Runs on a Docker host. Consumes server lifecycle commands addressed to this
@@ -38,6 +39,17 @@ const PORT = Number(process.env.PORT) || 9100;
 // works on a compose/DNS network where the hostname resolves; set AGENT_URL
 // explicitly for anything else.
 const AGENT_URL = process.env.AGENT_URL || `http://${os.hostname()}:${PORT}`;
+
+// The agent link (#416): with AGENT_LINK_URL set, this agent dials the control
+// plane itself and is controlled over that connection — for a node behind NAT,
+// which nobody can call. A link that is configured wrong stops the agent rather
+// than leaving a node that looks healthy and cannot be controlled.
+const linkConfig = linkConfigFromEnv(process.env);
+if (linkConfig && 'problem' in linkConfig) {
+  console.error(`[Node Agent ${NODE_ID}] ${linkConfig.problem}`);
+  process.exit(1);
+}
+const outbound = linkConfig !== null;
 
 const runtime = new DockerodeRuntime();
 
@@ -218,7 +230,12 @@ server.on('upgrade', (req, socket, head) => {
   });
 });
 
-server.listen(PORT, () => console.log(`[Node Agent ${NODE_ID}] HTTP listening on http://localhost:${PORT}`));
+server.listen(PORT, () => {
+  console.log(`[Node Agent ${NODE_ID}] HTTP listening on http://localhost:${PORT}`);
+  if (linkConfig && !('problem' in linkConfig)) {
+    startAgentLink({ ...linkConfig, nodeId: NODE_ID, localPort: PORT, log: (m) => console.log(`[Node Agent ${NODE_ID}] ${m}`) });
+  }
+});
 
 // ── Event bus: consume server lifecycle commands ──────────────────────────────
 async function start() {
@@ -234,8 +251,10 @@ async function start() {
     console.log(`[Node Agent ${NODE_ID}] Listening for server commands`);
 
     // 1s liveness pulse; CPU/RAM/disk snapshot every 5s. Control Room monitors it.
-    startNodeHeartbeat(NODE_ID, () => runtime.collectResources(), { agentUrl: AGENT_URL });
-    console.log(`[Node Agent ${NODE_ID}] Publishing heartbeat on monitoring.heartbeat.node.${NODE_ID} (agent at ${AGENT_URL})`);
+    startNodeHeartbeat(NODE_ID, () => runtime.collectResources(), { agentUrl: AGENT_URL, outbound });
+    console.log(
+      `[Node Agent ${NODE_ID}] Publishing heartbeat on monitoring.heartbeat.node.${NODE_ID} (${outbound ? 'reached over the agent link' : `agent at ${AGENT_URL}`})`
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[Node Agent ${NODE_ID}] Failed to connect to event bus:`, message);

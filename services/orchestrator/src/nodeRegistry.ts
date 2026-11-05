@@ -23,6 +23,8 @@ interface NodeHeartbeatPayload {
   timestamp?: string;
   /** Where this node's agent API is reachable, so calls route to the owning node (#171). */
   agentUrl?: string;
+  /** `outbound`: the agent dials in over an agent link and has no address (#416). */
+  connection?: string;
   resources?: {
     cpuPercent?: number;
     cpuCores?: number;
@@ -60,6 +62,9 @@ export function createNodeRegistry(repo: Repository): NodeRegistry {
       // Only forwarded when advertised, so a node registered with an explicit URL
       // isn't cleared by an older agent that doesn't report one.
       agentUrl: payload.agentUrl,
+      // An agent that dials in says so; one that says nothing leaves the record
+      // as registered, so a direct node is never turned into anything else.
+      connection: payload.connection === 'outbound' ? 'outbound' : undefined,
       cpuPercent: r?.cpuPercent,
       cpuCores: r?.cpuCores,
       ramUsedMb: r?.ramUsedMb,

@@ -160,6 +160,7 @@ function toNodeRecord(n: PrismaNode): NodeRecord {
     maintenance: n.maintenance,
     portRangeStart: n.portRangeStart ?? null,
     portRangeEnd: n.portRangeEnd ?? null,
+    connection: n.connection === 'outbound' ? 'outbound' : 'direct',
     cpuCores: n.cpuCores,
     id: n.id,
     name: n.name,
@@ -420,6 +421,7 @@ export class PrismaRepository implements Repository {
       ...(provided(input.ramTotalMb) ? { ramTotalMb: input.ramTotalMb } : {}),
       ...(provided(input.diskUsedGb) ? { diskUsedGb: input.diskUsedGb } : {}),
       ...(provided(input.diskTotalGb) ? { diskTotalGb: input.diskTotalGb } : {}),
+      ...(provided(input.connection) ? { connection: input.connection } : {}),
     };
     const node = await this.client.node.upsert({
       where: { id: input.id },
@@ -435,6 +437,7 @@ export class PrismaRepository implements Repository {
         ramTotalMb: input.ramTotalMb ?? null,
         diskUsedGb: input.diskUsedGb ?? null,
         diskTotalGb: input.diskTotalGb ?? null,
+        connection: input.connection ?? 'direct',
       },
       update,
     });
@@ -609,6 +612,7 @@ export class PrismaRepository implements Repository {
         maintenance: input.maintenance ?? false,
         portRangeStart: input.portRange?.start ?? null,
         portRangeEnd: input.portRange?.end ?? null,
+        connection: input.connection ?? 'direct',
         // Registered-but-unseen → epoch so it reads offline until its agent beats.
         lastHeartbeat: new Date(0),
       },
@@ -617,6 +621,7 @@ export class PrismaRepository implements Repository {
         ...(input.location !== undefined ? { location: input.location } : {}),
         ...(input.agentUrl !== undefined ? { agentUrl: input.agentUrl } : {}),
         ...(input.maintenance !== undefined ? { maintenance: input.maintenance } : {}),
+        ...(input.connection !== undefined ? { connection: input.connection } : {}),
         ...(input.portRange !== undefined
           ? { portRangeStart: input.portRange?.start ?? null, portRangeEnd: input.portRange?.end ?? null }
           : {}),
@@ -631,6 +636,15 @@ export class PrismaRepository implements Repository {
     // Ports on a machine that is gone are held by nothing (#233).
     await this.client.portAllocation.deleteMany({ where: { nodeId: id } });
     await this.client.node.delete({ where: { id } });
+  }
+
+  async setNodeLinkTokenHash(id: string, hash: string): Promise<void> {
+    await this.client.node.updateMany({ where: { id }, data: { linkTokenHash: hash } });
+  }
+
+  async getNodeLinkTokenHash(id: string): Promise<string | null> {
+    const node = await this.client.node.findUnique({ where: { id }, select: { linkTokenHash: true } });
+    return node?.linkTokenHash ?? null;
   }
 
   async createServerConfig(input: CreateServerConfigInput): Promise<ServerConfigRecord> {

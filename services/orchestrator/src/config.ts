@@ -5,6 +5,8 @@ import { getEdition, type Edition } from 'shared';
 // exposes only the edition (community|hosted) so the panel knows whether to
 // render billing UI; keep this endpoint free of anything sensitive.
 
+export const FEATURES = ['agent-link'] as const;
+
 export function createConfigRouter(edition: Edition = getEdition(), options: { passwordResetByEmail?: boolean; sftpPort?: number | null; emailVerification?: boolean } = {}): Router {
   const router = Router();
   router.get('/config', (_req: Request, res: Response) => {
@@ -19,6 +21,10 @@ export function createConfigRouter(edition: Edition = getEdition(), options: { p
       passwordResetByEmail: options.passwordResetByEmail === true,
       sftpPort: options.sftpPort ?? null,
       emailVerification: options.emailVerification === true,
+      // What this control plane supports beyond the basics, so a client can ask
+      // instead of guessing from a version. `agent-link` (#416): nodes behind NAT
+      // may connect outbound.
+      features: FEATURES,
     });
   });
   return router;

@@ -66,4 +66,23 @@ describe('startNodeHeartbeat', () => {
 
     stop();
   });
+
+  it('reports an outbound agent as such, with no address (#416)', async () => {
+    const payloads: Array<Record<string, unknown>> = [];
+    const publish = async (_key: string, envelope: EventEnvelope) => {
+      payloads.push(envelope.event.payload as Record<string, unknown>);
+      return true;
+    };
+    const stopOutbound = startNodeHeartbeat('node-1', async () => RESOURCES, { agentUrl: 'http://10.0.0.5:9100', outbound: true, publish });
+    const stopDirect = startNodeHeartbeat('node-2', async () => RESOURCES, { agentUrl: 'http://10.0.0.6:9100', publish });
+    await vi.advanceTimersByTimeAsync(0);
+    stopOutbound();
+    stopDirect();
+
+    expect(payloads[0]).toMatchObject({ nodeId: 'node-1', connection: 'outbound' });
+    expect(payloads[0].agentUrl).toBeUndefined();
+    // A direct agent's pulse is what it always was.
+    expect(payloads[1]).toMatchObject({ nodeId: 'node-2', agentUrl: 'http://10.0.0.6:9100' });
+    expect('connection' in payloads[1]).toBe(false);
+  });
 });

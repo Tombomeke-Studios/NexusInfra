@@ -29,6 +29,9 @@ export function defaultRoutes(orchestrator: string): RouteRule[] {
     // Login and registration must be reachable without a token; the Orchestrator
     // decides whether registration is open for this edition (#174).
     { prefix: '/auth', target: orchestrator, public: true },
+    // A node agent behind NAT dials in here (#416). No user JWT: the orchestrator
+    // checks the node's own link token. The rate limit by address still applies.
+    { prefix: '/agent-link', target: orchestrator, public: true },
     { prefix: '/me', target: orchestrator },
     { prefix: '/users', target: orchestrator },
     { prefix: '/teams', target: orchestrator },

@@ -1028,6 +1028,16 @@ describe('deployment API', () => {
     expect((await request(app).get('/nodes')).body).toEqual([]);
   });
 
+  it('answers 404 for deregistering a node that does not exist, and touches nothing (#411)', async () => {
+    // Prisma's delete throws on a missing row, which answered 500; the in-memory
+    // repository silently said 204. Neither tells a caller the node was never there.
+    await seedHealthyNode(repo, 'node-keep');
+    const res = await request(buildApp(repo, published, PLATFORM_ADMIN)).delete('/nodes/node-nope');
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'node not found' });
+    expect((await repo.listNodes()).map((n) => n.id)).toEqual(['node-keep']);
+  });
+
   it('refuses to deregister a node that still hosts a running deployment', async () => {
     await seedHealthyNode(repo, 'node-busy');
     const created = await request(app).post('/deployments').send({ name: 'svc', dockerImage: 'nginx' });

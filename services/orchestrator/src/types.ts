@@ -39,6 +39,13 @@ export interface CreateUserInput {
 
 export type NodeHealth = 'healthy' | 'degraded' | 'offline';
 
+/**
+ * How the control plane reaches a node's agent (#416): `direct` calls it on its
+ * `agentUrl`; `outbound` means the agent dials in over an agent link, for a node
+ * behind NAT that has no address anybody can call.
+ */
+export type NodeConnection = 'direct' | 'outbound';
+
 export interface NodeRecord {
   id: string;
   name: string;
@@ -62,6 +69,8 @@ export interface NodeRecord {
   /** The host ports servers here may be given (#233); null for no pool. */
   portRangeStart: number | null;
   portRangeEnd: number | null;
+  /** How the control plane reaches this node's agent (#416). */
+  connection: NodeConnection;
 }
 
 /** One host port held by one server on one node (#233). */
@@ -332,6 +341,8 @@ export interface UpsertNodeInput {
   ramTotalMb?: number | null;
   diskUsedGb?: number | null;
   diskTotalGb?: number | null;
+  /** Only `outbound`, from an agent that says it dials in (#416); absent leaves it as it is. */
+  connection?: NodeConnection;
 }
 
 export interface CreateServerConfigInput {
@@ -448,6 +459,8 @@ export interface RegisterNodeInput {
   maintenance?: boolean;
   /** Set (or with null, remove) the node's host-port pool (#233). */
   portRange?: { start: number; end: number } | null;
+  /** How the control plane reaches the node's agent (#416); a new node defaults to `direct`. */
+  connection?: NodeConnection;
 }
 
 export interface Repository {
@@ -526,6 +539,12 @@ export interface Repository {
   registerNode(input: RegisterNodeInput): Promise<NodeRecord>;
   /** Remove a node record; detaches it from any deployments first. */
   deleteNode(id: string): Promise<void>;
+  /**
+   * The digest of a node's agent link token (#416). Kept out of `NodeRecord` on
+   * purpose: node records are returned over HTTP, and this must never be.
+   */
+  setNodeLinkTokenHash(id: string, hash: string): Promise<void>;
+  getNodeLinkTokenHash(id: string): Promise<string | null>;
 
   createServerConfig(input: CreateServerConfigInput): Promise<ServerConfigRecord>;
   createDeployment(serverConfigId: string, nodeId: string | null): Promise<DeploymentRecord>;
