@@ -362,6 +362,44 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [x] The PostgreSQL schema guards never ran on Windows — the sync script exited 0 without doing anything, and the migration check could not start Prisma (#361) 🐛
 - [x] The port backfill handed a clashing port to the newer server instead of the one holding it — it walked the list newest first; its test only passed when both servers shared a millisecond (#358) 🐛
 
+### Final Work — mobile app (`feature/mobile-app`)
+
+> The Final Work (EhB, 2026–2027) turns NexusInfra, FinVault and NexusWatch into one ecosystem you
+> manage from anywhere. The panel is feature-complete; the new work is a mobile app on the same API.
+> Build in order — the scaffold and the client come first, everything else sits on them.
+
+- [ ] Scaffold the mobile app workspace (`mobile/`) — Expo + React Native like FinVault, so its theme engine, biometrics and EAS build setup carry over
+- [ ] Mobile API client against the gateway (`:9400`): sign in, JWT session, API tokens (#228)
+- [ ] Servers list on mobile: status, CPU and RAM — read the existing SSE stats stream from React Native
+- [ ] Start, stop and restart from the app, offering only what the server role allows (`dashboard/src/permissions.ts` rules)
+- [ ] Live player count and server status for game servers on mobile (`GET /deployments/:id/query`, #382)
+- [ ] Push notification channel: register a device token under `/me/notifications` and deliver crash, node-offline and `credit.low` through Expo push — the notifier knows webhook and email only (#236)
+- [ ] Fingerprint sign-in on mobile, the way FinVault's `src/biometrics.ts` does it
+- [ ] Sign in the app by scanning a QR code shown in the panel — mints a scoped, revocable API token, so nobody types a password on a phone
+- [ ] Open FinVault's top-up screen from a `credit.low` notification (needs FinVault's deep link) — hosted
+
+### Final Work — mobile extras (team scope)
+
+- [ ] iOS build of the mobile app
+- [ ] Logs and console on mobile
+- [ ] Create a server from the app, picking from the eggs
+- [ ] Home-screen widget with the status of your servers
+
+### Final Work — panel features
+
+- [ ] Auto-stop an idle game server: no players for N minutes (from #382) stops it and notifies the owner; opt-in per server — in hosted it stops paying for an empty server
+- [ ] Show cost in euros before a server is created and on each running server (per hour and estimated per month, at the plan's rate) — hosted
+- [ ] Surface a container's own Docker `HEALTHCHECK` state (starting / healthy / unhealthy) beside *running*, and notify on unhealthy
+- [ ] Crash-loop protection: a server that crashes N times in M minutes is stopped and flagged instead of restarting forever
+- [ ] Correlation id on the event envelope (optional field, additive) so one top-up or deploy can be followed across NexusInfra, FinVault and NexusWatch — wire contract: ship together with FinVault's half
+
+### Final Work — the ecosystem
+
+- [ ] One compose profile that starts NexusInfra, FinVault and NexusWatch on one shared broker — for development and the Final Work demo
+- [ ] Demo seed script: customers, servers, a top-up, a crash and an incident, so a presentation starts from a believable state
+- [ ] Shared design tokens across the three products (FinVault `docs/design-system.md`, NexusInfra and NexusWatch themes) — one recognisable family, each keeping its own project colour
+- [ ] One sign-in across the products — design the flow first, as #377 asks
+
 ---
 
 ## Done
