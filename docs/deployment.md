@@ -17,6 +17,12 @@ and sign in as the administrator seeded on first start — `ADMIN_EMAIL` (defaul
 `ADMIN_PASSWORD` (default `admin`). The service warns on every start while that default is in place;
 set a real password before the panel is reachable by anyone else.
 
+**The edition comes from `.env` at build time.** Every image is stamped with the edition it is built
+for (#189), and `docker-compose.yml` hands each build `NEXUS_EDITION` as a build argument. To run the
+hosted edition, set `NEXUS_EDITION=hosted` in `.env` and rebuild (`docker-compose up --build`) — an
+image built as community refuses to start as hosted. Until the build argument existed, every image
+was stamped community and a hosted stack exited at start.
+
 Or hybrid: `docker-compose up rabbitmq` + `npm run dev` (backend) and
 `npm --workspace dashboard run dev` (UI on `5173`) for hot reloading.
 

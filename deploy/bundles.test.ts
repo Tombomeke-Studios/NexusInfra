@@ -27,6 +27,22 @@ function containerNamesIn(file: string): string[] {
   return [...readFileSync(file, 'utf8').matchAll(/^\s*container_name:\s*(\S+)/gm)].map((m) => m[1]);
 }
 
+// The development compose builds every image from source. The edition is
+// baked into each image at build time (#189), and a service whose stamp and
+// NEXUS_EDITION disagree refuses to start — so a build that is not handed the
+// edition is a community image, and `NEXUS_EDITION=hosted docker compose up
+// --build` used to start a stack in which every service exited at once.
+describe('the development compose file', () => {
+  it('builds every image for the edition NEXUS_EDITION names', () => {
+    const compose = readFileSync(join(ROOT, 'docker-compose.yml'), 'utf8').replace(/\r\n/g, '\n');
+    const builds = [...compose.matchAll(/^ {2}([a-z-]+):\n((?: {4}.*\n|\n)+)/gm)].filter(([, , body]) => /^ {4}build:/m.test(body));
+    expect(builds.length).toBeGreaterThan(0);
+    for (const [, service, body] of builds) {
+      expect(body, `${service} is built without its edition`).toMatch(/^ {6}args:\n {8}NEXUS_EDITION: \$\{NEXUS_EDITION:-community\}$/m);
+    }
+  });
+});
+
 describe('the release bundles', () => {
   it.each(COMPOSE_FILES)('gives every service a Docker-valid container name: %s', (file) => {
     // #291: the bundles borrowed the slash from the nested *image* repository

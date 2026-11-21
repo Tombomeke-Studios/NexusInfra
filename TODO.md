@@ -107,6 +107,10 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 
 ## Backlog
 
+### `feature/finvault-compose` — run NexusInfra beside FinVault from source
+
+- [x] The development compose builds every image as community, so a hosted stack exits at start (#427) 🐛
+
 ### Panel features → functional (make the mock UI real)
 
 Each mock behavior in the ported design becomes real, one issue + branch at a time.
