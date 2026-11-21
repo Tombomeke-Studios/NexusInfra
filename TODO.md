@@ -362,6 +362,50 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [x] The PostgreSQL schema guards never ran on Windows — the sync script exited 0 without doing anything, and the migration check could not start Prisma (#361) 🐛
 - [x] The port backfill handed a clashing port to the newer server instead of the one holding it — it walked the list newest first; its test only passed when both servers shared a millisecond (#358) 🐛
 
+### Final Work — the MVP for the March showcase
+
+> The Final Work (EhB, 2026–2027) turns NexusInfra, FinVault and NexusWatch into one ecosystem you
+> manage from anywhere. **The showcase in March is the deadline** — nothing is built after it — so
+> everything in this group is the MVP from the proposal, and the group below starts only when it is done.
+> Owners as agreed in the proposal: Liam (web panel + infrastructure), Laila & Quinten (iOS builds),
+> Tom (NexusWatch); everyone helps where needed. Open: who builds the Android app itself.
+
+**Mobile app, Android and iOS (`feature/mobile-app`)** — one Expo + React Native codebase builds both.
+Build in order: the scaffold and the client come first, everything else sits on them.
+
+- [ ] Scaffold the mobile app workspace (`mobile/`) — Expo + React Native like FinVault, so its theme engine, biometrics and EAS build setup carry over
+- [ ] Mobile API client against the gateway (`:9400`): sign in, JWT session, API tokens (#228)
+- [ ] Servers list on mobile: status, CPU and RAM — read the existing SSE stats stream from React Native
+- [ ] Start, stop and restart from the app, offering only what the server role allows (`dashboard/src/permissions.ts` rules)
+- [ ] Live player count and server status for game servers on mobile (`GET /deployments/:id/query`, #382)
+- [ ] Push notification channel: register a device token under `/me/notifications` and deliver crash, node-offline and `credit.low` through Expo push — the notifier knows webhook and email only (#236)
+- [ ] Fingerprint sign-in on mobile, the way FinVault's `src/biometrics.ts` does it
+- [ ] Open FinVault's top-up screen from a `credit.low` notification (needs FinVault's deep link) — hosted
+- [ ] iOS build of the app from the same codebase, tested on a real iPhone (Expo Go for development; installing a build needs an Apple developer account)
+
+**Web panel (`feature/panel-polish`)**
+
+- [ ] Finish the panel's look and the web functionality that is still missing — the web panel stays the full management environment beside the app
+
+**The chain, end to end (`feature/ecosystem`)**
+
+- [ ] Add NexusWatch to the combined stack — NexusInfra and FinVault already run together through `docker-compose.finvault.yml` (#428)
+- [ ] Demo seed script for the showcase scenario: a customer rents a game server, credit runs low, a notification arrives, they top up in FinVault and the server keeps running while NexusWatch records it all
+- [ ] Shared design tokens across the three products (FinVault `docs/design-system.md`, NexusInfra and NexusWatch themes) — one recognisable family, each keeping its own project colour
+
+### Final Work — only once the MVP is done (still before March)
+
+- [ ] Logs and console on mobile
+- [ ] Create a server from the app, picking from the eggs
+- [ ] One sign-in across the products — design the flow first, as #377 asks
+- [ ] Sign in the app by scanning a QR code shown in the panel — mints a scoped, revocable API token, so nobody types a password on a phone
+- [ ] Home-screen widget with the status of your servers
+- [ ] Auto-stop an idle game server: no players for N minutes (from #382) stops it and notifies the owner; opt-in per server — in hosted it stops paying for an empty server
+- [ ] Show cost in euros before a server is created and on each running server (per hour and estimated per month, at the plan's rate) — hosted
+- [ ] Surface a container's own Docker `HEALTHCHECK` state (starting / healthy / unhealthy) beside *running*, and notify on unhealthy
+- [ ] Crash-loop protection: a server that crashes N times in M minutes is stopped and flagged instead of restarting forever
+- [ ] Correlation id on the event envelope (optional field, additive) so one top-up or deploy can be followed across NexusInfra, FinVault and NexusWatch — wire contract: ship together with FinVault's half
+
 ---
 
 ## Done
