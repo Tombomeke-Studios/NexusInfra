@@ -110,6 +110,7 @@ Working checklist and roadmap, grouped per branch. Conventions and the iteration
 ### `feature/finvault-compose` — run NexusInfra beside FinVault from source
 
 - [x] The development compose builds every image as community, so a hosted stack exits at start (#427) 🐛
+- [x] Run NexusInfra beside FinVault from source with one compose overlay (#428)
 
 ### Panel features → functional (make the mock UI real)
 

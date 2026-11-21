@@ -278,9 +278,33 @@ real server and fails on any difference.
 
 ## Combined deployment with FinVault
 
-Run one broker for both platforms: omit NexusInfra's `rabbitmq` service and point `RABBITMQ_URL` at
-FinVault's `finvault-rabbitmq` container (shared Docker network required). Both stacks assert the
-same exchanges idempotently — start order does not matter.
+Both platforms must share one broker. Started side by side unchanged they do not: each compose file
+starts its own RabbitMQ on the host's `5672` and `15672`, so the second stack fails to start, and a
+top-up published on one broker never reaches the other. `docker-compose.finvault.yml` is the overlay
+that runs NexusInfra's **hosted** edition on FinVault's broker, from source:
+
+1. **FinVault first.** In the FinVault repository, set `NEXUSINFRA_MERCHANT_EMAIL` in its `.env` to an
+   existing FinVault account (the seeded `admin@finvault.com` works) — that account receives what
+   customers pay, and with it empty FinVault ignores every top-up. Then `docker compose up -d --build`.
+2. **The same message key on both sides.** `FINVAULT_MESSAGE_KEY` must be identical in both `.env`
+   files (empty on both is fine for local development: payloads then travel in plain text).
+3. **NexusInfra on top:**
+   `docker compose -f docker-compose.yml -f docker-compose.finvault.yml up -d --build`.
+   The overlay drops NexusInfra's broker, points every service at FinVault's (published on the host's
+   `5672`, reached as `host.docker.internal`) and builds and runs the hosted edition — no
+   `NEXUS_EDITION` in `.env` needed.
+4. **A customer who exists in both.** A top-up names its payer by email (#351), so sign up in the
+   panel (`http://localhost:8095`) with an address that has a FinVault account — the seeded
+   `test@finvault.com`, for instance. When the installation can send mail, confirm the address first
+   (#367).
+5. **Top up** on the Billing page; the payment request appears in the FinVault apps, and approving it
+   credits the balance.
+
+The overlay does not join FinVault's Docker network on purpose: FinVault has a service called
+`gateway` too, and its account service calls `http://gateway:8000` — two containers behind that name
+would break FinVault. The two stacks' other published ports do not overlap (FinVault: `3000`,
+`8000`–`8003`, `8888`; NexusInfra: `8095`, `9000`–`9400`). Both stacks assert the same exchanges
+idempotently, so once FinVault's broker is up the order of the rest does not matter.
 
 ## Releases & editions (#179)
 

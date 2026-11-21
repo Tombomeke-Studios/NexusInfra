@@ -43,6 +43,40 @@ describe('the development compose file', () => {
   });
 });
 
+// docker-compose.finvault.yml runs this stack on FinVault's broker. A service
+// the overlay forgets keeps talking to a broker that is not started, and its
+// events never reach FinVault — which is the failure the overlay exists to end.
+describe('the FinVault overlay', () => {
+  it('moves every service that uses the broker onto FinVault\'s, and stops starting our own', () => {
+    const base = readFileSync(join(ROOT, 'docker-compose.yml'), 'utf8').replace(/\r\n/g, '\n');
+    const overlay = readFileSync(join(ROOT, 'docker-compose.finvault.yml'), 'utf8').replace(/\r\n/g, '\n');
+    const blockOf = (compose: string, service: string) =>
+      compose.match(new RegExp(`^ {2}${service}:\\n((?: {4}.*\\n|\\n)+)`, 'm'))?.[1] ?? '';
+    const usesBroker = [...base.matchAll(/^ {2}([a-z-]+):\n((?: {4}.*\n|\n)+)/gm)]
+      .filter(([, , body]) => body.includes('RABBITMQ_URL='))
+      .map(([, service]) => service);
+    expect(usesBroker.length).toBeGreaterThan(0);
+    for (const service of usesBroker) {
+      const block = blockOf(overlay, service);
+      expect(block, `${service} still uses NexusInfra's own broker`).toMatch(/environment: \*finvault-broker/);
+      expect(block, `${service} still waits for NexusInfra's own broker`).toMatch(/depends_on: !(reset|override)/);
+    }
+    expect(blockOf(overlay, 'rabbitmq')).toMatch(/profiles:/);
+    expect(overlay).toMatch(/RABBITMQ_URL: amqp:\/\/guest:guest@host\.docker\.internal:5672/);
+  });
+
+  it('builds every image as hosted, the only edition with billing', () => {
+    const base = readFileSync(join(ROOT, 'docker-compose.yml'), 'utf8').replace(/\r\n/g, '\n');
+    const overlay = readFileSync(join(ROOT, 'docker-compose.finvault.yml'), 'utf8').replace(/\r\n/g, '\n');
+    const built = [...base.matchAll(/^ {2}([a-z-]+):\n((?: {4}.*\n|\n)+)/gm)]
+      .filter(([, , body]) => /^ {4}build:/m.test(body))
+      .map(([, service]) => service);
+    for (const service of built) {
+      expect(overlay, `${service} is not built as hosted`).toMatch(new RegExp(`^ {2}${service}:\\n {4}build: \\{ args: \\*hosted-build \\}`, 'm'));
+    }
+  });
+});
+
 describe('the release bundles', () => {
   it.each(COMPOSE_FILES)('gives every service a Docker-valid container name: %s', (file) => {
     // #291: the bundles borrowed the slash from the nested *image* repository
