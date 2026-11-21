@@ -198,6 +198,7 @@ is the migrations directory.
 | Dev watch: shared + control-room | `npm run dev` |
 | Start stack (RabbitMQ + services, Docker) | `docker-compose up` |
 | Start only the broker | `docker-compose up rabbitmq` |
+| Stack beside FinVault (hosted, FinVault's broker) | FinVault's `docker compose up -d` first, then `docker compose -f docker-compose.yml -f docker-compose.finvault.yml up -d --build` ([docs/deployment.md](docs/deployment.md#combined-deployment-with-finvault)) |
 | Run the dashboard (dev) | `npm --workspace dashboard run dev` (http://localhost:5173) |
 | RabbitMQ management UI | http://localhost:15672 (guest/guest) |
 | Control Room health / status | http://localhost:9000/health · /status |
@@ -407,6 +408,7 @@ is the migrations directory.
 | Path | Contents |
 |---|---|
 | `docker-compose.yml` | RabbitMQ + control-room + node-agent + orchestrator + dashboard stack |
+| `docker-compose.finvault.yml` | Overlay: the hosted edition on **FinVault's** broker (reached on the host's `5672` as `host.docker.internal`), no broker of our own. Never join FinVault's Docker network instead — FinVault has a `gateway` service too, and its account service calls `http://gateway:8000`. `deploy/bundles.test.ts` fails when a service that uses the broker is left out |
 | `vitest.workspace.ts` | Splits tests into `backend` (node) and `dashboard` (jsdom) projects |
 | `.env.example` | Env contract — documents the FinVault-shared vars (`RABBITMQ_URL`, `FINVAULT_MESSAGE_KEY`) |
 | `allinone/` | All-in-one image (#203): one container with every service under s6, its own broker, and first-start secret generation. Published as `nexusinfra-community` / `nexusinfra-hosted`. **Single machine** — a second host runs the standalone agent |

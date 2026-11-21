@@ -27,6 +27,56 @@ function containerNamesIn(file: string): string[] {
   return [...readFileSync(file, 'utf8').matchAll(/^\s*container_name:\s*(\S+)/gm)].map((m) => m[1]);
 }
 
+// The development compose builds every image from source. The edition is
+// baked into each image at build time (#189), and a service whose stamp and
+// NEXUS_EDITION disagree refuses to start — so a build that is not handed the
+// edition is a community image, and `NEXUS_EDITION=hosted docker compose up
+// --build` used to start a stack in which every service exited at once.
+describe('the development compose file', () => {
+  it('builds every image for the edition NEXUS_EDITION names', () => {
+    const compose = readFileSync(join(ROOT, 'docker-compose.yml'), 'utf8').replace(/\r\n/g, '\n');
+    const builds = [...compose.matchAll(/^ {2}([a-z-]+):\n((?: {4}.*\n|\n)+)/gm)].filter(([, , body]) => /^ {4}build:/m.test(body));
+    expect(builds.length).toBeGreaterThan(0);
+    for (const [, service, body] of builds) {
+      expect(body, `${service} is built without its edition`).toMatch(/^ {6}args:\n {8}NEXUS_EDITION: \$\{NEXUS_EDITION:-community\}$/m);
+    }
+  });
+});
+
+// docker-compose.finvault.yml runs this stack on FinVault's broker. A service
+// the overlay forgets keeps talking to a broker that is not started, and its
+// events never reach FinVault — which is the failure the overlay exists to end.
+describe('the FinVault overlay', () => {
+  it('moves every service that uses the broker onto FinVault\'s, and stops starting our own', () => {
+    const base = readFileSync(join(ROOT, 'docker-compose.yml'), 'utf8').replace(/\r\n/g, '\n');
+    const overlay = readFileSync(join(ROOT, 'docker-compose.finvault.yml'), 'utf8').replace(/\r\n/g, '\n');
+    const blockOf = (compose: string, service: string) =>
+      compose.match(new RegExp(`^ {2}${service}:\\n((?: {4}.*\\n|\\n)+)`, 'm'))?.[1] ?? '';
+    const usesBroker = [...base.matchAll(/^ {2}([a-z-]+):\n((?: {4}.*\n|\n)+)/gm)]
+      .filter(([, , body]) => body.includes('RABBITMQ_URL='))
+      .map(([, service]) => service);
+    expect(usesBroker.length).toBeGreaterThan(0);
+    for (const service of usesBroker) {
+      const block = blockOf(overlay, service);
+      expect(block, `${service} still uses NexusInfra's own broker`).toMatch(/environment: \*finvault-broker/);
+      expect(block, `${service} still waits for NexusInfra's own broker`).toMatch(/depends_on: !(reset|override)/);
+    }
+    expect(blockOf(overlay, 'rabbitmq')).toMatch(/profiles:/);
+    expect(overlay).toMatch(/RABBITMQ_URL: amqp:\/\/guest:guest@host\.docker\.internal:5672/);
+  });
+
+  it('builds every image as hosted, the only edition with billing', () => {
+    const base = readFileSync(join(ROOT, 'docker-compose.yml'), 'utf8').replace(/\r\n/g, '\n');
+    const overlay = readFileSync(join(ROOT, 'docker-compose.finvault.yml'), 'utf8').replace(/\r\n/g, '\n');
+    const built = [...base.matchAll(/^ {2}([a-z-]+):\n((?: {4}.*\n|\n)+)/gm)]
+      .filter(([, , body]) => /^ {4}build:/m.test(body))
+      .map(([, service]) => service);
+    for (const service of built) {
+      expect(overlay, `${service} is not built as hosted`).toMatch(new RegExp(`^ {2}${service}:\\n {4}build: \\{ args: \\*hosted-build \\}`, 'm'));
+    }
+  });
+});
+
 describe('the release bundles', () => {
   it.each(COMPOSE_FILES)('gives every service a Docker-valid container name: %s', (file) => {
     // #291: the bundles borrowed the slash from the nested *image* repository

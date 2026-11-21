@@ -1,0 +1,66 @@
+# NexusInfra (hosted edition) on FinVault's broker — the whole chain from source.
+#
+#   1. In the FinVault repository, with NEXUSINFRA_MERCHANT_EMAIL set in its .env:
+#        docker compose up -d --build
+#   2. Here, with the same FINVAULT_MESSAGE_KEY in .env as FinVault's:
+#        docker compose -f docker-compose.yml -f docker-compose.finvault.yml up -d --build
+#
+# Without this file the two stacks cannot talk: each starts its own RabbitMQ, both
+# publish 5672 and 15672 on the host (so the second one fails to start), and a
+# top-up published on one broker never reaches the other. This file drops
+# NexusInfra's broker and points every service at FinVault's, which FinVault
+# publishes on the host's port 5672. It also builds and runs the hosted edition,
+# the only one with billing. Walkthrough: docs/deployment.md#combined-deployment-with-finvault
+#
+# Why the host and not FinVault's Docker network: FinVault has a service called
+# `gateway` too, and its account service calls http://gateway:8000. Joining that
+# network would put two containers behind that name.
+
+x-finvault-broker: &finvault-broker
+  RABBITMQ_URL: amqp://guest:guest@host.docker.internal:5672
+  NEXUS_EDITION: hosted
+
+x-hosted-build: &hosted-build
+  NEXUS_EDITION: hosted
+
+# Docker Desktop resolves host.docker.internal by itself; Linux needs the mapping.
+x-host-gateway: &host-gateway
+  - host.docker.internal:host-gateway
+
+services:
+  # Not started: FinVault's broker carries both platforms' events.
+  rabbitmq:
+    profiles: [own-broker]
+
+  control-room:
+    build: { args: *hosted-build }
+    environment: *finvault-broker
+    depends_on: !reset []
+    extra_hosts: *host-gateway
+
+  node-agent:
+    build: { args: *hosted-build }
+    environment: *finvault-broker
+    depends_on: !reset []
+    extra_hosts: *host-gateway
+
+  orchestrator:
+    build: { args: *hosted-build }
+    environment: *finvault-broker
+    depends_on: !reset []
+    extra_hosts: *host-gateway
+
+  billing-bridge:
+    build: { args: *hosted-build }
+    environment: *finvault-broker
+    depends_on: !reset []
+    extra_hosts: *host-gateway
+
+  gateway:
+    build: { args: *hosted-build }
+    environment: *finvault-broker
+    depends_on: !override [orchestrator]
+    extra_hosts: *host-gateway
+
+  dashboard:
+    build: { args: *hosted-build }

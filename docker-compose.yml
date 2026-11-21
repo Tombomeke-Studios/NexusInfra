@@ -19,6 +19,8 @@ services:
     build:
       context: .
       dockerfile: services/control-room/Dockerfile
+      args:
+        NEXUS_EDITION: ${NEXUS_EDITION:-community}
     container_name: nexusinfra-control-room
     ports:
       - "9000:9000"
@@ -35,6 +37,8 @@ services:
     build:
       context: .
       dockerfile: services/node-agent/Dockerfile
+      args:
+        NEXUS_EDITION: ${NEXUS_EDITION:-community}
     container_name: nexusinfra-node-agent
     # Publishing 9100 is a dev convenience for poking the internal API directly.
     # It is NOT needed in production — the Orchestrator reaches the agent over the
@@ -80,6 +84,8 @@ services:
     build:
       context: .
       dockerfile: services/orchestrator/Dockerfile
+      args:
+        NEXUS_EDITION: ${NEXUS_EDITION:-community}
     container_name: nexusinfra-orchestrator
     ports:
       - "9200:9200"
@@ -132,6 +138,8 @@ services:
     build:
       context: .
       dockerfile: services/billing-bridge/Dockerfile
+      args:
+        NEXUS_EDITION: ${NEXUS_EDITION:-community}
     container_name: nexusinfra-billing-bridge
     ports:
       - "9300:9300"
@@ -160,6 +168,8 @@ services:
     build:
       context: .
       dockerfile: services/gateway/Dockerfile
+      args:
+        NEXUS_EDITION: ${NEXUS_EDITION:-community}
     container_name: nexusinfra-gateway
     ports:
       - "9400:9400"
@@ -179,6 +189,8 @@ services:
     build:
       context: ./dashboard
       dockerfile: Dockerfile
+      args:
+        NEXUS_EDITION: ${NEXUS_EDITION:-community}
     container_name: nexusinfra-dashboard
     ports:
       - "8095:80"
