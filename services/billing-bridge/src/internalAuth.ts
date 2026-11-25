@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { getInternalToken, INTERNAL_TOKEN_HEADER, tokensMatch } from 'shared';
+import { acceptedInternalTokens, INTERNAL_TOKEN_HEADER, tokenAccepted } from 'shared';
 
 // Guards the Billing Bridge's API (#372). Its routes name the account in the
 // path and believe it: the Orchestrator is supposed to be the only caller, and
@@ -9,10 +9,10 @@ import { getInternalToken, INTERNAL_TOKEN_HEADER, tokensMatch } from 'shared';
 // Same shared token as the Node Agent's internal API (#169). Mount after
 // /health and /metrics so probes and scrapes stay open.
 
-export function requireInternalToken(expected: string = getInternalToken()) {
+export function requireInternalToken(expected: string | string[] = acceptedInternalTokens()) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const provided = req.headers[INTERNAL_TOKEN_HEADER];
-    if (tokensMatch(typeof provided === 'string' ? provided : undefined, expected)) {
+    if (tokenAccepted(typeof provided === 'string' ? provided : undefined, expected)) {
       next();
       return;
     }

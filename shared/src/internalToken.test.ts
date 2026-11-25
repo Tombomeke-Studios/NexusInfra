@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { DEV_INTERNAL_TOKEN, getInternalToken, isDefaultInternalToken, tokensMatch } from './internalToken.js';
+import { DEV_INTERNAL_TOKEN, acceptedInternalTokens, getInternalToken, getPreviousInternalToken, isDefaultInternalToken, tokenAccepted, tokensMatch } from './internalToken.js';
 
 describe('getInternalToken', () => {
   const original = process.env.INTERNAL_API_TOKEN;
@@ -43,5 +43,50 @@ describe('tokensMatch', () => {
 
   it('is case sensitive', () => {
     expect(tokensMatch('SECRET', 'secret')).toBe(false);
+  });
+});
+
+describe('rotation (INTERNAL_API_TOKEN_PREVIOUS)', () => {
+  const saved = { current: process.env.INTERNAL_API_TOKEN, previous: process.env.INTERNAL_API_TOKEN_PREVIOUS };
+  afterEach(() => {
+    for (const [key, value] of [['INTERNAL_API_TOKEN', saved.current], ['INTERNAL_API_TOKEN_PREVIOUS', saved.previous]] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it('accepts only the current token when no rotation is under way', () => {
+    process.env.INTERNAL_API_TOKEN = 'new';
+    delete process.env.INTERNAL_API_TOKEN_PREVIOUS;
+    expect(getPreviousInternalToken()).toBeUndefined();
+    expect(acceptedInternalTokens()).toEqual(['new']);
+  });
+
+  it('accepts the previous token too while one is configured', () => {
+    process.env.INTERNAL_API_TOKEN = 'new';
+    process.env.INTERNAL_API_TOKEN_PREVIOUS = 'old';
+    expect(acceptedInternalTokens()).toEqual(['new', 'old']);
+    expect(tokenAccepted('old', acceptedInternalTokens())).toBe(true);
+    expect(tokenAccepted('new', acceptedInternalTokens())).toBe(true);
+    expect(tokenAccepted('older', acceptedInternalTokens())).toBe(false);
+  });
+
+  it('never sends the previous token', () => {
+    process.env.INTERNAL_API_TOKEN = 'new';
+    process.env.INTERNAL_API_TOKEN_PREVIOUS = 'old';
+    expect(getInternalToken()).toBe('new');
+  });
+
+  it('ignores an empty previous token, so an unset-by-template variable opens nothing', () => {
+    process.env.INTERNAL_API_TOKEN = 'new';
+    process.env.INTERNAL_API_TOKEN_PREVIOUS = '';
+    expect(acceptedInternalTokens()).toEqual(['new']);
+    expect(tokenAccepted('', acceptedInternalTokens())).toBe(false);
+  });
+
+  it('ignores a previous token equal to the current one', () => {
+    process.env.INTERNAL_API_TOKEN = 'same';
+    process.env.INTERNAL_API_TOKEN_PREVIOUS = 'same';
+    expect(acceptedInternalTokens()).toEqual(['same']);
   });
 });

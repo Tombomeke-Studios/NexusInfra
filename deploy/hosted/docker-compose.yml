@@ -51,6 +51,7 @@ services:
       - METRICS_TOKEN=${METRICS_TOKEN:-}
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:?must match FinVault, or the two cannot read each other's events}
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?set a strong random value in .env}
+      - INTERNAL_API_TOKEN_PREVIOUS=${INTERNAL_API_TOKEN_PREVIOUS:-}
       - AGENT_URL=http://node-agent:9100
       # Off-site backups (#232): every backup also copied to an S3-compatible
       # bucket. Off unless the bucket and both keys are set.
@@ -144,6 +145,7 @@ services:
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:?must match FinVault}
       # Must match the Orchestrator's value: the bridge serves only callers that hold it (#372).
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?set a strong random value in .env}
+      - INTERNAL_API_TOKEN_PREVIOUS=${INTERNAL_API_TOKEN_PREVIOUS:-}
       # SQLite unless BILLING_DATABASE_URL names PostgreSQL — its own schema in
       # the same database, e.g. …/nexusinfra?schema=billing (#241).
       - DATABASE_URL=${BILLING_DATABASE_URL:-file:/data/billing.db}

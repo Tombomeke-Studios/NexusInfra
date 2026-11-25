@@ -317,8 +317,28 @@ Now:
   not isolation**: don't publish the agent's port in production (the compose mapping is a dev
   convenience) and keep the agent on a private network.
 
-**Remaining gap:** the token is a static shared secret with no rotation, and AMQP/HTTP hops are still
-plaintext on the private network. mTLS and rotation belong with the production hardening (#21).
+**Remaining gap:** AMQP/HTTP hops are still plaintext on the private network; mTLS belongs with the
+production hardening (#21).
+
+### Rotating the internal token
+
+The token can be changed without a window where the control plane and its agents disagree.
+Receivers (the Node Agent, the Billing Bridge) accept **two** tokens while a rotation is under way:
+`INTERNAL_API_TOKEN` and `INTERNAL_API_TOKEN_PREVIOUS`. Senders (the Orchestrator) only ever send the
+current one, so the previous token can never leak out of a service that holds it.
+
+1. Generate the new value (`openssl rand -hex 32`).
+2. On every **agent** and the **billing bridge**: set `INTERNAL_API_TOKEN` to the new value and
+   `INTERNAL_API_TOKEN_PREVIOUS` to the old one, then restart them. The Orchestrator still sends the
+   old token, which they accept.
+3. On the **Orchestrator**: set `INTERNAL_API_TOKEN` to the new value (the previous one is not
+   needed there) and restart it. It now sends the new token.
+4. Remove `INTERNAL_API_TOKEN_PREVIOUS` everywhere and restart the receivers. The old token stops
+   working.
+
+An empty `INTERNAL_API_TOKEN_PREVIOUS` — what the shipped `.env.example` files contain — accepts
+nothing extra, and a previous token equal to the current one is ignored. Agents on a link (#416)
+authenticate with their own per-node link token and are rotated by minting a new one.
 
 ### Agent links (#416)
 

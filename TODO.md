@@ -347,7 +347,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [x] Control Room: uptime % / history (#165), DLQ monitoring (#243), and alerting — node offline/recovered and crashes are notified by webhook or email (#236)
 - [x] Metrics: Grafana dashboards over the Prometheus metrics, one compose profile away — InfluxDB dropped, #246 made it redundant (#355)
 - [x] Prometheus `/metrics` on every service — the cheap half of the above (#246)
-- [~] Security: service-to-service auth (#169 — **done**, token-guarded agent API) + rate limiting (done in the gateway, #20); secrets-at-rest, token rotation, mTLS/HTTPS still to do
+- [~] Security: service-to-service auth (#169 — **done**, token-guarded agent API) + rate limiting (done in the gateway, #20) + internal-token rotation without downtime (`INTERNAL_API_TOKEN_PREVIOUS`, see [docs/security.md](docs/security.md#rotating-the-internal-token)); secrets-at-rest and mTLS/HTTPS still to do
 - [x] Production docker-compose + deployment docs; migrate SQLite → PostgreSQL via Prisma (#241) — PostgreSQL supported beside SQLite (the default): both clients generated, chosen by `DATABASE_URL`; a `postgres` profile in every compose file; `sqlite-to-postgres.mjs` moves an installation; CI runs the database suite on both and replays the PostgreSQL migrations
 - [x] Integration tests: RabbitMQ / DB-backed end to end — a CI job with a broker service container (#242)
 - [x] Nothing watches the dead-letter queue — surfaces DLQ depth in the panel (#243)
