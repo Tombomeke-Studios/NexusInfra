@@ -73,3 +73,14 @@ describe('FinVault payment details (#435, #436)', () => {
     expect(finvaultFromEnv({ FINVAULT_MERCHANT_NAME: 'N' })).toBeNull();
   });
 });
+
+describe('the billing test tools flag (#439)', () => {
+  it('is only ever there in hosted, and only when switched on', async () => {
+    const on = express().use(createConfigRouter('hosted', { billingTestTools: true }));
+    expect((await request(on).get('/config')).body.billingTestTools).toBe(true);
+    const community = express().use(createConfigRouter('community', { billingTestTools: true }));
+    expect((await request(community).get('/config')).body).not.toHaveProperty('billingTestTools');
+    const off = express().use(createConfigRouter('hosted'));
+    expect((await request(off).get('/config')).body).not.toHaveProperty('billingTestTools');
+  });
+});

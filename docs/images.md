@@ -149,6 +149,7 @@ scrape_configs:
 | `TRUST_PROXY` | no | Number of proxies in front: `1` for the dashboard's own nginx (the bundles' default, #401), `2` with a reverse proxy in front of that ([deployment.md](deployment.md#putting-it-behind-tls-245)). Makes per-IP rate limiting measure the caller rather than the proxy. Leave unset unless only the proxy can reach this process — `X-Forwarded-For` is caller-supplied. |
 | `BILLING_BRIDGE_URL` | hosted | Where plan-quota checks go. |
 | `FINVAULT_URL` | no | Hosted: FinVault's address, linked from the Billing page (#435). Only `http(s)://`. |
+| `BILLING_TEST_TOOLS` | no | **Temporary, test installations only** (#439). `true` on the orchestrator *and* the billing bridge turns on the Customers page's test tools: move billing time forward, give one account its own free hours and hourly rate. Off by default; never with real customers. |
 | `FINVAULT_MERCHANT_NAME` / `FINVAULT_MERCHANT_IBAN` | no | Hosted: the payee a top-up's EPC QR code names (#436) — copy them from FinVault's merchant account (`NEXUSINFRA_MERCHANT_EMAIL` there). Both public on purpose: the QR prints them. Without both, a top-up has no QR. |
 | `DATABASE_PUBLIC_HOST` | no | Hostname given to users connecting to a provisioned database. Defaults to `localhost`. |
 | `MAX_UPLOAD_BYTES` | no | Largest file upload through the panel, default `64mb`. The only limit: the dashboard's nginx sets none of its own (#389). Set the same value on the node agent. |
@@ -206,6 +207,7 @@ Requires the Docker socket: `-v /var/run/docker.sock:/var/run/docker.sock`.
 | `INTERNAL_API_TOKEN` | yes | Must match the orchestrator's. The bridge serves only callers that hold it (#372); with different values every billing check fails — and they fail *open*, so nothing is enforced. |
 | `INTERNAL_API_TOKEN_PREVIOUS` | no | Mid-rotation only: the token being retired, accepted beside the current one. See [security.md](security.md#rotating-the-internal-token). |
 | `BILLING_WALLET_ID` | no | NexusInfra's receiver wallet id on top-up requests to FinVault. |
+| `BILLING_TEST_TOOLS` | no | **Temporary, test installations only** (#439). `true` on the orchestrator *and* the billing bridge turns on the Customers page's test tools: move billing time forward, give one account its own free hours and hourly rate. Off by default; never with real customers. |
 | `FINVAULT_MESSAGE_KEY` | yes | Must be FinVault's value exactly. A different key cannot decrypt anything: the log says so, the event is dead-lettered, and top-ups turn *Not confirmed* (#298). |
 | `SETTLE_INTERVAL_MS` | no | How often running accounts are checked against their balance and suspended when it is used up (default `300000`, 5 min) (#365). The low-credit warning is checked on the same cadence. |
 | `LOW_CREDIT_HOURS` | no | Warn an account once when its credit lasts fewer hours than this at its running servers' rate (default `24`) (#379). |

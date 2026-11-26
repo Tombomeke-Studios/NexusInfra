@@ -69,9 +69,11 @@ export function planFitProblem(plan: Pick<Plan, 'name' | 'maxServers' | 'maxData
 
 export interface BillingPlansDeps {
   repo: Repository;
+  /** TEMPORARY test tools (#439): only with BILLING_TEST_TOOLS=true here and on the bridge. */
+  testTools?: boolean;
 }
 
-export function createBillingPlansRouter({ repo }: BillingPlansDeps): Router {
+export function createBillingPlansRouter({ repo, testTools = false }: BillingPlansDeps): Router {
   const router = Router();
 
   /** Relay a bridge response as it is; `502` when the bridge cannot be reached. */
@@ -206,6 +208,20 @@ export function createBillingPlansRouter({ repo }: BillingPlansDeps): Router {
     const { amount, reason } = (req.body ?? {}) as { amount?: unknown; reason?: unknown };
     return relay(res, `/billing/${encodeURIComponent(user.id)}/adjust`, json('POST', { amount, reason, by: admin?.email ?? 'an administrator' }));
   });
+
+  // TEMPORARY test tools (#439), platform administrators only, and not even
+  // registered unless switched on: move billing time forward, and give one
+  // account its own free hours and hourly rate. See billing-bridge/src/testTools.ts.
+  if (testTools) {
+    router.get('/billing/admin/test/clock', requirePlatformAdmin, (_req, res) => relay(res, '/test/clock'));
+    router.post('/billing/admin/test/clock', requirePlatformAdmin, (req, res) => relay(res, '/test/clock', json('POST', { hours: (req.body ?? {}).hours })));
+    router.post('/billing/admin/test/accounts/:userId/plan', requirePlatformAdmin, async (req: Request, res: Response) => {
+      const user = await repo.getUser(req.params.userId);
+      if (!user) return res.status(404).json({ error: 'no such account' });
+      const { pricePerHour, freeHoursPerMonth } = (req.body ?? {}) as { pricePerHour?: unknown; freeHoursPerMonth?: unknown };
+      return relay(res, `/test/accounts/${encodeURIComponent(user.id)}/plan`, json('POST', { pricePerHour, freeHoursPerMonth }));
+    });
+  }
 
   return router;
 }

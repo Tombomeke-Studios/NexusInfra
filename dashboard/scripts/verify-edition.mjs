@@ -39,6 +39,8 @@ const BILLING_MARKERS = [
   'ran out of credit',
   // The top-up's QR code (#436).
   'Scan with the FinVault app',
+  // The temporary billing test tools (#439).
+  'Test tools — temporary',
 ];
 
 /** Present in every build, so a bundle with none of these was not read properly. */

@@ -30,7 +30,7 @@ export function finvaultFromEnv(env: Record<string, string | undefined> = proces
 
 export function createConfigRouter(
   edition: Edition = getEdition(),
-  options: { passwordResetByEmail?: boolean; sftpPort?: number | null; emailVerification?: boolean; finvault?: FinvaultDetails | null } = {},
+  options: { passwordResetByEmail?: boolean; sftpPort?: number | null; emailVerification?: boolean; finvault?: FinvaultDetails | null; billingTestTools?: boolean } = {},
 ): Router {
   const router = Router();
   router.get('/config', (_req: Request, res: Response) => {
@@ -51,6 +51,8 @@ export function createConfigRouter(
       features: FEATURES,
       // Hosted only, and only when configured: a community panel has no billing.
       ...(edition === 'hosted' && options.finvault ? { finvault: options.finvault } : {}),
+      // TEMPORARY (#439): whether the Customers page shows its test tools.
+      ...(edition === 'hosted' && options.billingTestTools ? { billingTestTools: true } : {}),
     });
   });
   return router;
