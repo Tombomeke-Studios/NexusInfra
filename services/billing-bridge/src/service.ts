@@ -6,6 +6,7 @@ import { ratesOf } from './cycle.js';
 import { computeStanding, currentPeriod, lowCreditStep, parseLowCreditHours, usageIn, type Standing } from './standing.js';
 import { applyTopUp } from './wallet.js';
 import type { BilledDeployment, CreditLedgerEntry, CreditWallet, Repository, ServerBillingRecord } from './types.js';
+import { newTopUpReference } from './rfReference.js';
 
 // The Billing Bridge service (hosted edition). Turns bus events into runtime
 // intervals and credit movements, and drives the top-up flow to FinVault. All
@@ -161,7 +162,9 @@ export function createBillingService(deps: BillingServiceDeps) {
       // Where this account's monthly statement goes too (#375).
       if (customerEmail) await repo.setWalletEmail(userId, customerEmail);
       const cur = currency ?? wallet.currency;
-      const reference = `topup-${userId}-${randomUUID()}`;
+      // An RF creditor reference: it is also the structured reference in the
+      // top-up's EPC QR, which FinVault pays by (#436).
+      const reference = newTopUpReference();
       const entry = await repo.createLedgerEntry({
         userId,
         type: 'topup',
