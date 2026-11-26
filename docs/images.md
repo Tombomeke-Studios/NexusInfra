@@ -144,6 +144,7 @@ Volume: `/data` — the database, which also holds notifications waiting to be r
 |---|---|---|
 | `NODE_ID` | yes | Unique per host. |
 | `INTERNAL_API_TOKEN` | yes | Must match the orchestrator's. |
+| `INTERNAL_API_TOKEN_PREVIOUS` | no | Mid-rotation only: the token being retired, accepted beside the current one. See [security.md](security.md#rotating-the-internal-token). |
 | `AGENT_URL` | no | How the orchestrator reaches this agent, advertised on its heartbeat. Defaults to `http://<hostname>:<PORT>`, which works on a Compose network; set it explicitly for anything else. Ignored with `AGENT_LINK_URL`. |
 | `AGENT_LINK_URL` | no | Turns on the **agent link** (#416, [agent-link.md](agent-link.md)): the agent dials the control plane itself, e.g. `wss://panel.example.com/agent-link`, and is controlled over that connection — for a node behind NAT. Only `wss://`, unless the host is loopback or `AGENT_LINK_ALLOW_INSECURE=true`. Unset: a direct agent, as before. |
 | `AGENT_LINK_TOKEN` | with a link URL | This node's link token, from `POST /nodes/:id/link-token`. Pass it in an env file, not on a command line. |
@@ -180,6 +181,7 @@ Requires the Docker socket: `-v /var/run/docker.sock:/var/run/docker.sock`.
 |---|---|---|
 | `DATABASE_URL` | yes | `file:/data/billing.db` (mount a volume at `/data`), or PostgreSQL — its own schema if it shares the orchestrator's database, e.g. `postgresql://…/nexusinfra?schema=billing`. |
 | `INTERNAL_API_TOKEN` | yes | Must match the orchestrator's. The bridge serves only callers that hold it (#372); with different values every billing check fails — and they fail *open*, so nothing is enforced. |
+| `INTERNAL_API_TOKEN_PREVIOUS` | no | Mid-rotation only: the token being retired, accepted beside the current one. See [security.md](security.md#rotating-the-internal-token). |
 | `BILLING_WALLET_ID` | no | NexusInfra's receiver wallet id on top-up requests to FinVault. |
 | `FINVAULT_MESSAGE_KEY` | yes | Must be FinVault's value exactly. A different key cannot decrypt anything: the log says so, the event is dead-lettered, and top-ups turn *Not confirmed* (#298). |
 | `SETTLE_INTERVAL_MS` | no | How often running accounts are checked against their balance and suspended when it is used up (default `300000`, 5 min) (#365). The low-credit warning is checked on the same cadence. |

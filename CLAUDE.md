@@ -221,7 +221,7 @@ is the migrations directory.
 | `shared/src/outbox.ts` | `PublishOutbox` + `startOutboxFlusher` — holds a failed publish and replays it **in order** when the broker returns; bounded (drop-oldest + `droppedCount`). Wrap publishers whose events carry state (#167) |
 | `shared/src/metrics.ts` | Prometheus metrics for every service (#246): dependency-free `MetricsRegistry` (counters, histograms, scrape-time gauges that fail soft), `httpMetrics` (labels by **route pattern**, never the raw path), `metricsHandler` (`METRICS_TOKEN`), `registerBuildInfo` |
 | `shared/src/agentLink.ts` | The agent link's wire (#416, [docs/agent-link.md](docs/agent-link.md)): frames `[type u8][streamId u32 BE][payload]` (OPEN/DATA/END/RESET = 1–4), `LinkSession` (streams over one WebSocket) and `LinkStream` (a `Duplex` with the socket no-ops undici and `http` call), the 1 MiB backpressure mark, `keepLinkAlive` (15 s ping, 45 s silence). **The numbers are a contract with NexusFleet** |
-| `shared/src/internalToken.ts` | Service-to-service shared secret: `INTERNAL_TOKEN_HEADER`, `getInternalToken`, `tokensMatch` (constant-time). Guards the Node Agent's internal API (#169) |
+| `shared/src/internalToken.ts` | Service-to-service shared secret: `INTERNAL_TOKEN_HEADER`, `getInternalToken`, `tokensMatch` (constant-time). Guards the Node Agent's internal API (#169). Rotation: receivers take `acceptedInternalTokens()` (current + `INTERNAL_API_TOKEN_PREVIOUS`) through `tokenAccepted`; senders send only the current one |
 | `shared/src/events.test.ts` | Wire-compatibility guard tests (encryption round-trip, ciphertext layout, envelope shape) |
 
 ### services/control-room (heartbeat monitoring)
