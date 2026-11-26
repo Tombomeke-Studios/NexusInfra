@@ -71,8 +71,14 @@ describe('startAgentLink', () => {
     const sockets: WebSocket[] = [];
     http.on('upgrade', (req, socket, head) => {
       handshakes.push(req.headers);
+      // The agent terminates its end on stop and on retry; a reset arriving
+      // here with no listener fails the whole run as an unhandled error (#424).
+      socket.on('error', () => undefined);
       if (!accept(req.headers)) return socket.end('HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n');
-      wss.handleUpgrade(req, socket, head, (ws) => sockets.push(ws));
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        ws.on('error', () => undefined);
+        sockets.push(ws);
+      });
     });
     const port = await listen(http);
     cleanup.push(() => sockets.forEach((s) => s.terminate()));

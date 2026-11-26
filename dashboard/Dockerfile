@@ -6,7 +6,7 @@
 # bundle and fails the build if that stops being true — tree-shaking is easy to
 # break by accident, and the only symptom would be a self-hosted panel shipping
 # code it can never run.
-FROM node:18-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 COPY package.json ./
 RUN npm install

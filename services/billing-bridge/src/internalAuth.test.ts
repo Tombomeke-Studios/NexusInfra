@@ -27,3 +27,22 @@ describe('the Billing Bridge internal token (#372)', () => {
     expect((await request(app()).get('/health')).status).toBe(200);
   });
 });
+
+describe('during a token rotation', () => {
+  function rotating() {
+    const a = express();
+    a.use(requireInternalToken(['new-token', 'old-token']));
+    a.get('/billing/u1/wallet', (_req, res) => res.json({ balance: 5 }));
+    return a;
+  }
+
+  it('serves a caller still holding the previous token', async () => {
+    for (const token of ['new-token', 'old-token']) {
+      expect((await request(rotating()).get('/billing/u1/wallet').set(INTERNAL_TOKEN_HEADER, token)).status).toBe(200);
+    }
+  });
+
+  it('refuses any other token', async () => {
+    expect((await request(rotating()).get('/billing/u1/wallet').set(INTERNAL_TOKEN_HEADER, 'older-token')).status).toBe(401);
+  });
+});

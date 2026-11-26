@@ -74,10 +74,31 @@ as the edition it was not built for exits rather than starting in a half-configu
 | `nexusinfra/gateway` | once | 9400 | External entry point: CORS, rate limiting, JWT validation, reverse proxy. |
 | `nexusinfra/dashboard` | once | 80 | The web panel, served by nginx. |
 | `nexusinfra/billing-bridge` | once, **hosted only** | 9300 | Usage metering, credit wallet, monthly cycle, FinVault top-ups. |
+| `nexusinfra/orchestrator-migrate` | before every orchestrator start | — | Applies the orchestrator's database migrations, then exits (#192). |
+| `nexusinfra/billing-bridge-migrate` | before every billing-bridge start, **hosted only** | — | The same for the billing bridge. |
 
 You also need a **RabbitMQ** broker (`rabbitmq:3-management-alpine` is fine). Every service reports
 its version and resolved edition on `GET /health`, which is the quickest way to confirm a container is
 what you think it is.
+
+### Migrations run in their own image (#192)
+
+The orchestrator and the billing bridge do not migrate their databases themselves. Each has a
+`-migrate` image that applies the migrations and exits; it takes the same `DATABASE_URL` and the same
+`/data` volume as its service, and nothing else. Run it **before** the service on every start and on
+every upgrade — in Compose, as a service the other one depends on with
+`condition: service_completed_successfully`, as below and as both bundles do.
+
+A service started without it **refuses to start**, and says which migrations are missing: it reads the
+table Prisma keeps of what it applied and compares it with the migrations in the image. A database
+newer than the image, after a rollback, only logs a warning.
+
+Why: the Prisma CLI and its schema engine are only needed for migrating. Kept out of the service
+images, they leave the orchestrator and billing bridge about 170 MB smaller each (about 60 MB of
+it is the CLI; the rest are download caches the old image kept).
+
+The `-migrate` image is also where `scripts/sqlite-to-postgres.mjs` runs
+([deployment.md](deployment.md#moving-an-existing-installation)).
 
 ### What runs where
 
@@ -118,7 +139,7 @@ scrape_configs:
 
 | Variable | Required | Notes |
 |---|---|---|
-| `DATABASE_URL` | yes | `file:/data/orchestrator.db` (SQLite — mount a volume at `/data`), or `postgresql://user:pass@host:5432/db` (#241). The matching migrations run automatically at start. See [deployment.md](deployment.md#postgresql). |
+| `DATABASE_URL` | yes | `file:/data/orchestrator.db` (SQLite — mount a volume at `/data`), or `postgresql://user:pass@host:5432/db` (#241). Give `orchestrator-migrate` the same value: it applies the migrations, and the orchestrator will not start until it has ([above](#migrations-run-in-their-own-image-192)). See [deployment.md](deployment.md#postgresql). |
 | `JWT_SECRET` | yes | Signs login tokens. Anyone holding it can mint a token for any account — use 32 random bytes. |
 | `INTERNAL_API_TOKEN` | yes | Shared secret for reaching the node agent. Must match the agents'. |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | yes | The administrator seeded on first start. A warning is logged on every start while the default password is in place. |
@@ -127,6 +148,9 @@ scrape_configs:
 | `CONTROL_ROOM_URL` | no | For surfacing platform health in the panel. |
 | `TRUST_PROXY` | no | Number of proxies in front: `1` for the dashboard's own nginx (the bundles' default, #401), `2` with a reverse proxy in front of that ([deployment.md](deployment.md#putting-it-behind-tls-245)). Makes per-IP rate limiting measure the caller rather than the proxy. Leave unset unless only the proxy can reach this process — `X-Forwarded-For` is caller-supplied. |
 | `BILLING_BRIDGE_URL` | hosted | Where plan-quota checks go. |
+| `FINVAULT_URL` | no | Hosted: FinVault's address, linked from the Billing page (#435). Only `http(s)://`. |
+| `BILLING_TEST_TOOLS` | no | **Temporary, test installations only** (#439). `true` on the orchestrator *and* the billing bridge turns on the Customers page's test tools: move billing time forward, give one account its own free hours and hourly rate. Off by default; never with real customers. |
+| `FINVAULT_MERCHANT_NAME` / `FINVAULT_MERCHANT_IBAN` | no | Hosted: the payee a top-up's EPC QR code names (#436) — copy them from FinVault's merchant account (`NEXUSINFRA_MERCHANT_EMAIL` there). Both public on purpose: the QR prints them. Without both, a top-up has no QR. |
 | `DATABASE_PUBLIC_HOST` | no | Hostname given to users connecting to a provisioned database. Defaults to `localhost`. |
 | `MAX_UPLOAD_BYTES` | no | Largest file upload through the panel, default `64mb`. The only limit: the dashboard's nginx sets none of its own (#389). Set the same value on the node agent. |
 | `SMTP_URL` | no | Turns on **email notifications** (#236), e.g. `smtps://user:pass@smtp.example.com:465` or `smtp://user:pass@mail.local:587` (STARTTLS when offered). Unset means webhooks only, and the panel says so. |
@@ -144,6 +168,7 @@ Volume: `/data` — the database, which also holds notifications waiting to be r
 |---|---|---|
 | `NODE_ID` | yes | Unique per host. |
 | `INTERNAL_API_TOKEN` | yes | Must match the orchestrator's. |
+| `INTERNAL_API_TOKEN_PREVIOUS` | no | Mid-rotation only: the token being retired, accepted beside the current one. See [security.md](security.md#rotating-the-internal-token). |
 | `AGENT_URL` | no | How the orchestrator reaches this agent, advertised on its heartbeat. Defaults to `http://<hostname>:<PORT>`, which works on a Compose network; set it explicitly for anything else. Ignored with `AGENT_LINK_URL`. |
 | `AGENT_LINK_URL` | no | Turns on the **agent link** (#416, [agent-link.md](agent-link.md)): the agent dials the control plane itself, e.g. `wss://panel.example.com/agent-link`, and is controlled over that connection — for a node behind NAT. Only `wss://`, unless the host is loopback or `AGENT_LINK_ALLOW_INSECURE=true`. Unset: a direct agent, as before. |
 | `AGENT_LINK_TOKEN` | with a link URL | This node's link token, from `POST /nodes/:id/link-token`. Pass it in an env file, not on a command line. |
@@ -178,9 +203,11 @@ Requires the Docker socket: `-v /var/run/docker.sock:/var/run/docker.sock`.
 
 | Variable | Required | Notes |
 |---|---|---|
-| `DATABASE_URL` | yes | `file:/data/billing.db` (mount a volume at `/data`), or PostgreSQL — its own schema if it shares the orchestrator's database, e.g. `postgresql://…/nexusinfra?schema=billing`. |
+| `DATABASE_URL` | yes | `file:/data/billing.db` (mount a volume at `/data`), or PostgreSQL — its own schema if it shares the orchestrator's database, e.g. `postgresql://…/nexusinfra?schema=billing`. Give `billing-bridge-migrate` the same value ([above](#migrations-run-in-their-own-image-192)). |
 | `INTERNAL_API_TOKEN` | yes | Must match the orchestrator's. The bridge serves only callers that hold it (#372); with different values every billing check fails — and they fail *open*, so nothing is enforced. |
+| `INTERNAL_API_TOKEN_PREVIOUS` | no | Mid-rotation only: the token being retired, accepted beside the current one. See [security.md](security.md#rotating-the-internal-token). |
 | `BILLING_WALLET_ID` | no | NexusInfra's receiver wallet id on top-up requests to FinVault. |
+| `BILLING_TEST_TOOLS` | no | **Temporary, test installations only** (#439). `true` on the orchestrator *and* the billing bridge turns on the Customers page's test tools: move billing time forward, give one account its own free hours and hourly rate. Off by default; never with real customers. |
 | `FINVAULT_MESSAGE_KEY` | yes | Must be FinVault's value exactly. A different key cannot decrypt anything: the log says so, the event is dead-lettered, and top-ups turn *Not confirmed* (#298). |
 | `SETTLE_INTERVAL_MS` | no | How often running accounts are checked against their balance and suspended when it is used up (default `300000`, 5 min) (#365). The low-credit warning is checked on the same cadence. |
 | `LOW_CREDIT_HOURS` | no | Warn an account once when its credit lasts fewer hours than this at its running servers' rate (default `24`) (#379). |
@@ -207,6 +234,13 @@ services:
     image: rabbitmq:3-management-alpine
     volumes: [rabbitmq_data:/var/lib/rabbitmq]
 
+  # Applies the database migrations and exits; the orchestrator waits for it.
+  orchestrator-migrate:
+    image: ghcr.io/tombomeke-studios/nexusinfra/orchestrator-migrate:community
+    environment:
+      DATABASE_URL: file:/data/orchestrator.db
+    volumes: [orchestrator_data:/data]
+
   orchestrator:
     image: ghcr.io/tombomeke-studios/nexusinfra/orchestrator:community
     ports: ["9200:9200"]
@@ -219,7 +253,11 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?}
       NODE_AGENT_URL: http://node-agent:9100
     volumes: [orchestrator_data:/data]
-    depends_on: [rabbitmq]
+    depends_on:
+      rabbitmq:
+        condition: service_started
+      orchestrator-migrate:
+        condition: service_completed_successfully
 
   node-agent:
     image: ghcr.io/tombomeke-studios/nexusinfra/node-agent:community

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { act } from '@testing-library/react';
-import { Billing, approvalHint, leftToSpendNote, newlyConfirmed, refreshInterval, runwayNote, sentence, statusLabel, POLL_MS, PENDING_POLL_MS } from './Billing';
+import { Billing, approvalHint, pendingTopUpNote, leftToSpendNote, newlyConfirmed, refreshInterval, runwayNote, sentence, statusLabel, POLL_MS, PENDING_POLL_MS } from './Billing';
 import type { LedgerEntry } from '../api';
 import { ToastProvider } from '../components/Toast';
 import { DialogProvider } from '../components/Dialog';
@@ -156,6 +156,15 @@ describe('Billing page', () => {
     it('says where a requested top-up has to be approved', () => {
       expect(approvalHint('€20.00', 'me@example.com')).toContain('the FinVault account of me@example.com');
       expect(approvalHint('€20.00')).toContain('your FinVault account');
+    });
+
+    it('names the address a waiting top-up went to, and offers the QR where there is one (#435, #436)', () => {
+      const plain = pendingTopUpNote('me@example.com', false);
+      expect(plain).toContain('the FinVault account of me@example.com');
+      expect(plain).toContain('exactly that address');
+      expect(plain).not.toMatch(/QR/);
+      expect(pendingTopUpNote('me@example.com', true)).toMatch(/Scan the QR code with the FinVault app/);
+      expect(pendingTopUpNote(undefined, false)).toContain('your FinVault account');
     });
 
     // #365: the balance overstates what is left — usage is charged to it later.

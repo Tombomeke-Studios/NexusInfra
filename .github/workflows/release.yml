@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm run build
@@ -56,6 +56,12 @@ jobs:
           # would be an image of nothing.
           - service: billing-bridge
             edition: hosted
+          # The migrate images (#192): the same Dockerfile's `migrate` target,
+          # which applies the migrations and exits. The compose files run them
+          # before their service on every start.
+          - { service: orchestrator-migrate, source: orchestrator, target: migrate, edition: community }
+          - { service: orchestrator-migrate, source: orchestrator, target: migrate, edition: hosted }
+          - { service: billing-bridge-migrate, source: billing-bridge, target: migrate, edition: hosted }
     steps:
       - uses: actions/checkout@v4
 
@@ -83,7 +89,8 @@ jobs:
           # Every service Dockerfile copies `shared/` plus its own directory, so
           # the build context is always the repo root.
           context: ${{ matrix.service == 'dashboard' && './dashboard' || '.' }}
-          file: ${{ matrix.service == 'dashboard' && 'dashboard/Dockerfile' || format('services/{0}/Dockerfile', matrix.service) }}
+          file: ${{ matrix.service == 'dashboard' && 'dashboard/Dockerfile' || format('services/{0}/Dockerfile', matrix.source || matrix.service) }}
+          target: ${{ matrix.target }}
           push: true
           build-args: |
             APP_VERSION=${{ steps.meta.outputs.version }}
@@ -93,8 +100,9 @@ jobs:
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/nexusinfra/${{ matrix.service }}:${{ matrix.edition }}
           # The two editions differ only in a build arg, so the second leg is
           # almost entirely cache hits.
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          # A migrate image shares its service's cache: they share every stage up to the split.
+          cache-from: type=gha,scope=${{ matrix.source || matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.source || matrix.service }}
 
   allinone:
     # One image, one command, a working panel — for a single machine. Published

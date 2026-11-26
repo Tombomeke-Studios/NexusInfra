@@ -14,7 +14,7 @@
 #
 # Debian rather than Alpine because Prisma's engines need glibc and OpenSSL.
 
-FROM node:18-slim AS builder
+FROM node:24-slim AS builder
 WORKDIR /app
 
 COPY package*.json tsconfig.json ./
@@ -53,11 +53,13 @@ RUN npm run build --workspace=dashboard \
 # a compiler they will never run (#204).
 #
 # The Prisma CLI survives this on purpose: it is a real dependency, because
-# migrations are applied when the container starts.
+# migrations are applied when the container starts. The separate images moved
+# that into their own `-migrate` image (#192); one container has nowhere else
+# to run them, so here the services still migrate before they start.
 RUN npm prune --omit=dev
 
 # ── Runtime ──────────────────────────────────────────────────────────────────
-FROM node:18-slim
+FROM node:24-slim
 
 # s6-overlay supervises the processes and, unlike a bare shell loop, propagates
 # signals and reaps zombies properly. RabbitMQ brings Erlang; it is the single

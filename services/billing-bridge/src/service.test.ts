@@ -3,6 +3,7 @@ import { readPayload, type EventEnvelope } from 'shared';
 import { InMemoryRepository } from './repository.js';
 import { createBillingService, MAX_PENDING_TOPUPS, type BillingService } from './service.js';
 import { DEFAULT_PLAN } from './pricing.js';
+import { isRfReference } from './rfReference.js';
 
 // Service tests run against the in-memory repo with a captured publisher and a
 // fixed clock — no broker, no DB, no time flakiness.
@@ -309,6 +310,13 @@ describe('billing service', () => {
       expect(payload.senderWalletId).toBe('u1');
       expect(payload.receiverWalletId).toBe('nexus-wallet');
       expect(payload.amount).toBe(20);
+    });
+
+    it('names the top-up by an RF creditor reference, which its EPC QR carries (#436)', async () => {
+      const { reference } = await svc.requestTopUp('u1', 20);
+      expect(isRfReference(reference)).toBe(true);
+      // Nothing about the account can be read from it: it is printed in a QR.
+      expect(reference).not.toContain('u1');
     });
 
     it('adds credit on payment.confirmed', async () => {

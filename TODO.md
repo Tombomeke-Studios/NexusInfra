@@ -183,7 +183,7 @@ gateway work" above.)_
 - [x] Nest the image names under one `nexusinfra` namespace (#200)
 - [x] Document every image for people who assemble their own stack (#201)
 - [x] All-in-one image per edition — `nexusinfra-community` / `nexusinfra-hosted` (#203)
-- [ ] Slim the service images — Prisma CLI + engine targets (orchestrator is 501 MB) (#192) 📋
+- [x] Slim the service images — Prisma CLI + engine targets (#192) — migrations moved into `orchestrator-migrate` / `billing-bridge-migrate` images that compose runs first; the runtime has no CLI and refuses an unmigrated database. On Node 24, as `docker images` reports: orchestrator 594 → 425 MB, billing-bridge 582 → 416 MB. The engine targets were already only the shipped platform (`native`), so narrowing them saved nothing
 - [x] Gateway test failed intermittently — the token was signed twice (#208) 🐛
 - [x] Slim the all-in-one — build tooling no longer ships to users, 1.07 GB → 915 MB (#204)
 - [x] Document the release installer, and link it from the README (#210)
@@ -259,6 +259,8 @@ scrolling log lines describing events that never happened.
 
 ### 🐛 Bugs / fixes (open)
 
+- [x] Every image ran on Node 18, out of support since April 2025, and CI tested on Node 20 — images, CI and release now all run Node 24 (#432) 🐛
+- [ ] SFTP in the shipped images runs without ssh2's native crypto, ~40x slower — the slim images have no compiler, so the addon is never built (#433) 🐛
 - [x] The Java heap and the RAM limit are two settings for the same memory (#308)
 - [x] A server's memory limit could not be changed after creation, so neither could its Java heap — Settings now has a Resources editor that shows the heap following the limit (#381) 🐛
 - [x] The Overview counted only percentage caps as committed, so servers sized in MB looked free (#383) 🐛
@@ -328,6 +330,9 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [x] A server stopped for lack of credit looked like any other stopped server (#380) 🐛 — the suspension is recorded with the server and shown as *suspended* in the Servers list, the drawer and the server's page, saying whose credit ran out, until a start that passes the credit check
 - [x] Make the community build's stub aliases actually match their imports (#393) 🐛 — the stubbed modules are listed in `dashboard/editionStubs.ts` and matched on the specifier as written; a test checks every import is caught, and a community build with the `BILLING_INCLUDED` gates forced open still passes `verify-edition.mjs`
 - [x] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)
+- [x] A top-up says it is waiting in FinVault without saying for which address — name the address the request went to, and link to FinVault (#435) 🐛
+- [x] Temporary admin test tools for hosted billing: move time forward, set an account's free hours and hourly rate (#439) — `BILLING_TEST_TOOLS=true` on the orchestrator and the bridge; remove once billing is tested
+- [x] Top up by scanning an EPC QR code with the FinVault app (#436) — beside the email request, not instead of it: an RF creditor reference in the QR, paid by reference in FinVault (its #112) by whoever scans it; a changed amount is refused. `FINVAULT_MERCHANT_NAME`/`_IBAN` turn it on
 - [x] `docs/billing.md` is missing from the documentation ownership table (#248)
 
 > **Labels.** Issues now carry `edition:community`, `edition:hosted` or `edition:both` alongside
@@ -347,7 +352,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [x] Control Room: uptime % / history (#165), DLQ monitoring (#243), and alerting — node offline/recovered and crashes are notified by webhook or email (#236)
 - [x] Metrics: Grafana dashboards over the Prometheus metrics, one compose profile away — InfluxDB dropped, #246 made it redundant (#355)
 - [x] Prometheus `/metrics` on every service — the cheap half of the above (#246)
-- [~] Security: service-to-service auth (#169 — **done**, token-guarded agent API) + rate limiting (done in the gateway, #20); secrets-at-rest, token rotation, mTLS/HTTPS still to do
+- [~] Security: service-to-service auth (#169 — **done**, token-guarded agent API) + rate limiting (done in the gateway, #20) + internal-token rotation without downtime (#430, `INTERNAL_API_TOKEN_PREVIOUS`, see [docs/security.md](docs/security.md#rotating-the-internal-token)); secrets-at-rest and mTLS/HTTPS still to do
 - [x] Production docker-compose + deployment docs; migrate SQLite → PostgreSQL via Prisma (#241) — PostgreSQL supported beside SQLite (the default): both clients generated, chosen by `DATABASE_URL`; a `postgres` profile in every compose file; `sqlite-to-postgres.mjs` moves an installation; CI runs the database suite on both and replays the PostgreSQL migrations
 - [x] Integration tests: RabbitMQ / DB-backed end to end — a CI job with a broker service container (#242)
 - [x] Nothing watches the dead-letter queue — surfaces DLQ depth in the panel (#243)
@@ -368,6 +373,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 
 ### `feature/agent-link` — agent links for nodes behind NAT (fleet-support, NexusFleet K11)
 - [x] Agent link: let a node agent connect outbound to the control plane (#416) — `AGENT_LINK_URL`/`AGENT_LINK_TOKEN`, `connection: outbound` nodes, `POST /nodes/:id/link-token`, gateway `/agent-link`, `features: ["agent-link"]`; see [docs/agent-link.md](docs/agent-link.md)
+- [x] Handle socket errors on agent links (#424) — a reset link was an uncaught exception in the orchestrator, and failed CI once in `link.test.ts`
 
 ### `feature/fleet-support` — merged in #412 (what NexusFleet needs to add nodes from another machine)
 - [x] Let node agents on other machines reach the broker (#409) — `BROKER_BIND` (default `127.0.0.1`) and `BROKER_PORT` in both bundles

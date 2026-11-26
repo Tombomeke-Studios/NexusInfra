@@ -1,10 +1,11 @@
 import express from 'express';
 import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, getEdition, isHosted, readPayload, startHeartbeat, type EventEnvelope, MetricsRegistry, registerBuildInfo, httpMetrics, metricsHandler } from 'shared';
-import { PrismaRepository } from './db.js';
+import { PrismaRepository, assertDatabaseMigrated } from './db.js';
 import { createBillingService, DEFAULT_SETTLE_INTERVAL_MS, DEFAULT_TOPUP_TIMEOUT_MS } from './service.js';
 import { createBillingRouter } from './api.js';
 import { requireInternalToken } from './internalAuth.js';
-import { startCycleRunner } from './cycle.js';
+import { previousMonthPeriod, runBillingCycle, startCycleRunner } from './cycle.js';
+import { createTestClock, createTestToolRouter, testToolsEnabled } from './testTools.js';
 
 // ── Billing Bridge (hosted edition) ───────────────────────────────────────────
 // Turns bus events into runtime intervals and credit movements, drives the
@@ -25,8 +26,14 @@ try {
 const PORT = Number(process.env.PORT) || 9300;
 const edition = getEdition();
 
+await assertDatabaseMigrated();
 const repo = new PrismaRepository();
-const service = createBillingService({ repo });
+// TEMPORARY test tools (#439): a clock that can be moved forward, read by the
+// billing service and the cycle runner alike. Off unless BILLING_TEST_TOOLS=true.
+const testClock = isHosted(edition) && testToolsEnabled() ? createTestClock() : null;
+if (testClock) console.warn('[BillingBridge] TEST TOOLS ARE ON (BILLING_TEST_TOOLS=true): billing time can be moved forward. Never on a real installation.');
+const now = testClock?.now;
+const service = createBillingService({ repo, now });
 
 const app = express();
 // Prometheus metrics (#246).
@@ -44,6 +51,21 @@ if (isHosted(edition)) {
   // the path names. No CORS either — no browser talks to this service.
   app.use(requireInternalToken());
   app.use(createBillingRouter({ repo, service }));
+  if (testClock) {
+    app.use(
+      createTestToolRouter({
+        repo,
+        clock: testClock,
+        // What the clock passing would have done by itself: settle running
+        // accounts, warn about low credit, and run any month that just closed.
+        afterAdvance: async () => {
+          await service.settle();
+          await service.warnLowCredit();
+          await runBillingCycle({ repo, now }, previousMonthPeriod(testClock.now()));
+        },
+      }),
+    );
+  }
 }
 app.listen(PORT, () => console.log(`[BillingBridge] HTTP listening on http://localhost:${PORT} (edition: ${edition})`));
 
@@ -100,7 +122,7 @@ async function start() {
 
     // Bill the previous month once it closes: charge credit, suspend on short
     // balance, emit invoices. Idempotent, so hourly polling is safe.
-    startCycleRunner({ repo });
+    startCycleRunner({ repo, now });
     console.log('[BillingBridge] Cycle runner started (hourly poll)');
 
     // A top-up FinVault never answers is shown as unconfirmed after a while

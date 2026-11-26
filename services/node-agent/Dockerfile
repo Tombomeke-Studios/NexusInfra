@@ -1,5 +1,5 @@
 # Multi-stage build (pattern from services/control-room/Dockerfile)
-FROM node:18-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
 COPY tsconfig.json ./
@@ -9,7 +9,7 @@ RUN npm install
 RUN npm run build --workspace=shared
 RUN npm run build --workspace=services/node-agent
 
-FROM node:18-alpine
+FROM node:24-alpine
 WORKDIR /app
 COPY package*.json ./
 COPY --from=builder /app/shared/dist ./shared/dist
