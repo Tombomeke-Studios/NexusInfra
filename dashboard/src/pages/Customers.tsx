@@ -1,15 +1,20 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import {
   adminAdjustCredit,
+  adminAdvanceTestClock,
   adminCreatePlan,
   adminListAccounts,
   adminListPlans,
   adminSetAccountPlan,
+  adminSetTestPlan,
+  adminTestClock,
   adminUpdatePlan,
   ApiError,
   type BillingAccount,
   type BillingPlanOption,
+  type TestClock,
 } from '../api';
+import { useEdition } from '../edition';
 import { EMPTY_PLAN_FORM, formToPlan, hourly, money, parseAdjustment, planToForm, type PlanForm } from '../billingAdmin';
 import { useToast } from '../components/Toast';
 
@@ -136,6 +141,7 @@ export function Customers() {
   const offered = plans.filter((p) => p.active);
   const totals = (accounts ?? []).reduce((sum, a) => ({ balance: sum.balance + a.balance, cost: sum.cost + a.cost, running: sum.running + a.runningServers }), { balance: 0, cost: 0, running: 0 });
   const currency = accounts?.[0]?.currency ?? plans[0]?.currency ?? 'EUR';
+  const { billingTestTools } = useEdition();
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 24px 48px', animation: 'rise 300ms var(--ease-out) both' }}>
@@ -145,6 +151,8 @@ export function Customers() {
       </p>
 
       {loadError && <p role="alert" className="alert alert--error" style={{ marginBottom: 16 }}>{loadError}</p>}
+
+      {billingTestTools && <BillingTestTools accounts={accounts ?? []} onChanged={() => void load()} />}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 22 }}>
         <Figure label="Accounts" value={String(accounts?.length ?? '—')} />
@@ -348,5 +356,122 @@ function AccountRows(props: {
         </tr>
       )}
     </>
+  );
+}
+
+/** What a step of the test clock moves it by, in hours. */
+export const CLOCK_STEPS: Array<{ label: string; hours: number }> = [
+  { label: '+1 hour', hours: 1 },
+  { label: '+1 day', hours: 24 },
+  { label: '+1 month', hours: 24 * 31 },
+];
+
+/** A number typed in the test form, or undefined when the field was left empty. */
+export function optionalNumber(input: string): number | undefined | null {
+  const trimmed = input.trim().replace(',', '.');
+  if (!trimmed) return undefined;
+  const value = Number(trimmed);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/**
+ * TEMPORARY test tools (#439): only with BILLING_TEST_TOOLS=true on the orchestrator
+ * and the billing bridge. They steer the real billing rather than imitate it — a
+ * clock the bridge reads, and a per-account test plan.
+ */
+function BillingTestTools({ accounts, onChanged }: { accounts: BillingAccount[]; onChanged: () => void }) {
+  const { toast } = useToast();
+  const [clock, setClock] = useState<TestClock | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [userId, setUserId] = useState('');
+  const [freeHours, setFreeHours] = useState('');
+  const [rate, setRate] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    adminTestClock().then(setClock).catch(() => setError('The billing bridge does not answer the test tools — is BILLING_TEST_TOOLS=true set there too?'));
+  }, []);
+
+  const advance = async (hours: number) => {
+    setBusy(true);
+    setError(null);
+    try {
+      setClock(await adminAdvanceTestClock(hours));
+      toast(`Billing time moved forward ${hours} h. Running accounts were settled, and any month that closed was charged.`, 'success', 'Time moved');
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not move the clock.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const apply = async (e: FormEvent) => {
+    e.preventDefault();
+    const freeHoursPerMonth = optionalNumber(freeHours);
+    const pricePerHour = optionalNumber(rate);
+    if (!userId) return setError('Pick an account.');
+    if (freeHoursPerMonth === null || pricePerHour === null) return setError('Free hours and the rate must be numbers of 0 or more.');
+    if (freeHoursPerMonth === undefined && pricePerHour === undefined) return setError('Fill in free hours, the rate, or both.');
+    setBusy(true);
+    setError(null);
+    try {
+      const plan = await adminSetTestPlan(userId, { freeHoursPerMonth, pricePerHour });
+      toast(`Now on "${plan.name}": ${plan.freeHoursPerMonth} free hours a month, ${hourly(plan.pricePerHour, plan.currency)} per server-hour.`, 'success', 'Test plan applied');
+      setFreeHours('');
+      setRate('');
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not change the account.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="card" style={{ padding: '18px 20px', marginBottom: 22 }} aria-labelledby="test-tools-title">
+      <h2 id="test-tools-title" style={{ margin: '0 0 6px', fontSize: '1.05rem' }}>Test tools — temporary</h2>
+      <p className="alert alert--warning" style={{ margin: '0 0 14px' }}>
+        On because BILLING_TEST_TOOLS=true. They change real billing on this installation — never use them with real customers.
+        Time only moves forward, and restarting the billing bridge returns it to the real time.
+      </p>
+      {error && <p role="alert" className="alert alert--error" style={{ margin: '0 0 12px' }}>{error}</p>}
+
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
+        <span>
+          Billing time: <strong>{clock ? new Date(clock.now).toLocaleString() : '…'}</strong>
+          {clock && clock.offsetHours > 0 && <span className="subtle"> ({clock.offsetHours} h ahead of real time)</span>}
+        </span>
+        {CLOCK_STEPS.map((step) => (
+          <button key={step.hours} type="button" className="btn btn--secondary btn--sm" disabled={busy || !clock} onClick={() => void advance(step.hours)}>
+            {step.label}
+          </button>
+        ))}
+      </div>
+
+      <form onSubmit={apply} style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <label style={{ display: 'grid', gap: 4 }}>
+          <span className="subtle" style={{ fontSize: '.8rem' }}>Account</span>
+          <select value={userId} onChange={(e) => setUserId(e.target.value)}>
+            <option value="">Choose…</option>
+            {accounts.map((a) => (
+              <option key={a.userId} value={a.userId}>{a.email}</option>
+            ))}
+          </select>
+        </label>
+        <label style={{ display: 'grid', gap: 4 }}>
+          <span className="subtle" style={{ fontSize: '.8rem' }}>Free hours / month</span>
+          <input inputMode="decimal" value={freeHours} onChange={(e) => setFreeHours(e.target.value)} placeholder="e.g. 0" style={{ width: 120 }} />
+        </label>
+        <label style={{ display: 'grid', gap: 4 }}>
+          <span className="subtle" style={{ fontSize: '.8rem' }}>Rate per server-hour</span>
+          <input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} placeholder="e.g. 0.50" style={{ width: 120 }} />
+        </label>
+        <button type="submit" className="btn btn--primary btn--sm" disabled={busy}>Apply to this account</button>
+      </form>
+      <p className="subtle" style={{ margin: '10px 0 0', fontSize: '.8rem' }}>
+        The account moves to its own test plan — a copy of its current plan with these numbers, which nobody else can choose. Leave a field empty to keep it.
+      </p>
+    </section>
   );
 }

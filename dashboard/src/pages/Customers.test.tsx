@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Customers } from './Customers';
+import { Customers, CLOCK_STEPS, optionalNumber } from './Customers';
+import { EditionProvider } from '../edition';
 import { PlanChooser } from '../components/PlanChooser';
 import { ToastProvider } from '../components/Toast';
 import { DialogProvider } from '../components/Dialog';
@@ -151,5 +152,67 @@ describe('the plan chooser on the Billing page (#369)', () => {
     const { container } = wrap(<PlanChooser />);
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/billing/plans'))).toBe(true));
     expect(container.querySelector('section')).toBeNull();
+  });
+});
+
+describe('temporary billing test tools (#439)', () => {
+  const CLOCK = { now: '2026-09-10T12:00:00.000Z', offsetHours: 0 };
+
+  function withTools(on: boolean) {
+    stubApi((call) => {
+      if (call.url.endsWith('/config')) return json({ edition: 'hosted', ...(on ? { billingTestTools: true } : {}) });
+      if (call.url.endsWith('/billing/admin/test/clock') && call.method === 'GET') return json(CLOCK);
+      if (call.url.endsWith('/billing/admin/test/clock') && call.method === 'POST') return json({ now: '2026-09-11T12:00:00.000Z', offsetHours: 24 });
+      if (call.url.includes('/billing/admin/test/accounts/')) return json({ ...STANDARD, id: 'test-u1', name: 'Test plan (Pro)', freeHoursPerMonth: 0, pricePerHour: 1 });
+      return undefined;
+    });
+    render(
+      <EditionProvider>
+        <ToastProvider>
+          <DialogProvider>
+            <Customers />
+          </DialogProvider>
+        </ToastProvider>
+      </EditionProvider>
+    );
+  }
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('stays out of sight unless the installation switched them on', async () => {
+    withTools(false);
+    expect(await screen.findByText('ada@example.com')).toBeInTheDocument();
+    expect(screen.queryByText('Test tools — temporary')).not.toBeInTheDocument();
+    expect(sent('/billing/admin/test/clock', 'GET')).toHaveLength(0);
+  });
+
+  it('moves billing time forward and reloads the accounts', async () => {
+    withTools(true);
+    await screen.findByText('Test tools — temporary');
+    const before = sent('/billing/admin/accounts', 'GET').length;
+    await userEvent.click(await screen.findByRole('button', { name: '+1 day' }));
+    await waitFor(() => expect(sent('/billing/admin/test/clock', 'POST')).toHaveLength(1));
+    expect(sent('/billing/admin/test/clock', 'POST')[0].body).toEqual({ hours: 24 });
+    expect(await screen.findByText(/24 h ahead of real time/)).toBeInTheDocument();
+    await waitFor(() => expect(sent('/billing/admin/accounts', 'GET').length).toBeGreaterThan(before));
+  });
+
+  it('gives one account its own free hours and rate, sending only what was filled in', async () => {
+    withTools(true);
+    await screen.findByText('Test tools — temporary');
+    const region = screen.getByRole('region', { name: 'Test tools — temporary' });
+    await userEvent.selectOptions(within(region).getByRole('combobox'), 'u1');
+    await userEvent.type(within(region).getByPlaceholderText('e.g. 0'), '0');
+    await userEvent.click(within(region).getByRole('button', { name: 'Apply to this account' }));
+    await waitFor(() => expect(sent('/billing/admin/test/accounts/u1/plan', 'POST')).toHaveLength(1));
+    expect(sent('/billing/admin/test/accounts/u1/plan', 'POST')[0].body).toEqual({ freeHoursPerMonth: 0 });
+  });
+
+  it('reads the numbers typed in, a comma included', () => {
+    expect(optionalNumber('')).toBeUndefined();
+    expect(optionalNumber(' 0 ')).toBe(0);
+    expect(optionalNumber('0,5')).toBe(0.5);
+    expect(optionalNumber('-1')).toBeNull();
+    expect(optionalNumber('abc')).toBeNull();
+    expect(CLOCK_STEPS.map((s) => s.hours)).toEqual([1, 24, 744]);
   });
 });

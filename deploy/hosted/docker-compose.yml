@@ -121,6 +121,9 @@ services:
       - FINVAULT_URL=${FINVAULT_URL:-}
       - FINVAULT_MERCHANT_NAME=${FINVAULT_MERCHANT_NAME:-}
       - FINVAULT_MERCHANT_IBAN=${FINVAULT_MERCHANT_IBAN:-}
+      # TEMPORARY (#439): true turns on the admin billing test tools - move time
+      # forward, set an account's free hours and rate. Never with real customers.
+      - BILLING_TEST_TOOLS=${BILLING_TEST_TOOLS:-false}
       - SFTP_PORT=2022
       - SFTP_PUBLIC_PORT=${SFTP_PUBLIC_PORT:-2022}
       - SFTP_HOST_KEY_PATH=/data/sftp_host_ed25519_key
@@ -192,6 +195,9 @@ services:
       # the same database, e.g. …/nexusinfra?schema=billing (#241).
       - DATABASE_URL=${BILLING_DATABASE_URL:-file:/data/billing.db}
       - BILLING_WALLET_ID=${BILLING_WALLET_ID:-nexusinfra}
+      # TEMPORARY (#439): true turns on the admin billing test tools - move time
+      # forward, set an account's free hours and rate. Never with real customers.
+      - BILLING_TEST_TOOLS=${BILLING_TEST_TOOLS:-false}
     volumes:
       - billing_data:/data
     depends_on:

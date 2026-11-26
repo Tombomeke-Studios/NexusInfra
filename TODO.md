@@ -331,6 +331,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [x] Make the community build's stub aliases actually match their imports (#393) 🐛 — the stubbed modules are listed in `dashboard/editionStubs.ts` and matched on the specifier as written; a test checks every import is caught, and a community build with the `BILLING_INCLUDED` gates forced open still passes `verify-edition.mjs`
 - [x] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)
 - [x] A top-up says it is waiting in FinVault without saying for which address — name the address the request went to, and link to FinVault (#435) 🐛
+- [x] Temporary admin test tools for hosted billing: move time forward, set an account's free hours and hourly rate (#439) — `BILLING_TEST_TOOLS=true` on the orchestrator and the bridge; remove once billing is tested
 - [x] Top up by scanning an EPC QR code with the FinVault app (#436) — beside the email request, not instead of it: an RF creditor reference in the QR, paid by reference in FinVault (its #112) by whoever scans it; a changed amount is refused. `FINVAULT_MERCHANT_NAME`/`_IBAN` turn it on
 - [x] `docs/billing.md` is missing from the documentation ownership table (#248)
 

@@ -210,7 +210,7 @@ const sftpPublicPort = parseSftpPort(process.env.SFTP_PUBLIC_PORT) ?? sftpPort;
 // Confirming an address (#367) needs the same two things; without them it is not
 // offered and nothing waits on it.
 const emailVerification = createEmailVerification({ repo, panelUrl, sendMail: passwordReset.sendMail });
-app.use(catchAsync(createConfigRouter(undefined, { passwordResetByEmail: resetAvailable(passwordReset), sftpPort: sftpPublicPort, emailVerification: emailVerification.available, finvault: finvaultFromEnv() })));
+app.use(catchAsync(createConfigRouter(undefined, { passwordResetByEmail: resetAvailable(passwordReset), sftpPort: sftpPublicPort, emailVerification: emailVerification.available, finvault: finvaultFromEnv(), billingTestTools: isHosted() && process.env.BILLING_TEST_TOOLS === 'true' })));
 app.use(catchAsync(emailVerification.publicRouter()));
 // Public, like login: somebody who forgot their password has no token.
 app.use(catchAsync(createPasswordResetRouter(passwordReset)));
@@ -248,7 +248,10 @@ app.use(
 );
 // Plans a customer picks from, and the provider's view of accounts (#369). Hosted only:
 // in community there is no bridge to ask, and no reason for the routes to exist.
-if (isHosted()) app.use(catchAsync(createBillingPlansRouter({ repo })));
+// TEMPORARY test tools (#439) for the hosted billing — never on a real installation.
+const billingTestTools = isHosted() && process.env.BILLING_TEST_TOOLS === 'true';
+if (billingTestTools) console.warn('[Orchestrator] TEST TOOLS ARE ON (BILLING_TEST_TOOLS=true): administrators can move billing time forward and change an account\'s rate. Never on a real installation.');
+if (isHosted()) app.use(catchAsync(createBillingPlansRouter({ repo, testTools: billingTestTools })));
 // Surfaces the Control Room's live service/node monitoring to the dashboard (#157).
 app.use(catchAsync(createMonitoringRouter()));
 // Last: turns anything the routes threw into a 500 for that caller only (#294).
