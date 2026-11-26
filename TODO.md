@@ -183,7 +183,7 @@ gateway work" above.)_
 - [x] Nest the image names under one `nexusinfra` namespace (#200)
 - [x] Document every image for people who assemble their own stack (#201)
 - [x] All-in-one image per edition — `nexusinfra-community` / `nexusinfra-hosted` (#203)
-- [ ] Slim the service images — Prisma CLI + engine targets (orchestrator is 501 MB) (#192) 📋
+- [x] Slim the service images — Prisma CLI + engine targets (#192) — migrations moved into `orchestrator-migrate` / `billing-bridge-migrate` images that compose runs first; the runtime has no CLI and refuses an unmigrated database. On Node 24, as `docker images` reports: orchestrator 594 → 425 MB, billing-bridge 582 → 416 MB. The engine targets were already only the shipped platform (`native`), so narrowing them saved nothing
 - [x] Gateway test failed intermittently — the token was signed twice (#208) 🐛
 - [x] Slim the all-in-one — build tooling no longer ships to users, 1.07 GB → 915 MB (#204)
 - [x] Document the release installer, and link it from the README (#210)
@@ -259,6 +259,8 @@ scrolling log lines describing events that never happened.
 
 ### 🐛 Bugs / fixes (open)
 
+- [x] Every image ran on Node 18, out of support since April 2025, and CI tested on Node 20 — images, CI and release now all run Node 24 (#432) 🐛
+- [ ] SFTP in the shipped images runs without ssh2's native crypto, ~40x slower — the slim images have no compiler, so the addon is never built (#433) 🐛
 - [x] The Java heap and the RAM limit are two settings for the same memory (#308)
 - [x] A server's memory limit could not be changed after creation, so neither could its Java heap — Settings now has a Resources editor that shows the heap following the limit (#381) 🐛
 - [x] The Overview counted only percentage caps as committed, so servers sized in MB looked free (#383) 🐛

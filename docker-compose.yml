@@ -77,6 +77,25 @@ services:
     depends_on:
       - rabbitmq
 
+  # Applies the orchestrator's database migrations, then exits (#192). Compose runs it
+  # before the orchestrator on every `up`, and the orchestrator refuses to start while any
+  # migration is missing. Same database and volume as the service it serves.
+  orchestrator-migrate:
+    build:
+      context: .
+      dockerfile: services/orchestrator/Dockerfile
+      target: migrate
+    container_name: nexusinfra-orchestrator-migrate
+    environment:
+      - DATABASE_URL=${ORCHESTRATOR_DATABASE_URL:-file:/data/orchestrator.db}
+    volumes:
+      - orchestrator_data:/data
+    depends_on:
+      # Only with the postgres profile on; without it this dependency is skipped.
+      postgres:
+        condition: service_healthy
+        required: false
+
   orchestrator:
     build:
       context: .
@@ -124,7 +143,29 @@ services:
     volumes:
       - orchestrator_data:/data
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_started
+      orchestrator-migrate:
+        condition: service_completed_successfully
+
+  # Applies the billing-bridge's database migrations, then exits (#192). Compose runs it
+  # before the billing-bridge on every `up`, and the billing-bridge refuses to start while any
+  # migration is missing. Same database and volume as the service it serves.
+  billing-bridge-migrate:
+    build:
+      context: .
+      dockerfile: services/billing-bridge/Dockerfile
+      target: migrate
+    container_name: nexusinfra-billing-bridge-migrate
+    environment:
+      - DATABASE_URL=${BILLING_DATABASE_URL:-file:/data/billing.db}
+    volumes:
+      - billing_data:/data
+    depends_on:
+      # Only with the postgres profile on; without it this dependency is skipped.
+      postgres:
+        condition: service_healthy
+        required: false
 
   # Billing Bridge — hosted edition only. With NEXUS_EDITION=community (default)
   # it stays inert (health only, no billing); set it to `hosted` to turn on
@@ -152,7 +193,10 @@ services:
     volumes:
       - billing_data:/data
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_started
+      billing-bridge-migrate:
+        condition: service_completed_successfully
 
   # API Gateway (#20) — single external entry point: CORS, per-client rate
   # limiting, token validation, and a streaming reverse proxy (WebSockets too, #69)

@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import { assertEditionIsRunnable, buildEnvelope, buildInfo, consumeRabbitQueue, getInternalToken, isHosted, INTERNAL_TOKEN_HEADER, publishRabbitEvent, readPayload, startHeartbeat, type EventEnvelope, MetricsRegistry, registerBuildInfo, httpMetrics, metricsHandler } from 'shared';
-import { PrismaRepository } from './db.js';
+import { PrismaRepository, assertDatabaseMigrated } from './db.js';
 import { agentFetch, createApiRouter, resolveContainerTarget } from './api.js';
 import { catchAsync, errorHandler, installProcessGuards } from './errorBoundary.js';
 import { resolveAgentUrl } from './agentUrl.js';
@@ -62,6 +62,7 @@ installProcessGuards();
 const PORT = Number(process.env.PORT) || 9200;
 const NODE_AGENT_URL = process.env.NODE_AGENT_URL || 'http://node-agent:9100';
 
+await assertDatabaseMigrated();
 const repo = new PrismaRepository();
 
 // Prometheus metrics (#246). Created first: the publishers and consumers below

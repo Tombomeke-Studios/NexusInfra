@@ -1,6 +1,6 @@
 import express from 'express';
 import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, getEdition, isHosted, readPayload, startHeartbeat, type EventEnvelope, MetricsRegistry, registerBuildInfo, httpMetrics, metricsHandler } from 'shared';
-import { PrismaRepository } from './db.js';
+import { PrismaRepository, assertDatabaseMigrated } from './db.js';
 import { createBillingService, DEFAULT_SETTLE_INTERVAL_MS, DEFAULT_TOPUP_TIMEOUT_MS } from './service.js';
 import { createBillingRouter } from './api.js';
 import { requireInternalToken } from './internalAuth.js';
@@ -25,6 +25,7 @@ try {
 const PORT = Number(process.env.PORT) || 9300;
 const edition = getEdition();
 
+await assertDatabaseMigrated();
 const repo = new PrismaRepository();
 const service = createBillingService({ repo });
 
