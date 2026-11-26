@@ -330,8 +330,8 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [x] A server stopped for lack of credit looked like any other stopped server (#380) 🐛 — the suspension is recorded with the server and shown as *suspended* in the Servers list, the drawer and the server's page, saying whose credit ran out, until a start that passes the credit check
 - [x] Make the community build's stub aliases actually match their imports (#393) 🐛 — the stubbed modules are listed in `dashboard/editionStubs.ts` and matched on the specifier as written; a test checks every import is caught, and a community build with the `BILLING_INCLUDED` gates forced open still passes `verify-edition.mjs`
 - [x] The hosted `billing-bridge` image contradicts its own edition stamp and cannot start (#292)
-- [ ] A top-up says it is waiting in FinVault without saying for which address — name the address the request went to, and link to FinVault (#435) 🐛
-- [ ] Top up by scanning an EPC QR code with the FinVault app instead of approving a request sent to your email (#436) — needs FinVault changes too (EPC reference, match an incoming transfer to the top-up) and a decision on the flow first; overlaps #377
+- [x] A top-up says it is waiting in FinVault without saying for which address — name the address the request went to, and link to FinVault (#435) 🐛
+- [x] Top up by scanning an EPC QR code with the FinVault app (#436) — beside the email request, not instead of it: an RF creditor reference in the QR, paid by reference in FinVault (its #112) by whoever scans it; a changed amount is refused. `FINVAULT_MERCHANT_NAME`/`_IBAN` turn it on
 - [x] `docs/billing.md` is missing from the documentation ownership table (#248)
 
 > **Labels.** Issues now carry `edition:community`, `edition:hosted` or `edition:both` alongside

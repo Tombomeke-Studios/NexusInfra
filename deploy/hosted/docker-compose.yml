@@ -115,6 +115,12 @@ services:
       - CONTROL_ROOM_URL=http://control-room:9000
       - DATABASE_PUBLIC_HOST=${DATABASE_PUBLIC_HOST:-localhost}
       - BILLING_BRIDGE_URL=http://billing-bridge:9300
+      # Where a top-up is paid (#435, #436): a link to FinVault, and the payee a
+      # top-up's QR code names - FinVault's merchant account (its
+      # NEXUSINFRA_MERCHANT_EMAIL). Without the name and IBAN there is no QR.
+      - FINVAULT_URL=${FINVAULT_URL:-}
+      - FINVAULT_MERCHANT_NAME=${FINVAULT_MERCHANT_NAME:-}
+      - FINVAULT_MERCHANT_IBAN=${FINVAULT_MERCHANT_IBAN:-}
       - SFTP_PORT=2022
       - SFTP_PUBLIC_PORT=${SFTP_PUBLIC_PORT:-2022}
       - SFTP_HOST_KEY_PATH=/data/sftp_host_ed25519_key

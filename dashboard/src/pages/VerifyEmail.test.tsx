@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { StrictMode } from 'react';
@@ -93,8 +93,9 @@ describe('topping up with an unconfirmed address (#367)', () => {
 
   it('asks for the confirmation first, holds the button, and can send the link again', async () => {
     const calls = serve({ emailVerification: true, emailVerified: false });
-    expect(await screen.findByText(/Confirm your email address first/)).toBeInTheDocument();
-    expect(screen.getByText('ada@example.com')).toBeInTheDocument();
+    const notice = await screen.findByText(/Confirm your email address first/);
+    // The address is in the notice itself; the top-up text names it too (#435).
+    expect(within(notice.closest('div') as HTMLElement).getByText('ada@example.com')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Top up/ })).toBeDisabled();
 
     await userEvent.click(screen.getByRole('button', { name: 'send it again' }));

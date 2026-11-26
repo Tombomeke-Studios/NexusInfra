@@ -87,6 +87,17 @@ the panel is **not** the owner of the hardware (a hosting-provider scenario). So
   account. Nothing is charged until the customer presses Pay there. On `payment.confirmed` the credit is
   added; on `payment.failed` (declined, or refused by FinVault) the top-up is marked failed with
   FinVault's reason, which the Billing page shows.
+  - **The page says which address (#435).** A waiting top-up names the exact address its request went
+    to, and links to FinVault when `FINVAULT_URL` is set. FinVault creates the request whether or not
+    anyone there has that address, so without the address "waiting for you" could mean nothing was.
+  - **Or scan the QR (#436).** With `FINVAULT_MERCHANT_NAME` and `FINVAULT_MERCHANT_IBAN` set, each
+    waiting top-up also shows an EPC QR code (EPC069-12): that payee, the amount, and the top-up's
+    reference as an ISO 11649 **RF creditor reference** in the structured-reference field. Scanning it in
+    the FinVault mobile app pays that same request — by whoever scans it, so a customer whose FinVault
+    address differs from their NexusInfra one can still pay. Top-up references are RF references since
+    #436 (21 random characters, nothing about the account in them, since a QR is readable by anyone
+    near the screen); older pending top-ups have no QR and are paid as before. A QR whose amount was
+    changed is refused by FinVault. FinVault's half is Tombomeke-Studios/FinVault#112.
   - **Who pays is the signed-in account, by its own address.** The Orchestrator fills the email in from
     the session; one sent by the browser is ignored, because the address decides whose FinVault inbox
     receives a payment request. A NexusInfra user id means nothing to FinVault until the two share an

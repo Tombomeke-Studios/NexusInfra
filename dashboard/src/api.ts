@@ -408,6 +408,8 @@ export interface AppConfig {
   sftpPort?: number | null;
   /** Whether this installation confirms email addresses (#367); a top-up then needs a confirmed one. */
   emailVerification?: boolean;
+  /** Hosted only, when configured (#435, #436): a link to FinVault, and the payee a top-up's QR names. */
+  finvault?: { url: string | null; payee: { name: string; iban: string } | null };
 }
 
 /** One server's disk use (#347); a null is something the node could not measure. */

@@ -148,6 +148,8 @@ scrape_configs:
 | `CONTROL_ROOM_URL` | no | For surfacing platform health in the panel. |
 | `TRUST_PROXY` | no | Number of proxies in front: `1` for the dashboard's own nginx (the bundles' default, #401), `2` with a reverse proxy in front of that ([deployment.md](deployment.md#putting-it-behind-tls-245)). Makes per-IP rate limiting measure the caller rather than the proxy. Leave unset unless only the proxy can reach this process — `X-Forwarded-For` is caller-supplied. |
 | `BILLING_BRIDGE_URL` | hosted | Where plan-quota checks go. |
+| `FINVAULT_URL` | no | Hosted: FinVault's address, linked from the Billing page (#435). Only `http(s)://`. |
+| `FINVAULT_MERCHANT_NAME` / `FINVAULT_MERCHANT_IBAN` | no | Hosted: the payee a top-up's EPC QR code names (#436) — copy them from FinVault's merchant account (`NEXUSINFRA_MERCHANT_EMAIL` there). Both public on purpose: the QR prints them. Without both, a top-up has no QR. |
 | `DATABASE_PUBLIC_HOST` | no | Hostname given to users connecting to a provisioned database. Defaults to `localhost`. |
 | `MAX_UPLOAD_BYTES` | no | Largest file upload through the panel, default `64mb`. The only limit: the dashboard's nginx sets none of its own (#389). Set the same value on the node agent. |
 | `SMTP_URL` | no | Turns on **email notifications** (#236), e.g. `smtps://user:pass@smtp.example.com:465` or `smtp://user:pass@mail.local:587` (STARTTLS when offered). Unset means webhooks only, and the panel says so. |
