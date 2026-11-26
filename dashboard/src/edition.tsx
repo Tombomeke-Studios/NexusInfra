@@ -16,9 +16,13 @@ interface EditionState {
   sftpPort: number | null;
   /** Whether this installation confirms email addresses (#367). */
   emailVerification: boolean;
+  /** Hosted only: where a top-up is paid — FinVault's address, and the payee its QR names (#435, #436). */
+  finvault: { url: string | null; payee: { name: string; iban: string } | null } | null;
+  /** TEMPORARY (#439): whether the Customers page shows its billing test tools. */
+  billingTestTools: boolean;
 }
 
-const DEFAULT_STATE: EditionState = { edition: 'community', isHosted: false, loaded: false, passwordResetByEmail: false, sftpPort: null, emailVerification: false };
+const DEFAULT_STATE: EditionState = { edition: 'community', isHosted: false, loaded: false, passwordResetByEmail: false, sftpPort: null, emailVerification: false, finvault: null, billingTestTools: false };
 
 const EditionContext = createContext<EditionState>(DEFAULT_STATE);
 
@@ -41,6 +45,8 @@ export function EditionProvider({ children }: { children: ReactNode }) {
             passwordResetByEmail: cfg.passwordResetByEmail === true,
             sftpPort: typeof cfg.sftpPort === 'number' ? cfg.sftpPort : null,
             emailVerification: cfg.emailVerification === true,
+            finvault: cfg.finvault ?? null,
+            billingTestTools: cfg.billingTestTools === true,
           });
       })
       .catch(() => {

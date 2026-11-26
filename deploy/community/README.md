@@ -67,7 +67,9 @@ NEXUSINFRA_VERSION=0.2.0-community
 docker compose pull && docker compose up -d
 ```
 
-Database migrations are applied automatically when the Orchestrator starts.
+Database migrations are applied automatically: `orchestrator-migrate` runs before the Orchestrator on
+every `up`, applies whatever the new version adds, and exits. If it fails, the Orchestrator does not
+start — `docker compose logs orchestrator-migrate` says why.
 
 ## Security notes
 

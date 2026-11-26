@@ -54,3 +54,30 @@ describe('upgradeAuthorized (WebSocket handshake)', () => {
     expect(upgradeAuthorized(reqWith({ [INTERNAL_TOKEN_HEADER]: TOKEN }), TOKEN)).toBe(true);
   });
 });
+
+describe('during a token rotation', () => {
+  function rotating() {
+    const a = express();
+    a.use(requireInternalToken(['new-secret', 'old-secret']));
+    a.post('/exec/:id', (_req, res) => res.json({ ok: true }));
+    return a;
+  }
+
+  it('accepts both the new and the previous token', async () => {
+    for (const token of ['new-secret', 'old-secret']) {
+      const res = await request(rotating()).post('/exec/abc').set(INTERNAL_TOKEN_HEADER, token);
+      expect(res.status).toBe(200);
+    }
+  });
+
+  it('still rejects anything else', async () => {
+    const res = await request(rotating()).post('/exec/abc').set(INTERNAL_TOKEN_HEADER, 'older-secret');
+    expect(res.status).toBe(401);
+  });
+
+  it('applies to a WebSocket upgrade too', () => {
+    const req = (token: string) => ({ headers: { [INTERNAL_TOKEN_HEADER]: token } }) as unknown as IncomingMessage;
+    expect(upgradeAuthorized(req('old-secret'), ['new-secret', 'old-secret'])).toBe(true);
+    expect(upgradeAuthorized(req('older-secret'), ['new-secret', 'old-secret'])).toBe(false);
+  });
+});

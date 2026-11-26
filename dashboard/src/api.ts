@@ -408,6 +408,10 @@ export interface AppConfig {
   sftpPort?: number | null;
   /** Whether this installation confirms email addresses (#367); a top-up then needs a confirmed one. */
   emailVerification?: boolean;
+  /** Hosted only, when configured (#435, #436): a link to FinVault, and the payee a top-up's QR names. */
+  finvault?: { url: string | null; payee: { name: string; iban: string } | null };
+  /** TEMPORARY (#439): hosted, with BILLING_TEST_TOOLS=true — the Customers page shows its test tools. */
+  billingTestTools?: boolean;
 }
 
 /** One server's disk use (#347); a null is something the node could not measure. */
@@ -624,6 +628,25 @@ export function adminListAccounts(): Promise<BillingAccount[]> {
 
 export function adminSetAccountPlan(userId: string, planId: string): Promise<BillingPlanOption> {
   return request(`/billing/admin/accounts/${encodeURIComponent(userId)}/plan`, { method: 'PUT', body: JSON.stringify({ planId }) });
+}
+
+/** TEMPORARY test tools (#439): the billing clock, which only moves forward. */
+export interface TestClock {
+  now: string;
+  offsetHours: number;
+}
+
+export function adminTestClock(): Promise<TestClock> {
+  return request('/billing/admin/test/clock');
+}
+
+export function adminAdvanceTestClock(hours: number): Promise<TestClock> {
+  return request('/billing/admin/test/clock', { method: 'POST', body: JSON.stringify({ hours }) });
+}
+
+/** Puts the account on its own test plan with these numbers (anything left out stays as it is). */
+export function adminSetTestPlan(userId: string, change: { pricePerHour?: number; freeHoursPerMonth?: number }): Promise<BillingPlanOption> {
+  return request(`/billing/admin/test/accounts/${encodeURIComponent(userId)}/plan`, { method: 'POST', body: JSON.stringify(change) });
 }
 
 /** A negative amount removes credit. The reason is shown to the customer. */

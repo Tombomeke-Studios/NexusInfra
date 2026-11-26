@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { createConfigRouter } from './config.js';
+import { createConfigRouter, finvaultFromEnv } from './config.js';
 
 // /config is public (mounted before requireAuth) so the dashboard can read the
 // edition before login. It must never require a token.
@@ -40,5 +40,47 @@ describe('GET /config', () => {
     const app = express().use(createConfigRouter('community'));
     const res = await request(app).get('/config'); // no Authorization header
     expect(res.status).toBe(200);
+  });
+});
+
+describe('FinVault payment details (#435, #436)', () => {
+  const finvault = { url: 'https://finvault.example', payee: { name: 'NexusInfra', iban: 'BE89377007719941' } };
+
+  it('tells a hosted panel where to pay a top-up', async () => {
+    const app = express().use(createConfigRouter('hosted', { finvault }));
+    expect((await request(app).get('/config')).body.finvault).toEqual(finvault);
+  });
+
+  it('never tells a community panel, which has no billing', async () => {
+    const app = express().use(createConfigRouter('community', { finvault }));
+    expect((await request(app).get('/config')).body).not.toHaveProperty('finvault');
+  });
+
+  it('reads FINVAULT_URL and the payee from the environment', () => {
+    expect(finvaultFromEnv({ FINVAULT_URL: 'https://finvault.example/', FINVAULT_MERCHANT_NAME: ' NexusInfra ', FINVAULT_MERCHANT_IBAN: 'be89 3770 0771 9941' }))
+      .toEqual({ url: 'https://finvault.example', payee: { name: 'NexusInfra', iban: 'BE89377007719941' } });
+  });
+
+  it('gives each half on its own, and nothing when neither is set', () => {
+    expect(finvaultFromEnv({})).toBeNull();
+    expect(finvaultFromEnv({ FINVAULT_URL: 'https://finvault.example' })).toEqual({ url: 'https://finvault.example', payee: null });
+    expect(finvaultFromEnv({ FINVAULT_MERCHANT_NAME: 'N', FINVAULT_MERCHANT_IBAN: 'BE89377007719941' })).toEqual({ url: null, payee: { name: 'N', iban: 'BE89377007719941' } });
+  });
+
+  it('refuses what it would only get wrong: a link that is not http(s), a malformed IBAN, a name without an IBAN', () => {
+    expect(finvaultFromEnv({ FINVAULT_URL: 'javascript:alert(1)' })).toBeNull();
+    expect(finvaultFromEnv({ FINVAULT_MERCHANT_NAME: 'N', FINVAULT_MERCHANT_IBAN: 'not an iban' })).toBeNull();
+    expect(finvaultFromEnv({ FINVAULT_MERCHANT_NAME: 'N' })).toBeNull();
+  });
+});
+
+describe('the billing test tools flag (#439)', () => {
+  it('is only ever there in hosted, and only when switched on', async () => {
+    const on = express().use(createConfigRouter('hosted', { billingTestTools: true }));
+    expect((await request(on).get('/config')).body.billingTestTools).toBe(true);
+    const community = express().use(createConfigRouter('community', { billingTestTools: true }));
+    expect((await request(community).get('/config')).body).not.toHaveProperty('billingTestTools');
+    const off = express().use(createConfigRouter('hosted'));
+    expect((await request(off).get('/config')).body).not.toHaveProperty('billingTestTools');
   });
 });

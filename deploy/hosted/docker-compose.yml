@@ -51,6 +51,7 @@ services:
       - METRICS_TOKEN=${METRICS_TOKEN:-}
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:?must match FinVault, or the two cannot read each other's events}
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?set a strong random value in .env}
+      - INTERNAL_API_TOKEN_PREVIOUS=${INTERNAL_API_TOKEN_PREVIOUS:-}
       - AGENT_URL=http://node-agent:9100
       # Off-site backups (#232): every backup also copied to an S3-compatible
       # bucket. Off unless the bucket and both keys are set.
@@ -75,6 +76,22 @@ services:
       - agent_backups:/var/lib/nexusinfra/backups
     depends_on: [rabbitmq]
 
+  # Applies the orchestrator's database migrations, then exits (#192). Compose runs it
+  # before the orchestrator on every `up`, and the orchestrator refuses to start while any
+  # migration is missing. Same database and volume as the service it serves.
+  orchestrator-migrate:
+    image: ghcr.io/tombomeke-studios/nexusinfra/orchestrator-migrate:${NEXUSINFRA_VERSION:-hosted}
+    container_name: nexusinfra-orchestrator-migrate
+    environment:
+      - DATABASE_URL=${ORCHESTRATOR_DATABASE_URL:-file:/data/orchestrator.db}
+    volumes:
+      - orchestrator_data:/data
+    depends_on:
+      # Only with the postgres profile on; without it this dependency is skipped.
+      postgres:
+        condition: service_healthy
+        required: false
+
   orchestrator:
     image: ghcr.io/tombomeke-studios/nexusinfra/orchestrator:${NEXUSINFRA_VERSION:-hosted}
     container_name: nexusinfra-orchestrator
@@ -98,6 +115,15 @@ services:
       - CONTROL_ROOM_URL=http://control-room:9000
       - DATABASE_PUBLIC_HOST=${DATABASE_PUBLIC_HOST:-localhost}
       - BILLING_BRIDGE_URL=http://billing-bridge:9300
+      # Where a top-up is paid (#435, #436): a link to FinVault, and the payee a
+      # top-up's QR code names - FinVault's merchant account (its
+      # NEXUSINFRA_MERCHANT_EMAIL). Without the name and IBAN there is no QR.
+      - FINVAULT_URL=${FINVAULT_URL:-}
+      - FINVAULT_MERCHANT_NAME=${FINVAULT_MERCHANT_NAME:-}
+      - FINVAULT_MERCHANT_IBAN=${FINVAULT_MERCHANT_IBAN:-}
+      # TEMPORARY (#439): true turns on the admin billing test tools - move time
+      # forward, set an account's free hours and rate. Never with real customers.
+      - BILLING_TEST_TOOLS=${BILLING_TEST_TOOLS:-false}
       - SFTP_PORT=2022
       - SFTP_PUBLIC_PORT=${SFTP_PUBLIC_PORT:-2022}
       - SFTP_HOST_KEY_PATH=/data/sftp_host_ed25519_key
@@ -116,7 +142,11 @@ services:
       - MAX_UPLOAD_BYTES=${MAX_UPLOAD_BYTES:-64mb}
     volumes:
       - orchestrator_data:/data
-    depends_on: [rabbitmq]
+    depends_on:
+      rabbitmq:
+        condition: service_started
+      orchestrator-migrate:
+        condition: service_completed_successfully
 
   gateway:
     image: ghcr.io/tombomeke-studios/nexusinfra/gateway:${NEXUSINFRA_VERSION:-hosted}
@@ -131,6 +161,22 @@ services:
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:?must match FinVault, or the two cannot read each other's events}
     depends_on: [orchestrator]
 
+  # Applies the billing-bridge's database migrations, then exits (#192). Compose runs it
+  # before the billing-bridge on every `up`, and the billing-bridge refuses to start while any
+  # migration is missing. Same database and volume as the service it serves.
+  billing-bridge-migrate:
+    image: ghcr.io/tombomeke-studios/nexusinfra/billing-bridge-migrate:${NEXUSINFRA_VERSION:-hosted}
+    container_name: nexusinfra-billing-bridge-migrate
+    environment:
+      - DATABASE_URL=${BILLING_DATABASE_URL:-file:/data/billing.db}
+    volumes:
+      - billing_data:/data
+    depends_on:
+      # Only with the postgres profile on; without it this dependency is skipped.
+      postgres:
+        condition: service_healthy
+        required: false
+
   # Billing Bridge — hosted only. Meters runtime, holds the credit wallet, runs
   # the monthly cycle, and drives top-ups through FinVault. There is no community
   # image of this service because there would be nothing in it.
@@ -144,13 +190,21 @@ services:
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY:?must match FinVault}
       # Must match the Orchestrator's value: the bridge serves only callers that hold it (#372).
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?set a strong random value in .env}
+      - INTERNAL_API_TOKEN_PREVIOUS=${INTERNAL_API_TOKEN_PREVIOUS:-}
       # SQLite unless BILLING_DATABASE_URL names PostgreSQL — its own schema in
       # the same database, e.g. …/nexusinfra?schema=billing (#241).
       - DATABASE_URL=${BILLING_DATABASE_URL:-file:/data/billing.db}
       - BILLING_WALLET_ID=${BILLING_WALLET_ID:-nexusinfra}
+      # TEMPORARY (#439): true turns on the admin billing test tools - move time
+      # forward, set an account's free hours and rate. Never with real customers.
+      - BILLING_TEST_TOOLS=${BILLING_TEST_TOOLS:-false}
     volumes:
       - billing_data:/data
-    depends_on: [rabbitmq]
+    depends_on:
+      rabbitmq:
+        condition: service_started
+      billing-bridge-migrate:
+        condition: service_completed_successfully
 
   dashboard:
     # Built for this edition (#190): the community bundle does not contain the

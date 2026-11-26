@@ -177,6 +177,39 @@ describe('service images', () => {
     expect(service).toContain('host.docker.internal:host-gateway');
   });
 
+  // #192: the services with a database no longer migrate at start — their
+  // runtime image leaves the Prisma CLI out — and refuse to run until the
+  // database is migrated. So every compose file has to run the `migrate` image
+  // first, against the same database and the same volume, or the stack never
+  // comes up. And the runtime must not quietly start migrating again, which
+  // would need the CLI back in it.
+  const DATABASE_SERVICES = ['orchestrator', 'billing-bridge'];
+
+  it.each(COMPOSE_FILES)('migrates each database before its service starts: %s', (file) => {
+    const compose = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+    const block = (service: string) => compose.match(new RegExp(`^ {2}${service}:\\n((?: {4}.*\\n|\\n)+)`, 'm'))?.[1];
+    for (const service of DATABASE_SERVICES) {
+      const runtime = block(service);
+      if (!runtime) continue; // the community bundle has no billing bridge
+      const migrate = block(`${service}-migrate`);
+      expect(migrate, `${service} has no ${service}-migrate service`).toBeTruthy();
+      expect(runtime).toMatch(new RegExp(`^ {6}${service}-migrate:\\n {8}condition: service_completed_successfully$`, 'm'));
+      const setting = (text: string, pattern: RegExp) => text.match(pattern)?.[1];
+      const url = /^\s*- DATABASE_URL=(\S+)$/m;
+      const volume = /^\s*- ([a-z_]+):\/data$/m;
+      expect(setting(migrate!, url), `${service}-migrate migrates a different database`).toBe(setting(runtime, url));
+      expect(setting(migrate!, volume), `${service}-migrate mounts a different volume`).toBe(setting(runtime, volume));
+    }
+  });
+
+  it.each(DATABASE_SERVICES)('ships a migrate target and a runtime that does not migrate: %s', (service) => {
+    const dockerfile = readFileSync(join(ROOT, 'services', service, 'Dockerfile'), 'utf8');
+    expect(dockerfile).toMatch(/^FROM \S+ AS migrate$/m);
+    const runtime = runtimeStage(join(ROOT, 'services', service, 'Dockerfile'));
+    expect(runtime).toContain('COPY --from=pruned');
+    expect(runtime).not.toMatch(/db:deploy|migrate deploy/);
+  });
+
   it.each(dockerfiles)('stamps its edition instead of baking NEXUS_EDITION in: %s', (file) => {
     // #292: billing-bridge set `ENV NEXUS_EDITION=community` in its runtime
     // stage. In the hosted image that contradicted the stamp, so the guard in

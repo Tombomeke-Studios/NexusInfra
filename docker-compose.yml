@@ -50,6 +50,7 @@ services:
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
       # Must match the Orchestrator's value (#169).
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-dev-internal-token}
+      - INTERNAL_API_TOKEN_PREVIOUS=${INTERNAL_API_TOKEN_PREVIOUS:-}
       # Advertised on the heartbeat so the Orchestrator routes this node's
       # deployments to this agent (#171). Uses the compose service DNS name.
       - AGENT_URL=http://node-agent:9100
@@ -75,6 +76,25 @@ services:
       - agent_backups:/var/lib/nexusinfra/backups
     depends_on:
       - rabbitmq
+
+  # Applies the orchestrator's database migrations, then exits (#192). Compose runs it
+  # before the orchestrator on every `up`, and the orchestrator refuses to start while any
+  # migration is missing. Same database and volume as the service it serves.
+  orchestrator-migrate:
+    build:
+      context: .
+      dockerfile: services/orchestrator/Dockerfile
+      target: migrate
+    container_name: nexusinfra-orchestrator-migrate
+    environment:
+      - DATABASE_URL=${ORCHESTRATOR_DATABASE_URL:-file:/data/orchestrator.db}
+    volumes:
+      - orchestrator_data:/data
+    depends_on:
+      # Only with the postgres profile on; without it this dependency is skipped.
+      postgres:
+        condition: service_healthy
+        required: false
 
   orchestrator:
     build:
@@ -103,6 +123,15 @@ services:
       - NODE_AGENT_URL=http://node-agent:9100
       - CONTROL_ROOM_URL=http://control-room:9000
       - BILLING_BRIDGE_URL=http://billing-bridge:9300
+      # Where a top-up is paid (#435, #436): a link to FinVault, and the payee a
+      # top-up's QR code names - FinVault's merchant account (its
+      # NEXUSINFRA_MERCHANT_EMAIL). Without the name and IBAN there is no QR.
+      - FINVAULT_URL=${FINVAULT_URL:-}
+      - FINVAULT_MERCHANT_NAME=${FINVAULT_MERCHANT_NAME:-}
+      - FINVAULT_MERCHANT_IBAN=${FINVAULT_MERCHANT_IBAN:-}
+      # TEMPORARY (#439): true turns on the admin billing test tools - move time
+      # forward, set an account's free hours and rate. Never with real customers.
+      - BILLING_TEST_TOOLS=${BILLING_TEST_TOOLS:-false}
       # Must match the Node Agent's value (#169).
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-dev-internal-token}
       - SFTP_PORT=2022
@@ -123,7 +152,29 @@ services:
     volumes:
       - orchestrator_data:/data
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_started
+      orchestrator-migrate:
+        condition: service_completed_successfully
+
+  # Applies the billing-bridge's database migrations, then exits (#192). Compose runs it
+  # before the billing-bridge on every `up`, and the billing-bridge refuses to start while any
+  # migration is missing. Same database and volume as the service it serves.
+  billing-bridge-migrate:
+    build:
+      context: .
+      dockerfile: services/billing-bridge/Dockerfile
+      target: migrate
+    container_name: nexusinfra-billing-bridge-migrate
+    environment:
+      - DATABASE_URL=${BILLING_DATABASE_URL:-file:/data/billing.db}
+    volumes:
+      - billing_data:/data
+    depends_on:
+      # Only with the postgres profile on; without it this dependency is skipped.
+      postgres:
+        condition: service_healthy
+        required: false
 
   # Billing Bridge — hosted edition only. With NEXUS_EDITION=community (default)
   # it stays inert (health only, no billing); set it to `hosted` to turn on
@@ -140,6 +191,7 @@ services:
       - NEXUS_EDITION=${NEXUS_EDITION:-community}
       # Must match the Orchestrator's value: the bridge serves only callers that hold it (#372).
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-dev-internal-token}
+      - INTERNAL_API_TOKEN_PREVIOUS=${INTERNAL_API_TOKEN_PREVIOUS:-}
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
       - METRICS_TOKEN=${METRICS_TOKEN:-}
       - FINVAULT_MESSAGE_KEY=${FINVAULT_MESSAGE_KEY}
@@ -147,10 +199,16 @@ services:
       # the same database, e.g. …/nexusinfra?schema=billing (#241).
       - DATABASE_URL=${BILLING_DATABASE_URL:-file:/data/billing.db}
       - BILLING_WALLET_ID=${BILLING_WALLET_ID:-nexusinfra}
+      # TEMPORARY (#439): true turns on the admin billing test tools - move time
+      # forward, set an account's free hours and rate. Never with real customers.
+      - BILLING_TEST_TOOLS=${BILLING_TEST_TOOLS:-false}
     volumes:
       - billing_data:/data
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_started
+      billing-bridge-migrate:
+        condition: service_completed_successfully
 
   # API Gateway (#20) — single external entry point: CORS, per-client rate
   # limiting, token validation, and a streaming reverse proxy (WebSockets too, #69)

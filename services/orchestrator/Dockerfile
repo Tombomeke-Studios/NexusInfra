@@ -1,6 +1,6 @@
 # Multi-stage build. Debian slim (not alpine) + openssl, because Prisma's query
 # and schema engines need OpenSSL and don't run on alpine/musl out of the box.
-FROM node:18-slim AS builder
+FROM node:24-slim AS builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
@@ -12,7 +12,13 @@ RUN npm run build --workspace=shared
 # `build` also runs `prisma generate` (see services/orchestrator/package.json).
 RUN npm run build --workspace=services/orchestrator
 
-FROM node:18-slim
+# ── migrate: applies the migrations, then exits (#192) ──────────────────────
+# Everything the runtime has, plus the Prisma CLI and its schema engine (~60 MB),
+# which only `migrate deploy` uses. Published as `orchestrator-migrate`; the
+# compose files run it before the orchestrator on every start. Also the image to
+# run scripts/sqlite-to-postgres.mjs in, since that migrates its target too.
+# Build it with `--target migrate`.
+FROM node:24-slim AS migrate
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
@@ -24,9 +30,24 @@ COPY --from=builder /app/services/orchestrator/prisma ./services/orchestrator/pr
 # db:deploy picks SQLite or PostgreSQL migrations by DATABASE_URL (#241), and the
 # SQLite → PostgreSQL copy lives there too; both are repo-root scripts.
 COPY scripts/ ./scripts/
-# prisma (CLI, for migrate deploy) + @prisma/client are runtime deps; the
-# orchestrator postinstall regenerates the client against the copied schema.
+# The postinstall generates both Prisma clients against the copied schemas.
 RUN npm install --omit=dev
+ENV DATABASE_URL=file:./orchestrator.db
+WORKDIR /app/services/orchestrator
+CMD ["npm", "run", "db:deploy"]
+
+# The same tree without what only migrations use. Removing files in a later layer
+# of one image does not shrink it, so the runtime copies this pruned tree instead.
+# Nothing else depends on these packages: @prisma/client names `prisma` only as an
+# optional peer, and both generated clients carry their own query engine.
+FROM migrate AS pruned
+RUN cd /app/node_modules \
+ && rm -rf prisma .bin/prisma @prisma/engines @prisma/engines-version @prisma/fetch-engine @prisma/get-platform @prisma/debug
+
+# ── runtime (the default target) ────────────────────────────────────────────
+FROM node:24-slim
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=pruned /app /app
 # Build identity (#179, #189). The edition is stamped into the image as a file,
 # not left to the environment: pulling the :hosted image is enough, and a stray
 # NEXUS_EDITION cannot turn this build into the other edition (it would be
@@ -38,6 +59,7 @@ RUN mkdir -p /etc/nexusinfra && printf '%s' "$NEXUS_EDITION" > /etc/nexusinfra/e
 ENV PORT=9200
 ENV DATABASE_URL=file:./orchestrator.db
 EXPOSE 9200
-# Apply migrations, then start. The SQLite file lives in the orchestrator dir.
+# No migrations here: the migrate image applies them, and the orchestrator
+# refuses to start while any are missing (shared/src/migrations.ts).
 WORKDIR /app/services/orchestrator
-CMD ["sh", "-c", "npm run db:deploy && node dist/index.js"]
+CMD ["node", "dist/index.js"]

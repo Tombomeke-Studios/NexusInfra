@@ -1,7 +1,8 @@
 import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import { createRequire } from 'module';
-import { isPostgresUrl } from 'shared';
+import { fileURLToPath } from 'url';
+import { assertMigrated, isPostgresUrl, migrationsDirFor, shippedMigrations, type AppliedMigration } from 'shared';
 import { parseRetention, type BackupRetention } from './retention.js';
 import { PortConflictError } from './portPool.js';
 import type { NotificationChannelRecord, NotificationDeliveryRecord, PortAllocationRecord,
@@ -59,6 +60,21 @@ export function getPrisma(): PrismaClient {
     prisma = new Client() as PrismaClient;
   }
   return prisma;
+}
+
+/**
+ * Exits unless the database has every migration this image ships (#192). The
+ * runtime image no longer migrates; its `migrate` image does, and a stack put
+ * together by hand can leave that step out. Reads `_prisma_migrations` only.
+ */
+export async function assertDatabaseMigrated(): Promise<void> {
+  const serviceDir = fileURLToPath(new URL('..', import.meta.url));
+  await assertMigrated({
+    service: 'orchestrator',
+    shipped: shippedMigrations(migrationsDirFor(serviceDir)),
+    readApplied: () =>
+      getPrisma().$queryRawUnsafe<AppliedMigration[]>('SELECT migration_name, finished_at, rolled_back_at FROM "_prisma_migrations"'),
+  });
 }
 
 type PrismaTeam = Awaited<ReturnType<PrismaClient['team']['findFirstOrThrow']>>;

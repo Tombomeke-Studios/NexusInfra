@@ -161,6 +161,55 @@ describe('plans and the provider’s view (#369)', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  describe('temporary test tools (#439)', () => {
+    function toolsAs(principal: { id: string; platformRole: 'user' | 'admin' | 'owner' }, testTools: boolean) {
+      const app = express();
+      app.use(express.json());
+      app.use((req, _res, next) => {
+        (req as express.Request & { principal?: unknown }).principal = principal;
+        next();
+      });
+      app.use(createBillingPlansRouter({ repo, testTools }));
+      return app;
+    }
+
+    beforeEach(() => {
+      fetchMock.mockImplementation(async (url: string) => {
+        const path = String(url).replace(/^https?:\/\/[^/]+/, '');
+        if (path === '/test/clock') return reply({ now: '2026-08-01T00:00:00.000Z', offsetHours: 24 });
+        if (path.startsWith('/test/accounts/')) return reply({ id: `test-${CUSTOMER.id}` });
+        return reply({ error: 'unexpected' }, 500);
+      });
+    });
+
+    it('do not exist unless switched on', async () => {
+      expect((await request(toolsAs(ADMIN, false)).post('/billing/admin/test/clock').send({ hours: 1 })).status).toBe(404);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('are for platform administrators only', async () => {
+      expect((await request(toolsAs(CUSTOMER, true)).post('/billing/admin/test/clock').send({ hours: 1 })).status).toBe(403);
+      expect((await request(toolsAs(CUSTOMER, true)).post(`/billing/admin/test/accounts/${CUSTOMER.id}/plan`).send({ freeHoursPerMonth: 0 })).status).toBe(403);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('move the clock and change one account, through the bridge', async () => {
+      const clock = await request(toolsAs(ADMIN, true)).post('/billing/admin/test/clock').send({ hours: 24 });
+      expect(clock.body.offsetHours).toBe(24);
+      expect(JSON.parse((callsTo('/test/clock', 'POST')[0][1] as RequestInit).body as string)).toEqual({ hours: 24 });
+
+      const plan = await request(toolsAs(ADMIN, true)).post(`/billing/admin/test/accounts/${CUSTOMER.id}/plan`).send({ freeHoursPerMonth: 0, pricePerHour: 2, extra: 'dropped' });
+      expect(plan.status).toBe(200);
+      const sent = JSON.parse((callsTo(`/test/accounts/${CUSTOMER.id}/plan`, 'POST')[0][1] as RequestInit).body as string);
+      expect(sent).toEqual({ freeHoursPerMonth: 0, pricePerHour: 2 });
+    });
+
+    it('answer 404 for an account that does not exist', async () => {
+      expect((await request(toolsAs(ADMIN, true)).post('/billing/admin/test/accounts/ghost/plan').send({ freeHoursPerMonth: 0 })).status).toBe(404);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   it('says billing is unreachable rather than failing', async () => {
     fetchMock.mockRejectedValue(new Error('down'));
     expect((await request(appAs(CUSTOMER)).get('/billing/plans')).status).toBe(502);

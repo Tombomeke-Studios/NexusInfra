@@ -86,7 +86,9 @@ NEXUSINFRA_VERSION=0.2.0-community   # or 0.2.0-hosted
 docker compose pull && docker compose up -d
 ```
 
-Database migrations are applied automatically when the control plane starts.
+Database migrations are applied automatically: the `-migrate` services run before the control plane
+on every `up`, apply whatever the new version adds, and exit. If one fails, its service does not
+start — `docker compose logs orchestrator-migrate` (or `billing-bridge-migrate`) says why.
 
 ## Before exposing this to a network
 

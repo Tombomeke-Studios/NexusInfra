@@ -221,7 +221,8 @@ is the migrations directory.
 | `shared/src/outbox.ts` | `PublishOutbox` + `startOutboxFlusher` — holds a failed publish and replays it **in order** when the broker returns; bounded (drop-oldest + `droppedCount`). Wrap publishers whose events carry state (#167) |
 | `shared/src/metrics.ts` | Prometheus metrics for every service (#246): dependency-free `MetricsRegistry` (counters, histograms, scrape-time gauges that fail soft), `httpMetrics` (labels by **route pattern**, never the raw path), `metricsHandler` (`METRICS_TOKEN`), `registerBuildInfo` |
 | `shared/src/agentLink.ts` | The agent link's wire (#416, [docs/agent-link.md](docs/agent-link.md)): frames `[type u8][streamId u32 BE][payload]` (OPEN/DATA/END/RESET = 1–4), `LinkSession` (streams over one WebSocket) and `LinkStream` (a `Duplex` with the socket no-ops undici and `http` call), the 1 MiB backpressure mark, `keepLinkAlive` (15 s ping, 45 s silence). **The numbers are a contract with NexusFleet** |
-| `shared/src/internalToken.ts` | Service-to-service shared secret: `INTERNAL_TOKEN_HEADER`, `getInternalToken`, `tokensMatch` (constant-time). Guards the Node Agent's internal API (#169) |
+| `shared/src/migrations.ts` | Is the database migrated? (#192): pure `shippedMigrations`/`migrationsDirFor`/`pendingMigrations` + `assertMigrated`, which exits a service whose database lacks a shipped migration. Reads Prisma's `_prisma_migrations` only — **applying stays Prisma's job**, in the `-migrate` image. A database it cannot reach is reported as that, never as missing migrations; one newer than the image only warns |
+| `shared/src/internalToken.ts` | Service-to-service shared secret: `INTERNAL_TOKEN_HEADER`, `getInternalToken`, `tokensMatch` (constant-time). Guards the Node Agent's internal API (#169). Rotation: receivers take `acceptedInternalTokens()` (current + `INTERNAL_API_TOKEN_PREVIOUS`) through `tokenAccepted`; senders send only the current one |
 | `shared/src/events.test.ts` | Wire-compatibility guard tests (encryption round-trip, ciphertext layout, envelope shape) |
 
 ### services/control-room (heartbeat monitoring)
@@ -308,7 +309,7 @@ is the migrations directory.
 | `src/deploymentQuery.ts` | Pure search/filter/paging for the server list (#237): `parseFilter`, `parsePage` (limit always applied, capped at 200), `pageOf` (total order on createdAt **then id**, or paging shows one row twice and hides another). `GET /deployments` answers `{ items, total, limit, offset }` — a page with no count cannot say there is more, and silent truncation is worse than the unbounded list it replaced |
 | `src/entitlements.ts` | Hosted plan entitlements (#297): pure `usageFor` (memory in MB on each server's own node), `ramProblem`/`ramChangeProblem` + `fetchEntitlements` (fail-open, logged). Measured against the **owner's** plan, whoever edits; the platform role buys no exemption. Under a memory ceiling an uncapped server is refused — it could take the whole node. Lowering is always allowed, so an account over its plan has a way back |
 | `src/transfer.ts` | Pure `planTransfer` (#230) — who owns the server next, what the outgoing owner keeps, and the audit line. Ownership was fixed at creation, so an owner who left orphaned their servers: only `owner` may delete one or manage its access. Owner-level permission, because an admin who could transfer could hand the server to themselves; the repository applies the plan in **one transaction**, since an owner who moved without the retained share landing is access silently lost |
-| `src/config.ts` | `createConfigRouter` — public `GET /config` → `{ edition, passwordResetByEmail, sftpPort }` (mounted before auth) |
+| `src/config.ts` | `createConfigRouter` — public `GET /config` → `{ edition, passwordResetByEmail, sftpPort, … }` (mounted before auth); hosted + configured only, `finvault: { url, payee }` from `finvaultFromEnv` (#435, #436) |
 | `src/sftp.ts` | SFTP, the protocol half (#235): `createSftpServer` over an injected `SftpFiles`, plus pure `parseSftpUsername` (`<email>.<server>`, split on the **last** dot), `resolveSftpPath`, `openIntent`, `WriteBuffer`. Password auth only; no shell/exec. A write that fails part way poisons its handle, so the close does **not** upload the fragment over the old file. ssh2 is CommonJS — import it whole, named imports fail under Node's ESM loader (tests do not catch that) |
 | `src/sftpBackend.ts` | SFTP, the account/agent half: `createSftpAuthenticator` (password or `nxi_` token; a 2FA account must use a token; `file.read` to log in; shares the panel's login limiter) and `createAgentSftpFiles` — access, role and container **re-resolved on every operation**, so a revoked share ends an open session. `loadOrCreateHostKey` (ed25519, `0600`, on the data volume) |
 | `src/api.ts` | Express deployment API: create/list/get deployments, stop/start/restart/**delete**, node health; enforces plan quotas via the Billing Bridge (hosted). Control actions live in one `controls` table shared by the single routes and `POST /deployments/bulk` (#238), which is mounted **before** the per-server guard — anything under `/deployments/<word>` that is not an id must be, or the guard claims it as a server id and answers 404 |
@@ -323,7 +324,7 @@ is the migrations directory.
 | `src/wsProxy.ts` | Pure `pipeSockets` + `toWsUrl` — the terminal WS proxy plumbing; `index.ts` authenticates the JWT, resolves the container, and pipes the client WS ↔ the Node Agent's `/terminal` WS (#71) |
 | `src/index.ts` | Entry: PrismaRepository + consumers on `nexusinfra.orchestrator`, mounts API, starts the schedule runner (restart/backup actions), HTTP `/health` (`:9200`) |
 | `src/*.test.ts` | Unit tests with the in-memory repo + captured publisher (no Docker/broker/DB needed) |
-| `Dockerfile` | Multi-stage build; runtime applies `prisma migrate deploy` then starts |
+| `Dockerfile` | Multi-stage build with two targets (#192): `migrate` (the Prisma CLI; applies the migrations and exits, published as `orchestrator-migrate`) and the default runtime, which copies a **pruned** tree without the CLI and refuses to start on an unmigrated database (`assertDatabaseMigrated` in `src/db.ts`) |
 
 ### services/billing-bridge (usage billing — hosted edition only)
 | Path | Contents |
@@ -334,6 +335,8 @@ is the migrations directory.
 | `src/tracking.ts` | Pure runtime math: `hoursBetween` + `accruedHours` (open interval counts up to now) |
 | `src/wallet.ts` | Pure credit-wallet math: `applyTopUp`/`applyCharge`/`canCover` |
 | `src/standing.ts` | Pure standing (#365): `computeStanding` (balance less usage not yet charged → `available`, `canRun`, and since #379 `hoursLeft` — how long it lasts at the running servers' rate, free hours first, `null` with nothing running), `usageIn`, `currentPeriod`, `lowCreditStep` (warn once per dip; the mark lives on the wallet so a restart does not repeat it). Credit used to be looked at once a month, so "prepaid" meant a month of servers for nothing. Uses the cycle runner's own cost function, so what the page shows, what gates a start and what is charged cannot disagree (#366) |
+| `src/testTools.ts` | **Temporary** admin test tools (#439), off unless `BILLING_TEST_TOOLS=true`: `createTestClock` (forward-only offset the service and cycle runner read as `now`), `testPlanFor` (an account's own retired test plan with new free hours/rate) and the `/test/*` routes. Steers the real billing; never adds a second calculation |
+| `src/rfReference.ts` | Top-up references as ISO 11649 RF creditor references (#436): `rfReference`, `isRfReference`, `newTopUpReference` (21 random characters). The reference is also the structured reference in the top-up's EPC QR, which FinVault pays by |
 | `src/types.ts` | Domain records + the `Repository` interface (plans, intervals, wallet, ledger, cycles) |
 | `src/repository.ts` | `InMemoryRepository` — backs unit tests and a DB-less mode |
 | `src/db.ts` | `getPrisma()` + `PrismaRepository` (SQLite) + `ensureDefaultPlan` seed |
@@ -344,7 +347,7 @@ is the migrations directory.
 | `src/internalAuth.ts` | `requireInternalToken` — every route but `/health` and `/metrics` needs the shared internal token (#372). The routes act on whichever account the path names, and nothing used to stop anyone naming one |
 | `src/index.ts` | Entry: PrismaRepository + service; consumes deployment/runtime + `bank.payment.*`; HTTP `/health` (+ billing routes when hosted) on `:9300`; inert in community |
 | `prisma/schema.prisma` | Prisma + SQLite: `BillingPlan`, `UserPlan`, `BillingDeployment` (owner + size, #364), `ServerBilling`, `CreditWallet`, `CreditLedger`, `BillingCycle`. `prisma/migrations` is the source of truth |
-| `Dockerfile` | Multi-stage build; runtime applies `prisma migrate deploy` then starts |
+| `Dockerfile` | Two targets, as the orchestrator's (#192): `migrate` → `billing-bridge-migrate`, and the CLI-less runtime |
 
 ### services/gateway (API gateway — single entry point, #20)
 | Path | Contents |
@@ -388,9 +391,9 @@ is the migrations directory.
 | `src/components/IntroTour.tsx` | First-run intro walkthrough (skippable, re-openable from the nav Help button) |
 | `src/pages/{Login,Overview,NewDeployment,Servers}.tsx` | Login, node health/overview (+ Platform-services strip from Control Room monitoring, #157), deployment form, live server list + stop |
 | `src/components/PlanPanel.tsx` · `src/plan.ts` | The plan beside the size being chosen in New Deployment (#297): ceilings, what is spent, whether this server fits (with a one-click "use what is left"), and the charging model in words. **Hosted-only** — aliased to `PlanPanel.stub.tsx` in a community build and marked in `verify-edition.mjs` |
-| `src/pages/Customers.tsx` · `src/billingAdmin.ts` | The provider's page (#369, **hosted-only** — aliased to `Customers.stub.tsx` in a community build, marked in `verify-edition.mjs`): every account with plan, usage, balance and what is left; move an account to a plan; adjust credit with a reason; create, edit and retire plans. `billingAdmin.ts` is the pure half — the plan form (memory typed in GB, a comma accepted as a decimal point), `planLimits`, `hourly` (keeps the digits of a €0.005 rate) |
+| `src/pages/Customers.tsx` · `src/billingAdmin.ts` | The provider's page (#369, with a **temporary** *Test tools* card when `/config` says `billingTestTools`, #439; **hosted-only** — aliased to `Customers.stub.tsx` in a community build, marked in `verify-edition.mjs`): every account with plan, usage, balance and what is left; move an account to a plan; adjust credit with a reason; create, edit and retire plans. `billingAdmin.ts` is the pure half — the plan form (memory typed in GB, a comma accepted as a decimal point), `planLimits`, `hourly` (keeps the digits of a €0.005 rate) |
 | `src/components/PlanChooser.tsx` | The plans on the customer's Billing page (#369). A plan the account does not fit shows *why* and no button; a switch is confirmed first, since it changes the rate from that moment |
-| `src/pages/Billing.tsx` | Billing page (hosted only): credit balance, top-up via FinVault, cycle usage/cost, payment history — route + nav link gated on `useEdition().isHosted` |
+| `src/pages/Billing.tsx` | Billing page (hosted only): credit balance, top-up via FinVault, cycle usage/cost, payment history — route + nav link gated on `useEdition().isHosted`. A waiting top-up names its address and shows its EPC QR (#435, #436; `src/topUpQr.ts` is the pure payload — **its layout is FinVault's `parseEpcQr`**, keep them in step) |
 | `src/health.ts` | Status → colour helpers shared across pages |
 | `src/test/setup.ts` · `vitest.config.ts` | jsdom + Testing Library setup; in-memory localStorage |
 | `Dockerfile` · `nginx.conf` | Static build served by nginx, which proxies `/api` to the orchestrator |
@@ -415,7 +418,7 @@ is the migrations directory.
 | `deploy/monitoring/` · `deploy/monitoring.test.ts` | The `monitoring` compose profile (#355): Prometheus scrape config (billing-bridge in its own hosted-only file), Grafana provisioning and the NexusInfra dashboard. The test fails when a panel queries a metric no service registers — **rename a metric and the dashboard changes with it**. Shipped beside both bundles in the release archive |
 | `deploy/community/` · `deploy/hosted/` | Self-contained release bundles: compose pinned to published images + `.env.example` + README. Neither needs a checkout of this repo; both are attached to each GitHub release (#179) |
 | `.github/workflows/release.yml` | On a `v*` tag: re-run CI in both editions, then publish `nexusinfra/<service>:X.Y.Z-{community,hosted}` to GHCR (nested so the six read as one family, #200). `billing-bridge` builds hosted only (#179) |
-| `.github/workflows/ci.yml` | CI: npm ci → build → lint (if present) → test, on PRs and pushes to dev/staging/main; the `images` job builds and starts the four service images (the images run Node 18, CI runs 20) |
+| `.github/workflows/ci.yml` | CI: npm ci → build → lint (if present) → test, on PRs and pushes to dev/staging/main; the `images` job builds and starts the four service images (images and CI both run Node 24 — change them together, #432) |
 | `eslint.config.js` | Flat ESLint config (typescript-eslint recommended) covering all workspaces |
 
 ### docs/
@@ -500,6 +503,11 @@ is the migrations directory.
   migration for **each** database. `schemas.test.ts` fails when the PostgreSQL schema is stale or the
   SQLite migrations fall behind; CI's integration job replays the PostgreSQL migrations against a real
   server. The client is picked by `DATABASE_URL` in `getPrisma()` — never `new PrismaClient()` elsewhere.
+- **A service image never migrates its own database (#192).** Its `migrate` target does, and compose runs
+  it first (`condition: service_completed_successfully`, checked by `deploy/bundles.test.ts`). Anything
+  that needs the Prisma CLI in a container — `db:deploy`, `sqlite-to-postgres.mjs` — runs in the
+  `-migrate` image; the runtime has no CLI. A new migration needs nothing extra: the check reads the
+  migrations directory the image ships.
 - **Two Prisma schemas in one workspace collide.** They both generate into the hoisted
   `node_modules/.prisma/client` and the last one wins — invisible while each service has its own
   image, fatal once two share one. `billing-bridge` generates into its own directory; anything new

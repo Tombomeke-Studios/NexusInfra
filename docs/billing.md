@@ -87,6 +87,17 @@ the panel is **not** the owner of the hardware (a hosting-provider scenario). So
   account. Nothing is charged until the customer presses Pay there. On `payment.confirmed` the credit is
   added; on `payment.failed` (declined, or refused by FinVault) the top-up is marked failed with
   FinVault's reason, which the Billing page shows.
+  - **The page says which address (#435).** A waiting top-up names the exact address its request went
+    to, and links to FinVault when `FINVAULT_URL` is set. FinVault creates the request whether or not
+    anyone there has that address, so without the address "waiting for you" could mean nothing was.
+  - **Or scan the QR (#436).** With `FINVAULT_MERCHANT_NAME` and `FINVAULT_MERCHANT_IBAN` set, each
+    waiting top-up also shows an EPC QR code (EPC069-12): that payee, the amount, and the top-up's
+    reference as an ISO 11649 **RF creditor reference** in the structured-reference field. Scanning it in
+    the FinVault mobile app pays that same request — by whoever scans it, so a customer whose FinVault
+    address differs from their NexusInfra one can still pay. Top-up references are RF references since
+    #436 (21 random characters, nothing about the account in them, since a QR is readable by anyone
+    near the screen); older pending top-ups have no QR and are paid as before. A QR whose amount was
+    changed is refused by FinVault. FinVault's half is Tombomeke-Studios/FinVault#112.
   - **Who pays is the signed-in account, by its own address.** The Orchestrator fills the email in from
     the session; one sent by the browser is ignored, because the address decides whose FinVault inbox
     receives a payment request. A NexusInfra user id means nothing to FinVault until the two share an
@@ -150,6 +161,25 @@ the panel is **not** the owner of the hardware (a hosting-provider scenario). So
 - **This cycle's usage is this cycle's (#366).** The Billing page's hours and cost are computed for the
   month in progress with the same function the cycle runner charges with. They used to sum every
   interval the account ever had, so the figure only grew and stopped matching the bill.
+
+## Test tools — temporary (#439)
+
+Billing is driven by the clock: free hours run out after hours of runtime, a month is charged when it
+closes, and credit runs out at the rate servers use it. To test that without waiting, a hosted
+installation started with **`BILLING_TEST_TOOLS=true`** on the orchestrator and the billing bridge
+shows a *Test tools* card on the Customers page (platform administrators only). Off, there is no
+route, no `/config` flag and no card. **Never switch it on with real customers.**
+
+- **Move time forward** (+1 hour, +1 day, +1 month). The bridge's billing service and cycle runner read
+  a clock offset instead of the wall clock, so every real calculation sees the later time. Afterwards
+  running accounts are settled (suspended if their credit is gone), low-credit warnings go out, and a
+  month that closed is charged and invoiced — what waiting would have done. Forward only, because an
+  interval opened at a later "now" must never end before it began. The offset lives in memory:
+  restarting the bridge returns to the real time, so do it on a throwaway installation.
+- **Free hours and the hourly rate of one account.** Both are plan properties, and runtime is charged
+  at the plan it ran under (#369), so the account gets its **own retired test plan** — a copy of its
+  current plan with the new numbers, which no one else can choose — and is moved onto it. Hours it
+  already ran keep the rate they ran at. To undo, move the account back to a real plan.
 
 ## Data model (Billing Bridge, own store)
 

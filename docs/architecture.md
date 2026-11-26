@@ -124,6 +124,13 @@ the first database: nodes (maintained from heartbeats), server configs, deployme
 append-only deployment-event audit trail. Schema source of truth: the service's
 `prisma/migrations` directory — never documented here.
 
+**Migrations (#192).** The orchestrator and the billing bridge never migrate their own databases. Each
+ships a one-shot `-migrate` image (the same Dockerfile's `migrate` target) that applies them with
+Prisma and exits; deployments run it before the service on every start. The service checks Prisma's
+record of applied migrations against the ones in its image and refuses to start while any is
+missing, so a stack that skips the step fails loudly at start instead of at the first query that
+needs a new column.
+
 The Orchestrator's node registry mirrors the same last-seen status model above (healthy < 3s ≤
 degraded < 10s ≤ offline); only `healthy` nodes are eligible for placement.
 
