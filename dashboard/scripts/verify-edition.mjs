@@ -37,6 +37,8 @@ const BILLING_MARKERS = [
   'at the rate your servers are using it',
   // A server billing suspended (#380).
   'ran out of credit',
+  // The top-up's QR code (#436).
+  'Scan with the FinVault app',
 ];
 
 /** Present in every build, so a bundle with none of these was not read properly. */

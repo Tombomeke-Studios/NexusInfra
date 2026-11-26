@@ -14,7 +14,7 @@ import { agentLinks, authorizeLink, linkConnection, linkNodeOf } from './agentLi
 import { createBillingProxyRouter } from './billingProxy.js';
 import { createBillingPlansRouter } from './billingPlans.js';
 import { createMonitoringRouter } from './monitoring.js';
-import { createConfigRouter } from './config.js';
+import { createConfigRouter, finvaultFromEnv } from './config.js';
 import { createSftpServer, parseSftpPort } from './sftp.js';
 import { createAgentSftpFiles, createSftpAuthenticator, loadOrCreateHostKey } from './sftpBackend.js';
 import { createLoginLimiter } from './loginLimiter.js';
@@ -210,7 +210,7 @@ const sftpPublicPort = parseSftpPort(process.env.SFTP_PUBLIC_PORT) ?? sftpPort;
 // Confirming an address (#367) needs the same two things; without them it is not
 // offered and nothing waits on it.
 const emailVerification = createEmailVerification({ repo, panelUrl, sendMail: passwordReset.sendMail });
-app.use(catchAsync(createConfigRouter(undefined, { passwordResetByEmail: resetAvailable(passwordReset), sftpPort: sftpPublicPort, emailVerification: emailVerification.available })));
+app.use(catchAsync(createConfigRouter(undefined, { passwordResetByEmail: resetAvailable(passwordReset), sftpPort: sftpPublicPort, emailVerification: emailVerification.available, finvault: finvaultFromEnv() })));
 app.use(catchAsync(emailVerification.publicRouter()));
 // Public, like login: somebody who forgot their password has no token.
 app.use(catchAsync(createPasswordResetRouter(passwordReset)));

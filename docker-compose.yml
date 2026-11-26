@@ -123,6 +123,12 @@ services:
       - NODE_AGENT_URL=http://node-agent:9100
       - CONTROL_ROOM_URL=http://control-room:9000
       - BILLING_BRIDGE_URL=http://billing-bridge:9300
+      # Where a top-up is paid (#435, #436): a link to FinVault, and the payee a
+      # top-up's QR code names - FinVault's merchant account (its
+      # NEXUSINFRA_MERCHANT_EMAIL). Without the name and IBAN there is no QR.
+      - FINVAULT_URL=${FINVAULT_URL:-}
+      - FINVAULT_MERCHANT_NAME=${FINVAULT_MERCHANT_NAME:-}
+      - FINVAULT_MERCHANT_IBAN=${FINVAULT_MERCHANT_IBAN:-}
       # Must match the Node Agent's value (#169).
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-dev-internal-token}
       - SFTP_PORT=2022
