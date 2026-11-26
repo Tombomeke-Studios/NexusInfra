@@ -221,6 +221,7 @@ is the migrations directory.
 | `shared/src/outbox.ts` | `PublishOutbox` + `startOutboxFlusher` — holds a failed publish and replays it **in order** when the broker returns; bounded (drop-oldest + `droppedCount`). Wrap publishers whose events carry state (#167) |
 | `shared/src/metrics.ts` | Prometheus metrics for every service (#246): dependency-free `MetricsRegistry` (counters, histograms, scrape-time gauges that fail soft), `httpMetrics` (labels by **route pattern**, never the raw path), `metricsHandler` (`METRICS_TOKEN`), `registerBuildInfo` |
 | `shared/src/agentLink.ts` | The agent link's wire (#416, [docs/agent-link.md](docs/agent-link.md)): frames `[type u8][streamId u32 BE][payload]` (OPEN/DATA/END/RESET = 1–4), `LinkSession` (streams over one WebSocket) and `LinkStream` (a `Duplex` with the socket no-ops undici and `http` call), the 1 MiB backpressure mark, `keepLinkAlive` (15 s ping, 45 s silence). **The numbers are a contract with NexusFleet** |
+| `shared/src/migrations.ts` | Is the database migrated? (#192): pure `shippedMigrations`/`migrationsDirFor`/`pendingMigrations` + `assertMigrated`, which exits a service whose database lacks a shipped migration. Reads Prisma's `_prisma_migrations` only — **applying stays Prisma's job**, in the `-migrate` image. A database it cannot reach is reported as that, never as missing migrations; one newer than the image only warns |
 | `shared/src/internalToken.ts` | Service-to-service shared secret: `INTERNAL_TOKEN_HEADER`, `getInternalToken`, `tokensMatch` (constant-time). Guards the Node Agent's internal API (#169). Rotation: receivers take `acceptedInternalTokens()` (current + `INTERNAL_API_TOKEN_PREVIOUS`) through `tokenAccepted`; senders send only the current one |
 | `shared/src/events.test.ts` | Wire-compatibility guard tests (encryption round-trip, ciphertext layout, envelope shape) |
 
@@ -323,7 +324,7 @@ is the migrations directory.
 | `src/wsProxy.ts` | Pure `pipeSockets` + `toWsUrl` — the terminal WS proxy plumbing; `index.ts` authenticates the JWT, resolves the container, and pipes the client WS ↔ the Node Agent's `/terminal` WS (#71) |
 | `src/index.ts` | Entry: PrismaRepository + consumers on `nexusinfra.orchestrator`, mounts API, starts the schedule runner (restart/backup actions), HTTP `/health` (`:9200`) |
 | `src/*.test.ts` | Unit tests with the in-memory repo + captured publisher (no Docker/broker/DB needed) |
-| `Dockerfile` | Multi-stage build; runtime applies `prisma migrate deploy` then starts |
+| `Dockerfile` | Multi-stage build with two targets (#192): `migrate` (the Prisma CLI; applies the migrations and exits, published as `orchestrator-migrate`) and the default runtime, which copies a **pruned** tree without the CLI and refuses to start on an unmigrated database (`assertDatabaseMigrated` in `src/db.ts`) |
 
 ### services/billing-bridge (usage billing — hosted edition only)
 | Path | Contents |
@@ -344,7 +345,7 @@ is the migrations directory.
 | `src/internalAuth.ts` | `requireInternalToken` — every route but `/health` and `/metrics` needs the shared internal token (#372). The routes act on whichever account the path names, and nothing used to stop anyone naming one |
 | `src/index.ts` | Entry: PrismaRepository + service; consumes deployment/runtime + `bank.payment.*`; HTTP `/health` (+ billing routes when hosted) on `:9300`; inert in community |
 | `prisma/schema.prisma` | Prisma + SQLite: `BillingPlan`, `UserPlan`, `BillingDeployment` (owner + size, #364), `ServerBilling`, `CreditWallet`, `CreditLedger`, `BillingCycle`. `prisma/migrations` is the source of truth |
-| `Dockerfile` | Multi-stage build; runtime applies `prisma migrate deploy` then starts |
+| `Dockerfile` | Two targets, as the orchestrator's (#192): `migrate` → `billing-bridge-migrate`, and the CLI-less runtime |
 
 ### services/gateway (API gateway — single entry point, #20)
 | Path | Contents |
@@ -500,6 +501,11 @@ is the migrations directory.
   migration for **each** database. `schemas.test.ts` fails when the PostgreSQL schema is stale or the
   SQLite migrations fall behind; CI's integration job replays the PostgreSQL migrations against a real
   server. The client is picked by `DATABASE_URL` in `getPrisma()` — never `new PrismaClient()` elsewhere.
+- **A service image never migrates its own database (#192).** Its `migrate` target does, and compose runs
+  it first (`condition: service_completed_successfully`, checked by `deploy/bundles.test.ts`). Anything
+  that needs the Prisma CLI in a container — `db:deploy`, `sqlite-to-postgres.mjs` — runs in the
+  `-migrate` image; the runtime has no CLI. A new migration needs nothing extra: the check reads the
+  migrations directory the image ships.
 - **Two Prisma schemas in one workspace collide.** They both generate into the hoisted
   `node_modules/.prisma/client` and the last one wins — invisible while each service has its own
   image, fatal once two share one. `billing-bridge` generates into its own directory; anything new

@@ -53,7 +53,9 @@ RUN npm run build --workspace=dashboard \
 # a compiler they will never run (#204).
 #
 # The Prisma CLI survives this on purpose: it is a real dependency, because
-# migrations are applied when the container starts.
+# migrations are applied when the container starts. The separate images moved
+# that into their own `-migrate` image (#192); one container has nowhere else
+# to run them, so here the services still migrate before they start.
 RUN npm prune --omit=dev
 
 # ── Runtime ──────────────────────────────────────────────────────────────────

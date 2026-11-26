@@ -74,10 +74,31 @@ as the edition it was not built for exits rather than starting in a half-configu
 | `nexusinfra/gateway` | once | 9400 | External entry point: CORS, rate limiting, JWT validation, reverse proxy. |
 | `nexusinfra/dashboard` | once | 80 | The web panel, served by nginx. |
 | `nexusinfra/billing-bridge` | once, **hosted only** | 9300 | Usage metering, credit wallet, monthly cycle, FinVault top-ups. |
+| `nexusinfra/orchestrator-migrate` | before every orchestrator start | — | Applies the orchestrator's database migrations, then exits (#192). |
+| `nexusinfra/billing-bridge-migrate` | before every billing-bridge start, **hosted only** | — | The same for the billing bridge. |
 
 You also need a **RabbitMQ** broker (`rabbitmq:3-management-alpine` is fine). Every service reports
 its version and resolved edition on `GET /health`, which is the quickest way to confirm a container is
 what you think it is.
+
+### Migrations run in their own image (#192)
+
+The orchestrator and the billing bridge do not migrate their databases themselves. Each has a
+`-migrate` image that applies the migrations and exits; it takes the same `DATABASE_URL` and the same
+`/data` volume as its service, and nothing else. Run it **before** the service on every start and on
+every upgrade — in Compose, as a service the other one depends on with
+`condition: service_completed_successfully`, as below and as both bundles do.
+
+A service started without it **refuses to start**, and says which migrations are missing: it reads the
+table Prisma keeps of what it applied and compares it with the migrations in the image. A database
+newer than the image, after a rollback, only logs a warning.
+
+Why: the Prisma CLI and its schema engine are only needed for migrating. Kept out of the service
+images, they leave the orchestrator and billing bridge about 170 MB smaller each (about 60 MB of
+it is the CLI; the rest are download caches the old image kept).
+
+The `-migrate` image is also where `scripts/sqlite-to-postgres.mjs` runs
+([deployment.md](deployment.md#moving-an-existing-installation)).
 
 ### What runs where
 
@@ -118,7 +139,7 @@ scrape_configs:
 
 | Variable | Required | Notes |
 |---|---|---|
-| `DATABASE_URL` | yes | `file:/data/orchestrator.db` (SQLite — mount a volume at `/data`), or `postgresql://user:pass@host:5432/db` (#241). The matching migrations run automatically at start. See [deployment.md](deployment.md#postgresql). |
+| `DATABASE_URL` | yes | `file:/data/orchestrator.db` (SQLite — mount a volume at `/data`), or `postgresql://user:pass@host:5432/db` (#241). Give `orchestrator-migrate` the same value: it applies the migrations, and the orchestrator will not start until it has ([above](#migrations-run-in-their-own-image-192)). See [deployment.md](deployment.md#postgresql). |
 | `JWT_SECRET` | yes | Signs login tokens. Anyone holding it can mint a token for any account — use 32 random bytes. |
 | `INTERNAL_API_TOKEN` | yes | Shared secret for reaching the node agent. Must match the agents'. |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | yes | The administrator seeded on first start. A warning is logged on every start while the default password is in place. |
@@ -179,7 +200,7 @@ Requires the Docker socket: `-v /var/run/docker.sock:/var/run/docker.sock`.
 
 | Variable | Required | Notes |
 |---|---|---|
-| `DATABASE_URL` | yes | `file:/data/billing.db` (mount a volume at `/data`), or PostgreSQL — its own schema if it shares the orchestrator's database, e.g. `postgresql://…/nexusinfra?schema=billing`. |
+| `DATABASE_URL` | yes | `file:/data/billing.db` (mount a volume at `/data`), or PostgreSQL — its own schema if it shares the orchestrator's database, e.g. `postgresql://…/nexusinfra?schema=billing`. Give `billing-bridge-migrate` the same value ([above](#migrations-run-in-their-own-image-192)). |
 | `INTERNAL_API_TOKEN` | yes | Must match the orchestrator's. The bridge serves only callers that hold it (#372); with different values every billing check fails — and they fail *open*, so nothing is enforced. |
 | `INTERNAL_API_TOKEN_PREVIOUS` | no | Mid-rotation only: the token being retired, accepted beside the current one. See [security.md](security.md#rotating-the-internal-token). |
 | `BILLING_WALLET_ID` | no | NexusInfra's receiver wallet id on top-up requests to FinVault. |
@@ -209,6 +230,13 @@ services:
     image: rabbitmq:3-management-alpine
     volumes: [rabbitmq_data:/var/lib/rabbitmq]
 
+  # Applies the database migrations and exits; the orchestrator waits for it.
+  orchestrator-migrate:
+    image: ghcr.io/tombomeke-studios/nexusinfra/orchestrator-migrate:community
+    environment:
+      DATABASE_URL: file:/data/orchestrator.db
+    volumes: [orchestrator_data:/data]
+
   orchestrator:
     image: ghcr.io/tombomeke-studios/nexusinfra/orchestrator:community
     ports: ["9200:9200"]
@@ -221,7 +249,11 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?}
       NODE_AGENT_URL: http://node-agent:9100
     volumes: [orchestrator_data:/data]
-    depends_on: [rabbitmq]
+    depends_on:
+      rabbitmq:
+        condition: service_started
+      orchestrator-migrate:
+        condition: service_completed_successfully
 
   node-agent:
     image: ghcr.io/tombomeke-studios/nexusinfra/node-agent:community

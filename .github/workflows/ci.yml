@@ -121,17 +121,33 @@ jobs:
           - { service: gateway, port: 9400 }
           - { service: control-room, port: 9000 }
           - { service: node-agent, port: 9100 }
+          - { service: billing-bridge, port: 9300 }
     steps:
       - uses: actions/checkout@v4
 
       - name: Build the image
         run: docker build -f services/${{ matrix.service }}/Dockerfile -t ci/${{ matrix.service }} .
 
+      # A service with a database ships a `migrate` target (#192): the runtime
+      # image no longer migrates, and refuses to start until something has.
+      # Check both halves: it refuses an empty database, and the migrate image
+      # fixes that.
+      - name: Migrate its database, if it has one
+        run: |
+          if ! grep -q '^FROM .* AS migrate$' services/${{ matrix.service }}/Dockerfile; then echo "no database"; exit 0; fi
+          docker build -f services/${{ matrix.service }}/Dockerfile --target migrate -t ci/${{ matrix.service }}-migrate .
+          docker volume create ci-data
+          if docker run --rm -v ci-data:/data -e DATABASE_URL=file:/data/ci.db ci/${{ matrix.service }}; then
+            echo "::error::the ${{ matrix.service }} image started on a database with no migrations"; exit 1
+          fi
+          docker run --rm -v ci-data:/data -e DATABASE_URL=file:/data/ci.db ci/${{ matrix.service }}-migrate
+          echo "DB_ARGS=-v ci-data:/data -e DATABASE_URL=file:/data/ci.db" >> "$GITHUB_ENV"
+
       # No broker and no Docker socket: each service keeps its HTTP up without
       # them, so a container that exits here failed to load, not to connect.
       - name: Start it and wait for /health
         run: |
-          docker run -d --name svc -p ${{ matrix.port }}:${{ matrix.port }} ci/${{ matrix.service }}
+          docker run -d --name svc -p ${{ matrix.port }}:${{ matrix.port }} $DB_ARGS ci/${{ matrix.service }}
           for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:${{ matrix.port }}/health > /dev/null; then echo "healthy after ${i}s"; exit 0; fi
             if [ "$(docker inspect -f '{{.State.Running}}' svc)" != "true" ]; then echo "::error::the ${{ matrix.service }} image exited at start"; docker logs svc; exit 1; fi

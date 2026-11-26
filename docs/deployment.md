@@ -52,8 +52,13 @@ same version. They ran Node 18 until it had been out of support for a year and a
 changes, move the `FROM` lines and the workflows' `node-version` together.
 
 The **Orchestrator** image is based on Debian slim (not Alpine) with `openssl` installed, because
-Prisma's query/schema engines require OpenSSL and do not run on Alpine/musl. It applies
-`prisma migrate deploy` on startup before serving. The **dashboard** builds to static assets served
+Prisma's query/schema engines require OpenSSL and do not run on Alpine/musl. It does **not** migrate
+its own database (#192): each Dockerfile with a database has a second target, `migrate`
+(`docker build --target migrate`), published as `orchestrator-migrate` / `billing-bridge-migrate`.
+It holds the Prisma CLI, applies the migrations and exits; the compose files run it before the
+service on every `up`, and the service refuses to start while a migration is missing. Leaving the CLI,
+its schema engine and the old image's download caches out made each runtime image about 170 MB
+smaller ([images.md](images.md#migrations-run-in-their-own-image-192)). The **dashboard** builds to static assets served
 by nginx, which reverse-proxies `/api` to the Orchestrator.
 
 ## Running nodes on other machines (remote / multi-node)
@@ -239,8 +244,8 @@ BILLING_DATABASE_URL=postgresql://nexusinfra:<that value>@postgres:5432/nexusinf
 ```
 
 then `docker compose --profile postgres up -d`. An external server works the same way: point the URLs
-at it and leave the profile off. The services create their tables at start. (On the very first start
-the orchestrator may try before PostgreSQL is ready; it exits and Docker restarts it.)
+at it and leave the profile off. The `-migrate` services create the tables before the services start;
+with the profile on they wait for PostgreSQL to report healthy first.
 
 ### Moving an existing installation
 
@@ -251,10 +256,10 @@ data. With the bundle:
 ```sh
 docker compose stop orchestrator billing-bridge            # nothing may write during the copy
 docker compose --profile postgres up -d postgres
-docker compose run --rm --no-deps orchestrator \
+docker compose run --rm --no-deps orchestrator-migrate \
   node ../../scripts/sqlite-to-postgres.mjs . \
   --from file:/data/orchestrator.db --to "$ORCHESTRATOR_DATABASE_URL"
-# hosted: the same for billing-bridge, from file:/data/billing.db to $BILLING_DATABASE_URL
+# hosted: the same with billing-bridge-migrate, from file:/data/billing.db to $BILLING_DATABASE_URL
 ```
 
 Then set the `*_DATABASE_URL` values in `.env` and `docker compose --profile postgres up -d`. The

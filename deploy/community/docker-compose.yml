@@ -76,6 +76,22 @@ services:
       - agent_backups:/var/lib/nexusinfra/backups
     depends_on: [rabbitmq]
 
+  # Applies the orchestrator's database migrations, then exits (#192). Compose runs it
+  # before the orchestrator on every `up`, and the orchestrator refuses to start while any
+  # migration is missing. Same database and volume as the service it serves.
+  orchestrator-migrate:
+    image: ghcr.io/tombomeke-studios/nexusinfra/orchestrator-migrate:${NEXUSINFRA_VERSION:-community}
+    container_name: nexusinfra-orchestrator-migrate
+    environment:
+      - DATABASE_URL=${ORCHESTRATOR_DATABASE_URL:-file:/data/orchestrator.db}
+    volumes:
+      - orchestrator_data:/data
+    depends_on:
+      # Only with the postgres profile on; without it this dependency is skipped.
+      postgres:
+        condition: service_healthy
+        required: false
+
   orchestrator:
     image: ghcr.io/tombomeke-studios/nexusinfra/orchestrator:${NEXUSINFRA_VERSION:-community}
     container_name: nexusinfra-orchestrator
@@ -116,7 +132,11 @@ services:
       - MAX_UPLOAD_BYTES=${MAX_UPLOAD_BYTES:-64mb}
     volumes:
       - orchestrator_data:/data
-    depends_on: [rabbitmq]
+    depends_on:
+      rabbitmq:
+        condition: service_started
+      orchestrator-migrate:
+        condition: service_completed_successfully
 
   gateway:
     image: ghcr.io/tombomeke-studios/nexusinfra/gateway:${NEXUSINFRA_VERSION:-community}
