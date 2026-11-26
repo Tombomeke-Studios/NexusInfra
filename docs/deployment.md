@@ -47,6 +47,10 @@ The image builds everything itself, so the build context leaves out what a worki
 local build copied the host's build output in — a community image built after `npm run build`
 contained, and started, the billing bridge. A new top-level directory with local state belongs there.
 
+Every image builds on **Node 24**, the current LTS (#432); CI and the release workflow test on the
+same version. They ran Node 18 until it had been out of support for a year and a half. When the LTS
+changes, move the `FROM` lines and the workflows' `node-version` together.
+
 The **Orchestrator** image is based on Debian slim (not Alpine) with `openssl` installed, because
 Prisma's query/schema engines require OpenSSL and do not run on Alpine/musl. It applies
 `prisma migrate deploy` on startup before serving. The **dashboard** builds to static assets served

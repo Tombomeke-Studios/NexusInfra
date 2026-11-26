@@ -14,7 +14,7 @@
 #
 # Debian rather than Alpine because Prisma's engines need glibc and OpenSSL.
 
-FROM node:18-slim AS builder
+FROM node:24-slim AS builder
 WORKDIR /app
 
 COPY package*.json tsconfig.json ./
@@ -57,7 +57,7 @@ RUN npm run build --workspace=dashboard \
 RUN npm prune --omit=dev
 
 # ── Runtime ──────────────────────────────────────────────────────────────────
-FROM node:18-slim
+FROM node:24-slim
 
 # s6-overlay supervises the processes and, unlike a bare shell loop, propagates
 # signals and reaps zombies properly. RabbitMQ brings Erlang; it is the single

@@ -259,6 +259,8 @@ scrolling log lines describing events that never happened.
 
 ### 🐛 Bugs / fixes (open)
 
+- [x] Every image ran on Node 18, out of support since April 2025, and CI tested on Node 20 — images, CI and release now all run Node 24 (#432) 🐛
+- [ ] SFTP in the shipped images runs without ssh2's native crypto, ~40x slower — the slim images have no compiler, so the addon is never built (#433) 🐛
 - [x] The Java heap and the RAM limit are two settings for the same memory (#308)
 - [x] A server's memory limit could not be changed after creation, so neither could its Java heap — Settings now has a Resources editor that shows the heap following the limit (#381) 🐛
 - [x] The Overview counted only percentage caps as committed, so servers sized in MB looked free (#383) 🐛

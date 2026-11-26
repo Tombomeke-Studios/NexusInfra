@@ -1,6 +1,6 @@
 # Multi-stage build. Debian slim (not alpine) + openssl, because Prisma's query
 # and schema engines need OpenSSL and don't run on alpine/musl out of the box.
-FROM node:18-slim AS builder
+FROM node:24-slim AS builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
@@ -12,7 +12,7 @@ RUN npm run build --workspace=shared
 # `build` also runs `prisma generate` (see services/billing-bridge/package.json).
 RUN npm run build --workspace=services/billing-bridge
 
-FROM node:18-slim
+FROM node:24-slim
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
