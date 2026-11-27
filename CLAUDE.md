@@ -211,7 +211,7 @@ is the migrations directory.
 | Path | Contents |
 |---|---|
 | `shared/src/events.ts` | Event union, envelope, AES-256-GCM payload encryption — **wire-compatible with FinVault** (same algorithm, KDF salt, envelope shape) |
-| `shared/src/rabbitmq.ts` | Connect/publish/consume helpers targeting the shared `finvault.events` topic exchange + `finvault.events.dlx` |
+| `shared/src/rabbitmq.ts` | Connect/publish/consume helpers targeting the shared `finvault.events` topic exchange + `finvault.events.dlx`. `createBroker` (#448) keeps the connection alive: a lost connection or channel is reopened with backoff (`reconnectDelayMs`, 1 s → 30 s) and **every registered consumer is set up again**; a publish while disconnected answers `false` at once. `currentRabbitChannel()` for passive checks — never hold a channel across calls, it dies with the broker's next restart |
 | `shared/src/heartbeat.ts` | `startHeartbeat(name)` (service pulse) + `startNodeHeartbeat(nodeId, collectResources, {agentUrl})` (node pulse, resources every 5s, advertises the agent URL for #171); both take an injectable publisher |
 | `shared/src/edition.ts` | Open-core edition flag: `Edition` type + `resolveEdition`/`getEdition`/`isHosted` (reads `NEXUS_EDITION`, defaults `community`) |
 | `shared/src/edition.ts` | The open-core flag. **The image decides**: `getBuildEdition()` reads a stamp baked into the image, which outranks `NEXUS_EDITION`; `assertEditionIsRunnable()` exits on a mismatch. No stamp (running from source) → the env decides (#189) |
