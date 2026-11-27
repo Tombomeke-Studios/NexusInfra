@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { getCurrentUser, logoutSession, type CurrentUser } from '../api';
 import { logout } from '../session';
 import { useEdition } from '../edition';
+import { APP_VERSION, isStaleBundle } from '../appVersion';
 import { BILLING_INCLUDED } from '../buildEdition';
 import { hasSeenIntro, markIntroSeen } from '../prefs';
 import { ThemeToggle } from './ThemeToggle';
@@ -16,7 +17,8 @@ import { nextNavFit, type NavFitState } from '../navFit';
 export function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isHosted } = useEdition();
+  const { isHosted, serverVersion } = useEdition();
+  const stale = isStaleBundle(APP_VERSION, serverVersion);
   const [introOpen, setIntroOpen] = useState(() => !hasSeenIntro());
   const [user, setUser] = useState<CurrentUser | null>(null);
   // When the bar does not fit, the nav and its actions fold behind a Menu button
@@ -124,6 +126,11 @@ export function Layout() {
               Accounts
             </NavLink>
           )}
+          {isPlatformAdmin && (
+            <NavLink to="/system" className="navlink" data-ripple>
+              System
+            </NavLink>
+          )}
           {/* The provider's view of accounts and plans (#369): hosted, administrators. */}
           {BILLING_INCLUDED && isHosted && isPlatformAdmin && (
             <NavLink to="/customers" className="navlink" data-ripple>
@@ -158,6 +165,18 @@ export function Layout() {
         </button>
         </div>
       </header>
+      {stale && (
+        // The tab outlived an update (#447): the server runs a newer release than
+        // this page. Saying so beats buttons that call routes that changed.
+        <div role="status" className="alert alert--warning" style={{ margin: '12px auto 0', maxWidth: 960, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span>
+            NexusInfra was updated to <strong>{serverVersion}</strong>; this page is still {APP_VERSION}. Reload to use the new version.
+          </span>
+          <button className="btn btn--primary btn--sm" onClick={() => window.location.reload()}>
+            Reload
+          </button>
+        </div>
+      )}
       <main>
         <div key={location.pathname} className="route-view">
           <Outlet />

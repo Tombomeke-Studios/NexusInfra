@@ -14,6 +14,9 @@ COPY . .
 
 ARG NEXUS_EDITION=community
 ENV NEXUS_EDITION=$NEXUS_EDITION
+# Baked into the bundle too (#447), so the panel can say when the server has moved on.
+ARG APP_VERSION=0.0.0-dev
+ENV APP_VERSION=$APP_VERSION
 RUN npm run build
 RUN node scripts/verify-edition.mjs "$NEXUS_EDITION"
 

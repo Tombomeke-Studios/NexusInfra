@@ -92,7 +92,7 @@ Runtime config the dashboard reads before login to decide whether billing UI ren
 Contains no sensitive data.
 
 ```json
-{ "edition": "community", "passwordResetByEmail": false, "sftpPort": 2022, "emailVerification": false, "features": ["agent-link"] }
+{ "edition": "community", "passwordResetByEmail": false, "sftpPort": 2022, "emailVerification": false, "features": ["agent-link"], "version": "0.5.0" }
 ```
 
 `features` lists what this control plane supports beyond the basics, so a client can ask instead of
@@ -104,6 +104,8 @@ guessing from a version: `agent-link` means nodes behind NAT may connect outboun
 `SMTP_URL` *and* `PANEL_URL` set; a yes/no, never the mail setup behind it.
 `sftpPort` is the port to connect to for SFTP (#235) — `SFTP_PUBLIC_PORT`, else `SFTP_PORT` — or `null`
 when SFTP is off.
+`version` is the release the orchestrator runs (#447) — the same as `/health` says. The panel reads it
+again when a tab comes back and every five minutes, and offers a reload when it differs from its own.
 
 ### `POST /auth/password-reset`  *(public)*
 
@@ -280,6 +282,33 @@ Other rules worth stating:
 - The token dies with its account, as a session does.
 - **The interactive terminal WebSocket does not accept API tokens** — it opens a root shell, the
   handshake is a `GET`, and a script that needs to run a command has `POST /deployments/:id/exec`.
+
+### `GET /admin/system`  *(platform administrators)*
+
+What each part of the installation runs and which optional features are on (#447). `403` for anyone
+else, and for an API token without the `admin` scope.
+
+```json
+{
+  "components": [
+    { "service": "orchestrator", "label": "Orchestrator", "reachable": true, "version": "0.5.0", "edition": "hosted" },
+    { "service": "node-agent", "nodeId": "…", "label": "Node agent · alpha", "reachable": false, "version": null, "edition": null, "problem": "no answer within 2 s" }
+  ],
+  "versionProblem": "Not everything runs the same version: …",
+  "features": [
+    { "id": "qr-topup", "label": "Top up by QR code", "state": "off", "summary": "…", "variables": ["FINVAULT_MERCHANT_NAME", "FINVAULT_MERCHANT_IBAN"] }
+  ]
+}
+```
+
+- `components`: the orchestrator itself, the Control Room, the Billing Bridge (hosted) and every node's
+  agent, each asked for its `/health` with a 2-second limit. A part that does not answer is a row with a
+  `problem`, never an error for the whole report.
+- `versionProblem`: set when parts that answered report different releases (development builds are not
+  compared), naming who runs what.
+- `features`: `state` is `on`, `off` or `warning` — a warning is an insecure default (`JWT_SECRET` unset,
+  the built-in `INTERNAL_API_TOKEN`, plaintext FinVault events) or a feature on that should not be
+  (billing test tools). `variables` are **names**; no value is ever returned.
 
 ### `GET /users` · `POST /users`  *(platform administrators)*
 

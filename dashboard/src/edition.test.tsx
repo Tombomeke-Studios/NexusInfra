@@ -58,3 +58,32 @@ describe('EditionProvider', () => {
     expect(screen.getByTestId('hosted').textContent).toBe('false');
   });
 });
+
+describe('EditionProvider re-reading the server (#447)', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function VersionProbe() {
+    const { serverVersion, edition } = useEdition();
+    return <span data-testid="version">{`${edition}@${serverVersion}`}</span>;
+  }
+
+  it('picks up a new server version when the tab comes back, and keeps the last answer through a blip', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ edition: 'hosted', version: '0.5.0' }) } as Response)
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ edition: 'hosted', version: '0.5.1' }) } as Response);
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <EditionProvider>
+        <VersionProbe />
+      </EditionProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId('version').textContent).toBe('hosted@0.5.0'));
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId('version').textContent).toBe('hosted@0.5.0');
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(screen.getByTestId('version').textContent).toBe('hosted@0.5.1'));
+  });
+});

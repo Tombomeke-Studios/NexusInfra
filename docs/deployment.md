@@ -325,6 +325,25 @@ application is about 0.1% of what ships; the weight is the base images and Prism
 Services also report their `version` and *resolved* `edition` from `GET /health`, which is the fastest
 way to confirm a running container is what you think it is.
 
+### Updating an installation, and checking it worked (#447)
+
+An update is two things, and missing either one looks the same from the outside — "the new features
+are not there":
+
+1. **New images.** `docker compose pull && docker compose up -d`. A moving tag (`:hosted`) only moves
+   when a release is published; until then a pull fetches the release you already have.
+2. **The new compose file and `.env` settings.** A feature that needs configuration needs its variable
+   passed to the container, and the compose file of an older release does not pass variables that did
+   not exist yet. Copy the new release's `docker-compose.yml`, and compare your `.env` with its
+   `.env.example`.
+
+Then open **System** in the panel (platform administrators). It lists every part with the release it
+runs — the panel in your browser, the orchestrator, the Control Room, the Billing Bridge and every
+node's agent — warns when they disagree, and shows each optional feature as on, off or needing
+attention, with the names of the settings that control it. It never shows a value. A browser tab left
+open across an update says so itself: the panel offers a reload when the server runs a newer release
+than the page.
+
 Per-image configuration — ports, environment, volumes — is in [images.md](images.md), which is the
 reference for building a stack without the installer.
 
