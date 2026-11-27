@@ -382,6 +382,22 @@ it can top up.
 - Confirming says the address reaches the account's owner. It is not a second factor and does not
   replace one.
 
+### Naming another FinVault address for a top-up (#445)
+
+Until #445 a top-up's request went only to the account's own, confirmed address. A customer may now
+type the FinVault address to ask instead, because the two need not match — and a typed address may be
+anybody's. What stands between that and a stranger paying somebody else's credit:
+
+- The request is only a request: nothing moves until the FinVault account holder approves it.
+- Its description names the NexusInfra account the credit is for, so the person asked can see it is
+  not theirs.
+- Only a confirmed account may send one (the gate above), and open requests are capped on both sides:
+  three waiting top-ups per NexusInfra account, five open requests per FinVault address.
+- FinVault does not say whether an address has an account there, so the field is no way to find out
+  who banks at FinVault.
+- A **QR-only** top-up sends no address at all, so it is not held to the confirmation: there is no
+  inbox to protect. Whoever scans it pays it, from their own FinVault account, for the account named.
+
 ### The Billing Bridge (#372)
 
 The Billing Bridge's routes name the account in the path (`/billing/:userId/...`) and believe it: the

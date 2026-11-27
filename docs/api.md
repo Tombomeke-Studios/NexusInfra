@@ -948,9 +948,16 @@ The dashboard's Billing page (#149) talks only to the Orchestrator, which proxie
 and **injects the caller's authenticated userId** from the JWT (the client never sends a user id):
 
 - `GET /billing/wallet` · `GET /billing/usage` · `GET /billing/standing` · `GET /billing/ledger` · `GET /billing/plan`
-- `POST /billing/topup` — body `{ amount }`. The Orchestrator adds the signed-in account's own email
-  address as the payer; an address in the body is ignored (#351). `409` if the account has none; `403`
-  while the address is unconfirmed, where the installation confirms addresses (#367).
+- `POST /billing/topup` — body `{ amount, finvaultEmail?, payWith? }` (#445). How it is paid:
+  - nothing extra — a payment request in the FinVault account with the signed-in account's own address (#351);
+  - `finvaultEmail` — a payment request in the FinVault account with that address instead (`400` if it is
+    not an email address). The old `email` field is ignored;
+  - `payWith: "qr"` — **scan-only**: no address is sent and the request is in nobody's inbox; it is paid by
+    scanning the top-up's QR. `409` when no payee is configured, since there would be nothing to scan.
+
+  Every request names the account its credit is for. `409` if the account has no address; `403` while it is
+  unconfirmed, where the installation confirms addresses (#367) — except for a scan-only top-up, which sends
+  no address anywhere.
 
 Without an authenticated user these routes answer `401`.
 
@@ -1051,12 +1058,14 @@ by the Orchestrator; the bridge only checks the internal token (#372).
 
 ### `POST /billing/:userId/topup`
 
-Start a credit top-up funded via FinVault — body `{ amount, email, currency? }`. `email` is the
-FinVault account that is asked to pay (#351). Records a **pending** ledger entry and emits
-`payment.request` to FinVault; credit is added only on `payment.confirmed`. `202` with
-`{ status: "pending", reference, entry, payerEmail }`.
+Start a credit top-up funded via FinVault — body `{ amount, email?, account?, currency? }`. `email` is
+the FinVault account that is asked to pay (#351); without it the top-up is **scan-only** (#445) and
+`payment.request` carries no `customerEmail`. `account` is the NexusInfra account the credit is for,
+named in the request's description so a payer sees whose credit they buy. Records a **pending** ledger
+entry (with `payerEmail`, or `null` for scan-only) and emits `payment.request` to FinVault; credit is
+added only on `payment.confirmed`. `202` with `{ status: "pending", reference, entry, payerEmail }`.
 
-- `400` on a non-positive amount or a missing email.
+- `400` on a non-positive amount or an `email` that is not an address.
 - `409` when the account already has three top-ups waiting in FinVault.
 - `503` when the request could not be handed to the broker — the entry is marked failed at once, since
   FinVault will never see it.
@@ -1106,7 +1115,7 @@ truth. Summary:
 | `server.start` / `server.stopped` / `server.started` / `server.crashed` | orchestrator ↔ node-agent | container lifecycle |
 | `deployment.created` / `deployment.failed` | orchestrator → bus | audit; `deployment.created` also carries `resourceLimits` for billing tracking |
 | `deployment.updated` | orchestrator → billing-bridge | a server was resized; carries the new `resourceLimits`, which later runtime is charged at (#364) |
-| `payment.request` | billing-bridge → FinVault | credit top-up charge; FinVault's `payment.request` shape plus `customerEmail`, which names the payer (#351) |
+| `payment.request` | billing-bridge → FinVault | credit top-up charge; FinVault's `payment.request` shape plus `customerEmail`, which names the payer (#351) — absent for a scan-only top-up (#445) |
 | `payment.confirmed` / `payment.failed` | FinVault → billing-bridge | consumed to add / mark-failed a top-up's credit |
 | `billing.server.suspend` | billing-bridge → orchestrator | stop a user's servers when credit is exhausted (hosted; NexusInfra-only key) |
 | `billing.credit.low` | billing-bridge → orchestrator | `{ userId, hoursLeft, available, currency }` — the account's credit lasts less than `LOW_CREDIT_HOURS`; sent once per dip (hosted; NexusInfra-only key, #379) |

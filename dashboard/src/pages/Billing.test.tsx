@@ -6,6 +6,7 @@ import { Billing, approvalHint, pendingTopUpNote, leftToSpendNote, newlyConfirme
 import type { LedgerEntry } from '../api';
 import { ToastProvider } from '../components/Toast';
 import { DialogProvider } from '../components/Dialog';
+import { EditionProvider } from '../edition';
 
 // Fetch is stubbed per-URL to stand in for the orchestrator billing proxy.
 const plan = { id: 'standard', name: 'Standard', pricePerHour: 0.02, currency: 'EUR', freeHoursPerMonth: 100, maxServers: 5, maxDatabases: 5 };
@@ -134,6 +135,74 @@ describe('Billing page', () => {
     });
   });
 
+  describe('choosing how to pay (#445)', () => {
+    const topupBody = () => {
+      const call = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.find((c: unknown[]) => String(c[0]).endsWith('/billing/topup'));
+      return call ? JSON.parse((call[1] as RequestInit).body as string) : null;
+    };
+    const withPayee = (url: string) =>
+      url.endsWith('/config')
+        ? Promise.resolve(jsonResponse({ edition: 'hosted', finvault: { url: null, payee: { name: 'NexusInfra', iban: 'BE89377007719941' } } }))
+        : url.endsWith('/me')
+          ? Promise.resolve(jsonResponse({ email: 'me@example.com' }))
+          : routeFetch(url);
+
+    const renderHosted = () =>
+      render(
+        <EditionProvider>
+          <ToastProvider>
+            <Billing />
+          </ToastProvider>
+        </EditionProvider>
+      );
+
+    beforeEach(() => vi.stubGlobal('fetch', vi.fn((url: string) => withPayee(String(url)))));
+
+    it('prefills the account’s own address and sends nothing extra for it', async () => {
+      renderHosted();
+      expect(await screen.findByDisplayValue('me@example.com')).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: /Top up/ }));
+      await waitFor(() => expect(topupBody()).toEqual({ amount: 10 }));
+    });
+
+    it('sends the FinVault address typed in, when it is not the account’s own', async () => {
+      renderHosted();
+      await screen.findByDisplayValue('me@example.com');
+      const field = await screen.findByLabelText(/sign in to FinVault with/);
+      await userEvent.clear(field);
+      await userEvent.type(field, 'Bank@Example.com');
+      await userEvent.click(screen.getByRole('button', { name: /Top up/ }));
+      await waitFor(() => expect(topupBody()).toEqual({ amount: 10, finvaultEmail: 'bank@example.com' }));
+    });
+
+    it('pays by QR alone, sending no address and asking for no confirmation', async () => {
+      vi.stubGlobal('fetch', vi.fn((url: string) => (url.endsWith('/me') ? Promise.resolve(jsonResponse({ email: 'me@example.com', emailVerified: false })) : url.endsWith('/config') ? Promise.resolve(jsonResponse({ edition: 'hosted', emailVerification: true, finvault: { url: null, payee: { name: 'NexusInfra', iban: 'BE89377007719941' } } })) : routeFetch(String(url)))));
+      renderHosted();
+      expect(await screen.findByText(/Confirm your email address first/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Top up/ })).toBeDisabled();
+      await userEvent.click(screen.getByRole('radio', { name: /QR code/ }));
+      expect(screen.queryByText(/Confirm your email address first/)).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: /Top up/ }));
+      await waitFor(() => expect(topupBody()).toEqual({ amount: 10, payWith: 'qr' }));
+    });
+
+    it('will not send an address that is not one', async () => {
+      renderHosted();
+      const field = await screen.findByDisplayValue('me@example.com');
+      await userEvent.clear(field);
+      await userEvent.type(field, 'nope');
+      expect(await screen.findByText('That is not an email address.')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Top up/ })).toBeDisabled();
+    });
+
+    it('offers no QR where nothing could be scanned', async () => {
+      vi.stubGlobal('fetch', vi.fn((url: string) => routeFetch(String(url))));
+      renderBilling();
+      await screen.findByLabelText(/sign in to FinVault with/);
+      expect(screen.queryByRole('radio', { name: /QR code/ })).not.toBeInTheDocument();
+    });
+  });
+
   describe('keeping the balance current (#296)', () => {
     const entry = (over: Partial<LedgerEntry>): LedgerEntry =>
       ({ id: 'l1', type: 'topup', amount: 10, currency: 'EUR', status: 'pending', description: 'Top-up', createdAt: new Date().toISOString(), ...over }) as LedgerEntry;
@@ -156,6 +225,7 @@ describe('Billing page', () => {
     it('says where a requested top-up has to be approved', () => {
       expect(approvalHint('€20.00', 'me@example.com')).toContain('the FinVault account of me@example.com');
       expect(approvalHint('€20.00')).toContain('your FinVault account');
+      expect(approvalHint('€20.00', null)).toMatch(/Scan the QR code/);
     });
 
     it('names the address a waiting top-up went to, and offers the QR where there is one (#435, #436)', () => {
@@ -165,6 +235,8 @@ describe('Billing page', () => {
       expect(plain).not.toMatch(/QR/);
       expect(pendingTopUpNote('me@example.com', true)).toMatch(/Scan the QR code with the FinVault app/);
       expect(pendingTopUpNote(undefined, false)).toContain('your FinVault account');
+      // Scan-only (#445): no inbox to name.
+      expect(pendingTopUpNote(null, true)).not.toMatch(/@|Payment Requests/);
     });
 
     // #365: the balance overstates what is left — usage is charged to it later.

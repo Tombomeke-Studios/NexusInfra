@@ -94,6 +94,9 @@ model CreditLedger {
   description String   @default("")
   // Why a top-up failed, in FinVault's words (#351). Null for anything else.
   failureReason String?
+  // The FinVault address a top-up's payment request was sent to (#445); null
+  // when it went to nobody and is paid only by scanning its QR.
+  payerEmail  String?
   createdAt   DateTime @default(now())
 
   @@index([userId])

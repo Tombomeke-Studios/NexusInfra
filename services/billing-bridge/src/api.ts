@@ -14,6 +14,8 @@ export interface BillingApiDeps {
   service: BillingService;
 }
 
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export function createBillingRouter({ repo, service }: BillingApiDeps): Router {
   const router = Router();
 
@@ -107,19 +109,20 @@ export function createBillingRouter({ repo, service }: BillingApiDeps): Router {
   });
 
   // Start a credit top-up (funded via FinVault). Credit is added on
-  // payment.confirmed, not here. `email` is who FinVault asks to pay (#351); the
-  // Orchestrator fills it in from the signed-in account.
+  // payment.confirmed, not here. `email` is the FinVault address asked to pay
+  // (#351), chosen by the Orchestrator; none means scan-only — paid by its QR (#445).
   router.post('/billing/:userId/topup', async (req: Request, res: Response) => {
-    const { amount, currency, email } = req.body ?? {};
+    const { amount, currency, email, account } = req.body ?? {};
     if (typeof amount !== 'number' || !(amount > 0)) {
       return res.status(400).json({ error: 'amount must be a positive number' });
     }
-    if (typeof email !== 'string' || !email.includes('@')) {
-      return res.status(400).json({ error: 'a top-up needs the email address FinVault should ask to pay' });
+    if (email !== undefined && email !== null && (typeof email !== 'string' || !EMAIL.test(email.trim()))) {
+      return res.status(400).json({ error: 'the FinVault address is not a valid email address' });
     }
+    const payerEmail = typeof email === 'string' ? email.trim().toLowerCase() : null;
     try {
-      const { reference, entry } = await service.requestTopUp(req.params.userId, amount, typeof currency === 'string' ? currency : undefined, email.trim().toLowerCase());
-      return res.status(202).json({ status: 'pending', reference, entry, payerEmail: email.trim().toLowerCase() });
+      const { reference, entry } = await service.requestTopUp(req.params.userId, amount, typeof currency === 'string' ? currency : undefined, payerEmail ?? undefined, typeof account === 'string' && EMAIL.test(account.trim()) ? account.trim().toLowerCase() : undefined);
+      return res.status(202).json({ status: 'pending', reference, entry, payerEmail });
     } catch (err) {
       const status = err instanceof BillingError ? err.status : 400;
       return res.status(status).json({ error: err instanceof Error ? err.message : 'top-up failed' });

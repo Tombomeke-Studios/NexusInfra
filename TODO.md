@@ -333,6 +333,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [x] A top-up says it is waiting in FinVault without saying for which address — name the address the request went to, and link to FinVault (#435) 🐛
 - [x] Temporary admin test tools for hosted billing: move time forward, set an account's free hours and hourly rate (#439) — `BILLING_TEST_TOOLS=true` on the orchestrator and the bridge; remove once billing is tested
 - [x] Top up by scanning an EPC QR code with the FinVault app (#436) — beside the email request, not instead of it: an RF creditor reference in the QR, paid by reference in FinVault (its #112) by whoever scans it; a changed amount is refused. `FINVAULT_MERCHANT_NAME`/`_IBAN` turn it on
+- [x] Let a top-up be paid from a named FinVault address or by QR only (#445) — the form asks *my FinVault account* (an address field, prefilled) or *a QR code*; a QR-only top-up sends FinVault no address (its #117); every request names the account it credits; the ledger records where each went
 - [x] `docs/billing.md` is missing from the documentation ownership table (#248)
 
 > **Labels.** Issues now carry `edition:community`, `edition:hosted` or `edition:both` alongside

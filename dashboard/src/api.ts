@@ -545,6 +545,8 @@ export interface LedgerEntry {
   description: string;
   /** Why a top-up failed, in FinVault's words (#351). */
   failureReason?: string | null;
+  /** The FinVault address a top-up's request went to (#445); null when it is paid by QR alone. */
+  payerEmail?: string | null;
   createdAt: string;
 }
 
@@ -678,8 +680,15 @@ export function getLedger(): Promise<LedgerEntry[]> {
 }
 
 /** `payerEmail` is the FinVault account that was asked to pay — where the customer goes to approve it (#351). */
-export function topUp(amount: number): Promise<{ status: string; reference: string; payerEmail?: string }> {
-  return request('/billing/topup', { method: 'POST', body: JSON.stringify({ amount }) });
+/**
+ * How a top-up is paid (#445): a payment request in a FinVault account — the
+ * signed-in one's own address unless `finvaultEmail` names another — or, with
+ * `payWith: 'qr'`, no request in anybody's inbox, only the QR code.
+ */
+export type TopUpPayer = { payWith: 'qr' } | { payWith?: 'email'; finvaultEmail?: string };
+
+export function topUp(amount: number, payer: TopUpPayer = {}): Promise<{ status: string; reference: string; payerEmail?: string | null }> {
+  return request('/billing/topup', { method: 'POST', body: JSON.stringify({ amount, ...payer }) });
 }
 
 /**

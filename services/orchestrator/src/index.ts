@@ -243,6 +243,7 @@ app.use(
     createBillingProxyRouter({
       emailOf: async (userId) => (await repo.getUser(userId))?.email ?? null,
       topUpProblem: async (userId) => topUpProblem(await repo.getUser(userId), emailVerification.available),
+      canScan: Boolean(finvaultFromEnv()?.payee),
     })
   )
 );

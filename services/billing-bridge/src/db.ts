@@ -109,6 +109,7 @@ function toLedger(e: PrismaLedger): CreditLedgerEntry {
     status: e.status as LedgerStatus,
     description: e.description,
     failureReason: e.failureReason,
+    payerEmail: e.payerEmail,
     createdAt: e.createdAt.toISOString(),
   };
 }

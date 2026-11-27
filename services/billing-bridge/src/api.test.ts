@@ -40,8 +40,24 @@ describe('billing API', () => {
     expect(readPayload(published[0].envelope.event)).toMatchObject({ amount: 25, customerEmail: 'u1@example.com' });
   });
 
-  it('refuses a top-up that does not say who FinVault should ask (#351)', async () => {
+  it('records where the request went, and tells the payer whose credit it buys (#445)', async () => {
+    const res = await request(app).post('/billing/u1/topup').send({ amount: 25, email: 'bank@example.com', account: 'U1@example.com' });
+    expect(res.body.entry.payerEmail).toBe('bank@example.com');
+    expect(readPayload(published[0].envelope.event)).toMatchObject({ customerEmail: 'bank@example.com', description: 'NexusInfra credit top-up for u1@example.com' });
+  });
+
+  it('starts a scan-only top-up when no address is given (#445)', async () => {
     const res = await request(app).post('/billing/u1/topup').send({ amount: 25 });
+    expect(res.status).toBe(202);
+    expect(res.body.payerEmail).toBeNull();
+    expect(res.body.entry.payerEmail).toBeNull();
+    const payload = readPayload(published[0].envelope.event) as Record<string, unknown>;
+    expect(payload).toMatchObject({ amount: 25, reference: res.body.reference });
+    expect(payload).not.toHaveProperty('customerEmail');
+  });
+
+  it('refuses an address that is not one (#445)', async () => {
+    const res = await request(app).post('/billing/u1/topup').send({ amount: 25, email: 'not an address' });
     expect(res.status).toBe(400);
     expect(published).toHaveLength(0);
   });

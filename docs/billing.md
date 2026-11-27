@@ -98,10 +98,18 @@ the panel is **not** the owner of the hardware (a hosting-provider scenario). So
     #436 (21 random characters, nothing about the account in them, since a QR is readable by anyone
     near the screen); older pending top-ups have no QR and are paid as before. A QR whose amount was
     changed is refused by FinVault. FinVault's half is Tombomeke-Studios/FinVault#112.
-  - **Who pays is the signed-in account, by its own address.** The Orchestrator fills the email in from
-    the session; one sent by the browser is ignored, because the address decides whose FinVault inbox
-    receives a payment request. A NexusInfra user id means nothing to FinVault until the two share an
-    identity (#17), and the email is what both already have.
+  - **The customer chooses how to pay (#445).** The address this panel knows need not be the one
+    the customer banks under, so the top-up form asks: a payment request in *my FinVault account* —
+    an address field, prefilled with the last address used or the account's own — or *a QR code I
+    scan* (offered only when a payee is configured). A QR-only top-up sends FinVault no address at all:
+    the request is in nobody's Payment Requests and is paid by scanning (FinVault's
+    Tombomeke-Studios/FinVault#117). Each ledger entry records where it went (`payerEmail`, `null` for
+    QR-only), so a waiting top-up names the right place. The last address used is also where the
+    monthly statement is filed (#375); a QR-only top-up leaves it as it was.
+  - **Whose credit it is, always said.** A typed address may be somebody else's, so every request's
+    description names the NexusInfra account it credits — the person asked to pay sees whose credit
+    they are buying before approving. A NexusInfra user id means nothing to FinVault until the two
+    share an identity (#17); an email is what both already have.
   - **The address has to be confirmed first (#367).** A self-registered account is mailed a single-use
     link, and a top-up is refused (`403`) until it has been opened — otherwise anyone could register with
     another person's address and send payment requests to their FinVault account. The Billing page says

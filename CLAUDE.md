@@ -319,7 +319,7 @@ is the migrations directory.
 | `src/suspend.ts` | `createSuspendHandler` — consumes `billing.server.suspend` (hosted), stops each named running deployment, records `suspendedAt`/`suspendedReason` on it (#380 — cleared by a start that passes the credit check, or a started report) + audits it |
 | `src/bridge.ts` | `bridgeFetch` — the one way to call the Billing Bridge: base URL + the internal token (#372) |
 | `src/billingPlans.ts` | Plans and the provider's view (#369, hosted only): `/billing/plans` + `PUT /billing/plan` for an account about itself, `/billing/admin/…` for platform administrators (catalogue, every account, manual credit). Pure `planFitProblem` — a switch is refused when the account holds more than the plan allows. Who adjusted credit comes from the session, never the body |
-| `src/billingProxy.ts` | `createBillingProxyRouter` — authenticated `/billing/*` proxy → Billing Bridge, injecting the JWT user id (dashboard never sends a user id) and, on a top-up, the account's own email as the payer (#351). No user, no answer: 401 |
+| `src/billingProxy.ts` | `createBillingProxyRouter` — authenticated `/billing/*` proxy → Billing Bridge, injecting the JWT user id (dashboard never sends a user id). On a top-up, `payerChoice` decides who FinVault asks: the account's own email (#351), a typed FinVault address, or nobody — QR only (#445). No user, no answer: 401 |
 | `src/monitoring.ts` | `createMonitoringRouter` — `GET /monitoring` proxies the Control Room's `/status` to the dashboard (`reachable:false` if it's down) |
 | `src/wsProxy.ts` | Pure `pipeSockets` + `toWsUrl` — the terminal WS proxy plumbing; `index.ts` authenticates the JWT, resolves the container, and pipes the client WS ↔ the Node Agent's `/terminal` WS (#71) |
 | `src/index.ts` | Entry: PrismaRepository + consumers on `nexusinfra.orchestrator`, mounts API, starts the schedule runner (restart/backup actions), HTTP `/health` (`:9200`) |
@@ -445,10 +445,13 @@ is the migrations directory.
 - **FinVault's gateway publishes every event as `events.<type>`** (e.g. `events.payment.confirmed`), not on
   the `bank.payment.*` keys NexusInfra named. Bind both when consuming anything FinVault sends (#298), and
   match on a reference *you* issued — FinVault's own payments share the key.
-- **A top-up names its payer by email, and the Orchestrator supplies it (#351).** FinVault cannot resolve
-  a NexusInfra user id, so `payment.request` carries `customerEmail` — taken from the signed-in account
-  in `billingProxy.ts`, never from the request body: the address decides whose FinVault inbox gets a
-  payment request. FinVault's half is `services/invoice-service/src/external-requests.ts` in that repo.
+- **A top-up names its payer by email, and the Orchestrator decides which (#351, #445).** FinVault cannot
+  resolve a NexusInfra user id, so `payment.request` carries `customerEmail`: the account's own address,
+  or the `finvaultEmail` the customer typed (`payerChoice` in `billingProxy.ts`) — or none, for a QR-only
+  top-up. Only `finvaultEmail` names a payer; any other body field is ignored. Because a typed address may
+  be a stranger's, the request always names the account it credits (`account` → the description) and the
+  confirmation gate (#367) still applies to everything but QR-only. FinVault's half is
+  `services/invoice-service/src/external-requests.ts` in that repo.
 - **Anything billing needs after a restart is stored, not remembered (#364).** The bridge kept each
   server's owner and size in a map; a restart emptied it and every server started afterwards ran
   unbilled, silently. A start may also be reported twice — `handleServerStarted` keeps the open interval.
