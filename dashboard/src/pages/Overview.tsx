@@ -157,8 +157,8 @@ export function Overview() {
           : stats.map((s, i) => (
               <div
                 key={s.label}
-                className="card spotlight card--lift"
-                data-spotlight
+                className="card card--lift"
+               
                 style={{ ['--i']: i, flex: 1, minWidth: 168, padding: '18px 22px' } as CSSProperties}
               >
                 <div className="tnum" style={{ fontSize: '2rem', fontWeight: 700, letterSpacing: '-.02em' }}>
@@ -236,7 +236,7 @@ export function Overview() {
             )
           );
           return (
-            <article key={n.id} className="card node-card spotlight" data-spotlight style={{ ['--i']: i } as CSSProperties}>
+            <article key={n.id} className="card node-card" style={{ ['--i']: i } as CSSProperties}>
               <div style={{ padding: 20 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18, gap: 8 }}>
                   <button className="name-btn" data-ripple onClick={() => navigate(`/nodes/${n.id}`)} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 700, fontSize: '1rem' }}>{n.name}</button>

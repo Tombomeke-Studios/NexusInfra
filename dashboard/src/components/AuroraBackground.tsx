@@ -1,8 +1,7 @@
 // Ambient animated background from the design: a drifting grid, an animated node
-// network canvas (data-bg-net — drifting nodes that link up, stream packets and
-// react to the cursor), three blurred aurora blobs, an fx layer (cursor trail /
-// bursts), and the cursor-follow aura. Purely decorative DOM; the motion is driven
-// by the interaction layer (fx.ts).
+// network canvas (data-bg-net — drifting nodes that link up and stream packets),
+// three blurred aurora blobs and an fx layer for click bursts. Nothing follows the
+// cursor (#449). Purely decorative DOM; the motion is driven by fx.ts.
 export function AuroraBackground() {
   return (
     <>
@@ -14,7 +13,6 @@ export function AuroraBackground() {
         <div className="aurora aurora--3" />
       </div>
       <div id="fx-layer" aria-hidden className="fx-layer" />
-      <div id="cursor-aura" aria-hidden className="cursor-aura" />
     </>
   );
 }

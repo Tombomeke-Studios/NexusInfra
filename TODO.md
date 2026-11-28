@@ -336,6 +336,7 @@ it". Every item carries the `edition:hosted` label on GitHub.
 - [x] Let a top-up be paid from a named FinVault address or by QR only (#445) — the form asks *my FinVault account* (an address field, prefilled) or *a QR code*; a QR-only top-up sends FinVault no address (its #117); every request names the account it credits; the ledger records where each went
 - [x] A System page: every part's version, a warning when they disagree, and which optional features are on and why (#447) — plus a reload banner when a browser tab outlives an update
 - [x] Services never reconnect to RabbitMQ after the broker restarts (#448) 🐛 — consumers stopped silently, nodes showed offline and server status froze until each service was restarted; now reconnects with backoff and re-registers every consumer
+- [x] Remove the cursor-following effects from the panel (#449) — aura and trail, card spotlight, magnetic buttons and the background network's reaction to the pointer; the drifting background and click ripples stay
 - [x] `docs/billing.md` is missing from the documentation ownership table (#248)
 
 > **Labels.** Issues now carry `edition:community`, `edition:hosted` or `edition:both` alongside
