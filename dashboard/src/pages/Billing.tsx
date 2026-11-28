@@ -48,7 +48,8 @@ export function statusLabel(status: LedgerEntry['status']): string {
 
 /** Top-ups that were pending in `before` and are confirmed in `after`. */
 /** What to do next after asking for a top-up: the credit only arrives once it is approved in FinVault (#351). */
-export function approvalHint(amount: string, payerEmail?: string): string {
+export function approvalHint(amount: string, payerEmail?: string | null): string {
+  if (payerEmail === null) return `Scan the QR code below with the FinVault app to pay ${amount}. The credit is added here as soon as you approve it.`;
   const where = payerEmail ? `the FinVault account of ${payerEmail}` : 'your FinVault account';
   return `A payment request for ${amount} is waiting in ${where}. Approve it there and the credit is added here.`;
 }
@@ -59,7 +60,9 @@ export function approvalHint(amount: string, payerEmail?: string): string {
  * "waiting for you" with nothing waiting was the whole bug. With a QR (#436) the
  * address stops mattering — whoever scans it pays it.
  */
-export function pendingTopUpNote(payerEmail: string | undefined, canScan: boolean): string {
+export function pendingTopUpNote(payerEmail: string | null | undefined, canScan: boolean): string {
+  // Scan-only (#445): nothing waits in any inbox, so there is no address to name.
+  if (payerEmail === null) return 'Open the FinVault app, scan this QR code and approve the payment to add the credit.';
   const where = payerEmail ? `the FinVault account of ${payerEmail}` : 'your FinVault account';
   const first = `A top-up is waiting in ${where}, under Invoices → Payment Requests. Pay it there to add the credit, or decline it to cancel.`;
   if (canScan) return `${first} No FinVault account with that address? Scan the QR code with the FinVault app instead — it pays the same request.`;
@@ -194,6 +197,11 @@ export function Billing() {
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [amount, setAmount] = useState(10);
+  // How this top-up is paid (#445). The address a FinVault account is under
+  // need not be the one this panel knows, so it can be typed — or left out
+  // altogether by paying with the QR code.
+  const [payWith, setPayWith] = useState<'email' | 'qr'>('email');
+  const [finvaultEmail, setFinvaultEmail] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // When the figures on screen were read, and whether the latest attempt to read
   // them again failed. A refresh that fails silently looks exactly like a stable
@@ -264,11 +272,22 @@ export function Billing() {
 
   const currency = wallet?.currency ?? usage?.plan.currency ?? 'EUR';
 
+  const canScan = Boolean(finvault?.payee);
+  // Prefilled with the address the last top-up went to, else the account's own.
+  const lastPayer = ledger.find((e) => e.type === 'topup' && e.payerEmail)?.payerEmail ?? null;
+  const payerField = finvaultEmail ?? lastPayer ?? me?.email ?? '';
+  const payerValid = payerField.trim() === '' || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payerField.trim());
+  const byQr = payWith === 'qr' && canScan;
+  // The confirmation (#367) guards an address sent to FinVault; a QR sends none.
+  const blocked = !byQr && (mustConfirm || !payerValid);
+
   const onTopUp = async () => {
-    if (!(amount > 0)) return;
+    if (!(amount > 0) || blocked) return;
     setBusy(true);
     try {
-      const { payerEmail } = await topUp(amount);
+      const typed = payerField.trim().toLowerCase();
+      const payer = byQr ? ({ payWith: 'qr' } as const) : typed && typed !== me?.email?.toLowerCase() ? { finvaultEmail: typed } : {};
+      const { payerEmail } = await topUp(amount, payer);
       toast(approvalHint(money(amount, currency), payerEmail), 'success', 'Top-up requested');
       await refresh();
     } catch (e) {
@@ -377,10 +396,44 @@ export function Billing() {
       {/* Top up */}
       <div className="card" style={{ padding: '20px 22px', marginBottom: 22 }}>
         <strong style={{ display: 'block', fontSize: '.92rem', marginBottom: 10 }}>Top up credit</strong>
-        {mustConfirm && (
+        <fieldset style={{ border: 0, padding: 0, margin: '0 0 12px' }}>
+          <legend className="subtle" style={{ fontSize: '.82rem', marginBottom: 6 }}>Pay with</legend>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+            <input type="radio" name="payWith" value="email" checked={!byQr} onChange={() => setPayWith('email')} />
+            A payment request in my FinVault account
+          </label>
+          {!byQr && (
+            <div style={{ margin: '0 0 8px 26px' }}>
+              <label htmlFor="finvault-email" style={{ display: 'block', fontSize: '.8rem', marginBottom: 4 }}>
+                The email address you sign in to FinVault with
+              </label>
+              <input
+                id="finvault-email"
+                type="email"
+                autoComplete="email"
+                value={payerField}
+                onChange={(e) => setFinvaultEmail(e.target.value)}
+                aria-invalid={!payerValid}
+                style={{ width: 'min(100%, 320px)' }}
+              />
+              {!payerValid && (
+                <span role="alert" className="field__hint" style={{ display: 'block', marginTop: 4, color: 'var(--color-danger)' }}>
+                  That is not an email address.
+                </span>
+              )}
+            </div>
+          )}
+          {canScan && (
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input type="radio" name="payWith" value="qr" checked={byQr} onChange={() => setPayWith('qr')} />
+              A QR code I scan with the FinVault app
+            </label>
+          )}
+        </fieldset>
+        {mustConfirm && !byQr && (
           <div role="status" className="alert alert--warning" style={{ marginBottom: 12 }}>
-            <strong>Confirm your email address first.</strong> A top-up sends a payment request to the FinVault account with the address{' '}
-            <span className="mono">{me?.email}</span>, so we need to know it is yours. Open the link we mailed you
+            <strong>Confirm your email address first.</strong> A top-up sends a payment request to a FinVault account, so we need to
+            know <span className="mono">{me?.email}</span> is yours{canScan ? ' — or pay with a QR code, which sends no request' : ''}. Open the link we mailed you
             {linkState === 'sent' ? ' — a new one is on its way.' : ', or '}
             {linkState !== 'sent' && (
               <button className="btn btn--secondary btn--sm" onClick={() => void sendLink()} disabled={linkState === 'sending'} style={{ marginLeft: 4 }}>
@@ -403,13 +456,20 @@ export function Billing() {
             aria-label="Top-up amount"
             style={{ width: 100 }}
           />
-          <button className="btn btn--primary btn--sm" data-ripple data-burst onClick={onTopUp} disabled={busy || !(amount > 0) || mustConfirm}>
+          <button className="btn btn--primary btn--sm" data-ripple data-burst onClick={onTopUp} disabled={busy || !(amount > 0) || blocked}>
             {busy ? <span className="spinner" /> : `Top up ${money(amount || 0, currency)}`}
           </button>
         </div>
         <p className="subtle" style={{ margin: '10px 0 0', fontSize: '.8rem' }}>
-          A top-up sends a payment request to the FinVault account with {me?.email ? <strong>{me.email}</strong> : 'your email address'}.
-          Approve it there, under Invoices → Payment Requests, and the credit lands here within seconds. Nothing is charged until you do.
+          {byQr ? (
+            <>A QR code appears below. Scan it with the FinVault app and approve — from any FinVault account — and the credit lands here within seconds.</>
+          ) : (
+            <>
+              The request appears in the FinVault account with {payerField.trim() ? <strong>{payerField.trim().toLowerCase()}</strong> : 'your email address'}, under
+              Invoices → Payment Requests. Approve it there and the credit lands here within seconds.
+            </>
+          )}{' '}
+          Nothing is charged until you approve.
           {finvault?.url && (
             <>
               {' '}
@@ -419,11 +479,14 @@ export function Billing() {
         </p>
         {ledger.some((e) => e.type === 'topup' && e.status === 'pending') && (
           <div role="status" className="alert alert--warning" style={{ margin: '12px 0 0' }}>
-            <p style={{ margin: 0 }}>{pendingTopUpNote(me?.email, Boolean(finvault?.payee))}</p>
             {ledger
               .filter((e) => e.type === 'topup' && e.status === 'pending')
-              .map((e) => (
-                <TopUpQrCode key={e.id} entry={e} payee={finvault?.payee ?? null} />
+              .map((e, i) => (
+                <div key={e.id} style={{ marginTop: i === 0 ? 0 : 16 }}>
+                  {/* Each top-up says where it went: one may be to an address, the next a QR (#445). */}
+                  <p style={{ margin: 0 }}>{pendingTopUpNote(e.payerEmail === undefined ? me?.email : e.payerEmail, canScan)}</p>
+                  <TopUpQrCode entry={e} payee={finvault?.payee ?? null} />
+                </div>
               ))}
           </div>
         )}

@@ -211,7 +211,7 @@ is the migrations directory.
 | Path | Contents |
 |---|---|
 | `shared/src/events.ts` | Event union, envelope, AES-256-GCM payload encryption — **wire-compatible with FinVault** (same algorithm, KDF salt, envelope shape) |
-| `shared/src/rabbitmq.ts` | Connect/publish/consume helpers targeting the shared `finvault.events` topic exchange + `finvault.events.dlx` |
+| `shared/src/rabbitmq.ts` | Connect/publish/consume helpers targeting the shared `finvault.events` topic exchange + `finvault.events.dlx`. `createBroker` (#448) keeps the connection alive: a lost connection or channel is reopened with backoff (`reconnectDelayMs`, 1 s → 30 s) and **every registered consumer is set up again**; a publish while disconnected answers `false` at once. `currentRabbitChannel()` for passive checks — never hold a channel across calls, it dies with the broker's next restart |
 | `shared/src/heartbeat.ts` | `startHeartbeat(name)` (service pulse) + `startNodeHeartbeat(nodeId, collectResources, {agentUrl})` (node pulse, resources every 5s, advertises the agent URL for #171); both take an injectable publisher |
 | `shared/src/edition.ts` | Open-core edition flag: `Edition` type + `resolveEdition`/`getEdition`/`isHosted` (reads `NEXUS_EDITION`, defaults `community`) |
 | `shared/src/edition.ts` | The open-core flag. **The image decides**: `getBuildEdition()` reads a stamp baked into the image, which outranks `NEXUS_EDITION`; `assertEditionIsRunnable()` exits on a mismatch. No stamp (running from source) → the env decides (#189) |
@@ -309,7 +309,8 @@ is the migrations directory.
 | `src/deploymentQuery.ts` | Pure search/filter/paging for the server list (#237): `parseFilter`, `parsePage` (limit always applied, capped at 200), `pageOf` (total order on createdAt **then id**, or paging shows one row twice and hides another). `GET /deployments` answers `{ items, total, limit, offset }` — a page with no count cannot say there is more, and silent truncation is worse than the unbounded list it replaced |
 | `src/entitlements.ts` | Hosted plan entitlements (#297): pure `usageFor` (memory in MB on each server's own node), `ramProblem`/`ramChangeProblem` + `fetchEntitlements` (fail-open, logged). Measured against the **owner's** plan, whoever edits; the platform role buys no exemption. Under a memory ceiling an uncapped server is refused — it could take the whole node. Lowering is always allowed, so an account over its plan has a way back |
 | `src/transfer.ts` | Pure `planTransfer` (#230) — who owns the server next, what the outgoing owner keeps, and the audit line. Ownership was fixed at creation, so an owner who left orphaned their servers: only `owner` may delete one or manage its access. Owner-level permission, because an admin who could transfer could hand the server to themselves; the repository applies the plan in **one transaction**, since an owner who moved without the retained share landing is access silently lost |
-| `src/config.ts` | `createConfigRouter` — public `GET /config` → `{ edition, passwordResetByEmail, sftpPort, … }` (mounted before auth); hosted + configured only, `finvault: { url, payee }` from `finvaultFromEnv` (#435, #436) |
+| `src/config.ts` | `createConfigRouter` — public `GET /config` → `{ edition, passwordResetByEmail, sftpPort, version, … }` (mounted before auth); hosted + configured only, `finvault: { url, payee }` from `finvaultFromEnv` (#435, #436) |
+| `src/systemReport.ts` | The System page's data (#447): pure `featureChecklist` (each optional feature on/off/warning and the **names** of its variables — never a value; warns on `JWT_SECRET` unset, the default internal token, plaintext FinVault events, test tools on), `versionProblem` (reachable parts on different releases), `probeHealth` (a dead part is a row, 2 s limit) and admin-only `GET /admin/system`. **A new optional feature gets a row here**, or the next "it is not there" is invisible again |
 | `src/sftp.ts` | SFTP, the protocol half (#235): `createSftpServer` over an injected `SftpFiles`, plus pure `parseSftpUsername` (`<email>.<server>`, split on the **last** dot), `resolveSftpPath`, `openIntent`, `WriteBuffer`. Password auth only; no shell/exec. A write that fails part way poisons its handle, so the close does **not** upload the fragment over the old file. ssh2 is CommonJS — import it whole, named imports fail under Node's ESM loader (tests do not catch that) |
 | `src/sftpBackend.ts` | SFTP, the account/agent half: `createSftpAuthenticator` (password or `nxi_` token; a 2FA account must use a token; `file.read` to log in; shares the panel's login limiter) and `createAgentSftpFiles` — access, role and container **re-resolved on every operation**, so a revoked share ends an open session. `loadOrCreateHostKey` (ed25519, `0600`, on the data volume) |
 | `src/api.ts` | Express deployment API: create/list/get deployments, stop/start/restart/**delete**, node health; enforces plan quotas via the Billing Bridge (hosted). Control actions live in one `controls` table shared by the single routes and `POST /deployments/bulk` (#238), which is mounted **before** the per-server guard — anything under `/deployments/<word>` that is not an id must be, or the guard claims it as a server id and answers 404 |
@@ -319,7 +320,7 @@ is the migrations directory.
 | `src/suspend.ts` | `createSuspendHandler` — consumes `billing.server.suspend` (hosted), stops each named running deployment, records `suspendedAt`/`suspendedReason` on it (#380 — cleared by a start that passes the credit check, or a started report) + audits it |
 | `src/bridge.ts` | `bridgeFetch` — the one way to call the Billing Bridge: base URL + the internal token (#372) |
 | `src/billingPlans.ts` | Plans and the provider's view (#369, hosted only): `/billing/plans` + `PUT /billing/plan` for an account about itself, `/billing/admin/…` for platform administrators (catalogue, every account, manual credit). Pure `planFitProblem` — a switch is refused when the account holds more than the plan allows. Who adjusted credit comes from the session, never the body |
-| `src/billingProxy.ts` | `createBillingProxyRouter` — authenticated `/billing/*` proxy → Billing Bridge, injecting the JWT user id (dashboard never sends a user id) and, on a top-up, the account's own email as the payer (#351). No user, no answer: 401 |
+| `src/billingProxy.ts` | `createBillingProxyRouter` — authenticated `/billing/*` proxy → Billing Bridge, injecting the JWT user id (dashboard never sends a user id). On a top-up, `payerChoice` decides who FinVault asks: the account's own email (#351), a typed FinVault address, or nobody — QR only (#445). No user, no answer: 401 |
 | `src/monitoring.ts` | `createMonitoringRouter` — `GET /monitoring` proxies the Control Room's `/status` to the dashboard (`reachable:false` if it's down) |
 | `src/wsProxy.ts` | Pure `pipeSockets` + `toWsUrl` — the terminal WS proxy plumbing; `index.ts` authenticates the JWT, resolves the container, and pipes the client WS ↔ the Node Agent's `/terminal` WS (#71) |
 | `src/index.ts` | Entry: PrismaRepository + consumers on `nexusinfra.orchestrator`, mounts API, starts the schedule runner (restart/backup actions), HTTP `/health` (`:9200`) |
@@ -376,6 +377,7 @@ is the migrations directory.
 | `src/pages/VerifyEmail.tsx` | Where the mailed confirmation link lands (#367) — public; spends the token exactly once, even under StrictMode's double effect |
 | `src/pages/ResetPassword.tsx` | Where the mailed reset link lands (#344) — public, checks length and the repeat before spending the link |
 | `src/pages/Account.tsx` | Account page (#221) — who you are signed in as + change your own password. Platform role is read-only: your own standing is not yours to raise |
+| `src/pages/System.tsx` · `src/appVersion.ts` | The System page (#447, admins): every part's release side by side with the panel's own, the version-split warning, and the feature checklist. `appVersion.ts` holds the bundle's `APP_VERSION` (`__APP_VERSION__`, baked by the image build) and `isStaleBundle`, which drives the **reload banner** in `Layout` when a tab outlives an update — `EditionProvider` re-reads `/config` on tab focus and every 5 min |
 | `src/pages/Users.tsx` | Accounts page (#222) — platform admins list and create accounts. The only way in for the community edition, where nobody self-registers. Nav link hidden for non-admins; `/users` answers 403 regardless |
 | `src/pages/NodeDetail.tsx` | Per-node view (`/nodes/:id`): live CPU/RAM meters + session sparkline, hosted deployments, deregister |
 | `src/routes.tsx` · `src/App.tsx` | Route table (public `/login`; the rest behind `RequireAuth` + `Layout`) wrapped in the router |
@@ -445,10 +447,13 @@ is the migrations directory.
 - **FinVault's gateway publishes every event as `events.<type>`** (e.g. `events.payment.confirmed`), not on
   the `bank.payment.*` keys NexusInfra named. Bind both when consuming anything FinVault sends (#298), and
   match on a reference *you* issued — FinVault's own payments share the key.
-- **A top-up names its payer by email, and the Orchestrator supplies it (#351).** FinVault cannot resolve
-  a NexusInfra user id, so `payment.request` carries `customerEmail` — taken from the signed-in account
-  in `billingProxy.ts`, never from the request body: the address decides whose FinVault inbox gets a
-  payment request. FinVault's half is `services/invoice-service/src/external-requests.ts` in that repo.
+- **A top-up names its payer by email, and the Orchestrator decides which (#351, #445).** FinVault cannot
+  resolve a NexusInfra user id, so `payment.request` carries `customerEmail`: the account's own address,
+  or the `finvaultEmail` the customer typed (`payerChoice` in `billingProxy.ts`) — or none, for a QR-only
+  top-up. Only `finvaultEmail` names a payer; any other body field is ignored. Because a typed address may
+  be a stranger's, the request always names the account it credits (`account` → the description) and the
+  confirmation gate (#367) still applies to everything but QR-only. FinVault's half is
+  `services/invoice-service/src/external-requests.ts` in that repo.
 - **Anything billing needs after a restart is stored, not remembered (#364).** The bridge kept each
   server's owner and size in a map; a restart emptied it and every server started afterwards ran
   unbilled, silently. A start may also be reported twice — `handleServerStarted` keeps the open interval.

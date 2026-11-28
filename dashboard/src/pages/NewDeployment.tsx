@@ -232,7 +232,7 @@ export function NewDeployment() {
         <h1 style={{ fontSize: '1.4rem' }}>New Deployment</h1>
       </div>
 
-      <div className="card spotlight" data-spotlight>
+      <div className="card">
         <form onSubmit={onSubmit} style={{ padding: 24 }}>
           {/* Type */}
           <div style={{ marginBottom: 20 }}>
@@ -582,7 +582,7 @@ export function NewDeployment() {
 
           {error && <p role="alert" className="alert alert--error" style={{ marginBottom: 16 }}>{error}</p>}
 
-          <button type="submit" className="btn btn--primary" data-magnetic data-ripple data-burst="success" disabled={busy} style={{ minHeight: 44, padding: '0 22px' }}>
+          <button type="submit" className="btn btn--primary" data-ripple data-burst="success" disabled={busy} style={{ minHeight: 44, padding: '0 22px' }}>
             {busy && <span className="spinner" />}
             {busy ? 'Deploying…' : 'Deploy'}
           </button>

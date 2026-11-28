@@ -1,55 +1,20 @@
 import { motionEnabled } from './motion';
 
 // Interaction layer from the design (NexusInfra.dc.html script):
-//  - the animated background node-network canvas (data-bg-net),
-//  - a cursor-follow aura that smoothly lerps toward the pointer and emits a
-//    fading trail of dots,
-//  - click ripples on [data-ripple] and particle bursts on [data-burst],
-//  - a spotlight glow inside [data-spotlight] cards, and magnetic pull on
-//    [data-magnetic].
+//  - the animated background node-network canvas (data-bg-net), drifting on its own,
+//  - click ripples on [data-ripple] and particle bursts on [data-burst].
 // Delegated at the document level; inert when motion is reduced.
+//
+// Nothing here follows the pointer any more (#449). The design also had a glowing
+// aura with a trail of dots, a spotlight inside cards, "magnetic" buttons and a
+// network that reached for the cursor; on the sign-in page — the first thing a new
+// customer sees — that read as distracting, and a magnetic button moves the very
+// target someone is aiming at.
 export function initInteractionFx(): () => void {
   if (!motionEnabled()) return () => {};
 
-  const aura = document.getElementById('cursor-aura');
   const fxLayer = document.getElementById('fx-layer');
-  const a = { x: window.innerWidth / 2, y: window.innerHeight / 2, tx: window.innerWidth / 2, ty: window.innerHeight / 2 };
-  const disposeNet = initNetwork(a);
-  let lastTrail = 0;
-  let raf = 0;
-  let lastSpot: HTMLElement | null = null;
-
-  const onMove = (e: MouseEvent) => {
-    a.tx = e.clientX;
-    a.ty = e.clientY;
-    if (aura) aura.style.opacity = '1';
-    if (raf) return;
-    raf = requestAnimationFrame(() => {
-      raf = 0;
-      // Spotlight follows the cursor inside the hovered card.
-      const spot = (e.target as HTMLElement).closest?.('[data-spotlight]') as HTMLElement | null;
-      if (lastSpot && lastSpot !== spot) lastSpot.style.setProperty('--spot', '0');
-      if (spot) {
-        const r = spot.getBoundingClientRect();
-        spot.style.setProperty('--mx', `${e.clientX - r.left}px`);
-        spot.style.setProperty('--my', `${e.clientY - r.top}px`);
-        spot.style.setProperty('--spot', '1');
-      }
-      lastSpot = spot;
-      // Magnetic pull on nearby elements.
-      for (const m of Array.from(document.querySelectorAll<HTMLElement>('[data-magnetic]'))) {
-        const r = m.getBoundingClientRect();
-        const dx = e.clientX - (r.left + r.width / 2);
-        const dy = e.clientY - (r.top + r.height / 2);
-        if (Math.hypot(dx, dy) < 72) m.style.transform = `translate(${dx * 0.25}px, ${dy * 0.25}px)`;
-        else if (m.style.transform) m.style.transform = '';
-      }
-    });
-  };
-
-  const onLeave = () => {
-    if (aura) aura.style.opacity = '0';
-  };
+  const disposeNet = initNetwork();
 
   const onDown = (e: MouseEvent) => {
     const t = (e.target as HTMLElement).closest?.('[data-ripple]') as HTMLElement | null;
@@ -60,32 +25,11 @@ export function initInteractionFx(): () => void {
     if (b && fxLayer) burst(fxLayer, e.clientX, e.clientY, b.getAttribute('data-burst') || 'primary');
   };
 
-  // Aura easing loop + trail.
-  let loopRaf = 0;
-  const loop = () => {
-    a.x += (a.tx - a.x) * 0.16;
-    a.y += (a.ty - a.y) * 0.16;
-    if (aura) aura.style.transform = `translate(${a.x}px, ${a.y}px)`;
-    const now = performance.now();
-    if (now - lastTrail > 28) {
-      lastTrail = now;
-      if (Math.hypot(a.tx - a.x, a.ty - a.y) > 3.5 && fxLayer) trail(fxLayer, a.tx, a.ty);
-    }
-    loopRaf = requestAnimationFrame(loop);
-  };
-  loopRaf = requestAnimationFrame(loop);
-
-  document.addEventListener('mousemove', onMove);
-  document.addEventListener('mouseleave', onLeave);
   document.addEventListener('mousedown', onDown);
   document.addEventListener('click', onClick);
   return () => {
-    document.removeEventListener('mousemove', onMove);
-    document.removeEventListener('mouseleave', onLeave);
     document.removeEventListener('mousedown', onDown);
     document.removeEventListener('click', onClick);
-    if (raf) cancelAnimationFrame(raf);
-    cancelAnimationFrame(loopRaf);
     disposeNet();
   };
 }
@@ -104,10 +48,10 @@ interface NetNode { x: number; y: number; vx: number; vy: number; r: number; ph:
 interface Packet { a: NetNode; b: NetNode; t: number; sp: number }
 
 // The background node-network (design: initNetwork). Drifting nodes link to nearby
-// neighbours, occasionally stream a "packet" along a link, and are repelled by /
-// wired to the cursor. Shares the aura's target position `a.tx/ty` as the pointer.
-// Returns a disposer; a no-op where there's no 2D canvas (e.g. jsdom in tests).
-function initNetwork(a: { tx: number; ty: number }): () => void {
+// neighbours and occasionally stream a "packet" along a link. It ignores the
+// pointer (#449). Returns a disposer; a no-op where there's no 2D canvas (e.g.
+// jsdom in tests).
+function initNetwork(): () => void {
   const c = document.querySelector<HTMLCanvasElement>('canvas[data-bg-net]');
   const ctx = c?.getContext('2d');
   if (!c || !ctx) return () => {};
@@ -129,7 +73,6 @@ function initNetwork(a: { tx: number; ty: number }): () => void {
   const rnd = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
   const col = hexToRgb(getComputedStyle(document.documentElement).getPropertyValue('--color-primary')) || '99,102,241';
   const LINK = 155;
-  const MOUSE = 210;
   let nodes: NetNode[] = [];
   const packets: Packet[] = [];
   let raf = 0;
@@ -138,12 +81,10 @@ function initNetwork(a: { tx: number; ty: number }): () => void {
 
   const draw = () => {
     if (stopped) return;
-    const mx = a.tx;
-    const my = a.ty;
     const t = performance.now() / 1000;
     ctx.clearRect(0, 0, W, H);
 
-    // Drift + wrap; repel from the cursor.
+    // Drift + wrap.
     for (const p of nodes) {
       p.x += p.vx;
       p.y += p.vy;
@@ -151,13 +92,6 @@ function initNetwork(a: { tx: number; ty: number }): () => void {
       if (p.x > W + 30) p.x = -30;
       if (p.y < -30) p.y = H + 30;
       if (p.y > H + 30) p.y = -30;
-      const dxm = mx - p.x;
-      const dym = my - p.y;
-      const dm = Math.hypot(dxm, dym) || 1;
-      if (dm < MOUSE) {
-        p.x -= (dxm / dm) * 0.6;
-        p.y -= (dym / dm) * 0.6;
-      }
     }
     // Links between nearby nodes.
     for (let i = 0; i < nodes.length; i++) {
@@ -173,18 +107,6 @@ function initNetwork(a: { tx: number; ty: number }): () => void {
           ctx.lineTo(B.x, B.y);
           ctx.stroke();
         }
-      }
-    }
-    // Links from the cursor to nearby nodes.
-    for (const p of nodes) {
-      const d = Math.hypot(mx - p.x, my - p.y);
-      if (d < MOUSE) {
-        ctx.strokeStyle = `rgba(${col},${(1 - d / MOUSE) * 0.55})`;
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.moveTo(mx, my);
-        ctx.lineTo(p.x, p.y);
-        ctx.stroke();
       }
     }
     // Occasionally launch a packet toward the nearest neighbour.
@@ -221,20 +143,12 @@ function initNetwork(a: { tx: number; ty: number }): () => void {
       ctx.arc(x, y, 2.3, 0, 6.29);
       ctx.fill();
     }
-    // Nodes: pulse, and glow larger near the cursor.
+    // Nodes: a slow pulse.
     for (const p of nodes) {
-      const d = Math.hypot(mx - p.x, my - p.y);
-      const near = d < MOUSE;
       const pulse = 0.55 + 0.45 * Math.sin(t * 1.5 + p.ph);
-      if (near) {
-        ctx.fillStyle = `rgba(${col},0.13)`;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r * 4.5, 0, 6.29);
-        ctx.fill();
-      }
-      ctx.fillStyle = `rgba(${col},${(near ? 0.95 : 0.5) * pulse})`;
+      ctx.fillStyle = `rgba(${col},${0.5 * pulse})`;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r * (near ? 1.8 : 1), 0, 6.29);
+      ctx.arc(p.x, p.y, p.r, 0, 6.29);
       ctx.fill();
     }
     raf = requestAnimationFrame(draw);
@@ -260,14 +174,6 @@ function initNetwork(a: { tx: number; ty: number }): () => void {
     cancelAnimationFrame(raf);
     window.removeEventListener('resize', resize);
   };
-}
-
-function trail(fx: HTMLElement, x: number, y: number) {
-  const el = document.createElement('div');
-  const s = 5 + Math.random() * 4;
-  el.style.cssText = `position:absolute;left:${x}px;top:${y}px;width:${s}px;height:${s}px;margin:${-s / 2}px 0 0 ${-s / 2}px;border-radius:50%;background:var(--color-primary);opacity:.5`;
-  fx.appendChild(el);
-  el.animate([{ transform: 'scale(1)', opacity: 0.5 }, { transform: 'scale(0)', opacity: 0 }], { duration: 600, easing: 'ease-out' }).onfinish = () => el.remove();
 }
 
 function ripple(el: HTMLElement, x: number, y: number) {

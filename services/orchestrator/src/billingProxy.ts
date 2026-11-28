@@ -12,14 +12,40 @@ function userIdOf(req: Request): string | undefined {
 
 export interface BillingProxyDeps {
   /**
-   * The signed-in account's email address — who FinVault asks to pay a top-up
-   * (#351). Looked up here from the authenticated user; an address in the
-   * request body is never used, or a caller could send a payment request to
-   * anybody's FinVault inbox.
+   * The signed-in account's email address (#351): who FinVault asks to pay when
+   * the customer names no other FinVault address, and — always — whose credit
+   * the request says it buys.
    */
   emailOf?(userId: string): Promise<string | null>;
   /** Why this account may not top up, or null — an unconfirmed address, where confirming is possible (#367). */
   topUpProblem?(userId: string): Promise<string | null>;
+  /** Whether a top-up can be paid by scanning its QR — a payee is configured (#436). */
+  canScan?: boolean;
+}
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * How a top-up is paid (#445), from the request body:
+ * - `{ payWith: 'qr' }` — scan-only: no address goes to FinVault, the QR is paid by whoever scans it;
+ * - `{ finvaultEmail }` — a payment request in that FinVault account's inbox;
+ * - neither — a payment request to the account's own address, as before.
+ *
+ * A typed address may belong to someone else. That is why every request names
+ * the account its credit is for, why only a confirmed account may send one
+ * (#367), and why both sides cap the open requests (#351, FinVault's own cap).
+ */
+export type PayerChoice = { scanOnly: true } | { scanOnly: false; email: string };
+
+export function payerChoice(body: unknown, accountEmail: string): PayerChoice | { problem: string } {
+  const b = (body ?? {}) as { payWith?: unknown; finvaultEmail?: unknown };
+  if (b.payWith === 'qr') return { scanOnly: true };
+  if (b.payWith !== undefined && b.payWith !== 'email') return { problem: 'payWith must be "email" or "qr"' };
+  if (b.finvaultEmail === undefined || b.finvaultEmail === null || b.finvaultEmail === '') return { scanOnly: false, email: accountEmail };
+  if (typeof b.finvaultEmail !== 'string' || b.finvaultEmail.length > 254 || !EMAIL.test(b.finvaultEmail.trim())) {
+    return { problem: 'the FinVault address is not a valid email address' };
+  }
+  return { scanOnly: false, email: b.finvaultEmail.trim().toLowerCase() };
 }
 
 export function createBillingProxyRouter(deps: BillingProxyDeps = {}): Router {
@@ -47,12 +73,19 @@ export function createBillingProxyRouter(deps: BillingProxyDeps = {}): Router {
   router.get('/billing/ledger', (req, res) => forward(req, res, '/ledger'));
   router.get('/billing/plan', (req, res) => forward(req, res, '/plan'));
   router.post('/billing/topup', async (req, res) => {
-    const email = await deps.emailOf?.(userIdOf(req) as string);
-    if (!email) return res.status(409).json({ error: 'this account has no email address for FinVault to ask for payment' });
-    const problem = await deps.topUpProblem?.(userIdOf(req) as string);
-    if (problem) return res.status(403).json({ error: problem });
+    const account = await deps.emailOf?.(userIdOf(req) as string);
+    if (!account) return res.status(409).json({ error: 'this account has no email address for FinVault to ask for payment' });
+    const choice = payerChoice(req.body, account);
+    if ('problem' in choice) return res.status(400).json({ error: choice.problem });
+    if (choice.scanOnly && !deps.canScan) return res.status(409).json({ error: 'this panel is not set up for paying by QR code — pay from your FinVault account instead' });
+    // A scan-only top-up sends no address anywhere, so it has none to confirm.
+    if (!choice.scanOnly) {
+      const problem = await deps.topUpProblem?.(userIdOf(req) as string);
+      if (problem) return res.status(403).json({ error: problem });
+    }
     const { amount, currency } = (req.body ?? {}) as { amount?: unknown; currency?: unknown };
-    return forward(req, res, '/topup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ amount, currency, email }) });
+    const body = { amount, currency, account, ...(choice.scanOnly ? {} : { email: choice.email }) };
+    return forward(req, res, '/topup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   });
 
   return router;

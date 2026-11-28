@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express';
-import { getEdition, type Edition } from 'shared';
+import { getEdition, getVersion, type Edition } from 'shared';
 
 // Public runtime config the dashboard reads before/without auth. Right now it
 // exposes only the edition (community|hosted) so the panel knows whether to
@@ -49,6 +49,9 @@ export function createConfigRouter(
       // instead of guessing from a version. `agent-link` (#416): nodes behind NAT
       // may connect outbound.
       features: FEATURES,
+      // Which release this server runs (#447), so a browser holding an older
+      // panel can say "reload" after an update. /health says the same openly.
+      version: getVersion(),
       // Hosted only, and only when configured: a community panel has no billing.
       ...(edition === 'hosted' && options.finvault ? { finvault: options.finvault } : {}),
       // TEMPORARY (#439): whether the Customers page shows its test tools.

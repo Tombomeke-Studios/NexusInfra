@@ -92,7 +92,7 @@ Runtime config the dashboard reads before login to decide whether billing UI ren
 Contains no sensitive data.
 
 ```json
-{ "edition": "community", "passwordResetByEmail": false, "sftpPort": 2022, "emailVerification": false, "features": ["agent-link"] }
+{ "edition": "community", "passwordResetByEmail": false, "sftpPort": 2022, "emailVerification": false, "features": ["agent-link"], "version": "0.5.0" }
 ```
 
 `features` lists what this control plane supports beyond the basics, so a client can ask instead of
@@ -104,6 +104,8 @@ guessing from a version: `agent-link` means nodes behind NAT may connect outboun
 `SMTP_URL` *and* `PANEL_URL` set; a yes/no, never the mail setup behind it.
 `sftpPort` is the port to connect to for SFTP (#235) — `SFTP_PUBLIC_PORT`, else `SFTP_PORT` — or `null`
 when SFTP is off.
+`version` is the release the orchestrator runs (#447) — the same as `/health` says. The panel reads it
+again when a tab comes back and every five minutes, and offers a reload when it differs from its own.
 
 ### `POST /auth/password-reset`  *(public)*
 
@@ -280,6 +282,33 @@ Other rules worth stating:
 - The token dies with its account, as a session does.
 - **The interactive terminal WebSocket does not accept API tokens** — it opens a root shell, the
   handshake is a `GET`, and a script that needs to run a command has `POST /deployments/:id/exec`.
+
+### `GET /admin/system`  *(platform administrators)*
+
+What each part of the installation runs and which optional features are on (#447). `403` for anyone
+else, and for an API token without the `admin` scope.
+
+```json
+{
+  "components": [
+    { "service": "orchestrator", "label": "Orchestrator", "reachable": true, "version": "0.5.0", "edition": "hosted" },
+    { "service": "node-agent", "nodeId": "…", "label": "Node agent · alpha", "reachable": false, "version": null, "edition": null, "problem": "no answer within 2 s" }
+  ],
+  "versionProblem": "Not everything runs the same version: …",
+  "features": [
+    { "id": "qr-topup", "label": "Top up by QR code", "state": "off", "summary": "…", "variables": ["FINVAULT_MERCHANT_NAME", "FINVAULT_MERCHANT_IBAN"] }
+  ]
+}
+```
+
+- `components`: the orchestrator itself, the Control Room, the Billing Bridge (hosted) and every node's
+  agent, each asked for its `/health` with a 2-second limit. A part that does not answer is a row with a
+  `problem`, never an error for the whole report.
+- `versionProblem`: set when parts that answered report different releases (development builds are not
+  compared), naming who runs what.
+- `features`: `state` is `on`, `off` or `warning` — a warning is an insecure default (`JWT_SECRET` unset,
+  the built-in `INTERNAL_API_TOKEN`, plaintext FinVault events) or a feature on that should not be
+  (billing test tools). `variables` are **names**; no value is ever returned.
 
 ### `GET /users` · `POST /users`  *(platform administrators)*
 
@@ -948,9 +977,16 @@ The dashboard's Billing page (#149) talks only to the Orchestrator, which proxie
 and **injects the caller's authenticated userId** from the JWT (the client never sends a user id):
 
 - `GET /billing/wallet` · `GET /billing/usage` · `GET /billing/standing` · `GET /billing/ledger` · `GET /billing/plan`
-- `POST /billing/topup` — body `{ amount }`. The Orchestrator adds the signed-in account's own email
-  address as the payer; an address in the body is ignored (#351). `409` if the account has none; `403`
-  while the address is unconfirmed, where the installation confirms addresses (#367).
+- `POST /billing/topup` — body `{ amount, finvaultEmail?, payWith? }` (#445). How it is paid:
+  - nothing extra — a payment request in the FinVault account with the signed-in account's own address (#351);
+  - `finvaultEmail` — a payment request in the FinVault account with that address instead (`400` if it is
+    not an email address). The old `email` field is ignored;
+  - `payWith: "qr"` — **scan-only**: no address is sent and the request is in nobody's inbox; it is paid by
+    scanning the top-up's QR. `409` when no payee is configured, since there would be nothing to scan.
+
+  Every request names the account its credit is for. `409` if the account has no address; `403` while it is
+  unconfirmed, where the installation confirms addresses (#367) — except for a scan-only top-up, which sends
+  no address anywhere.
 
 Without an authenticated user these routes answer `401`.
 
@@ -1051,12 +1087,14 @@ by the Orchestrator; the bridge only checks the internal token (#372).
 
 ### `POST /billing/:userId/topup`
 
-Start a credit top-up funded via FinVault — body `{ amount, email, currency? }`. `email` is the
-FinVault account that is asked to pay (#351). Records a **pending** ledger entry and emits
-`payment.request` to FinVault; credit is added only on `payment.confirmed`. `202` with
-`{ status: "pending", reference, entry, payerEmail }`.
+Start a credit top-up funded via FinVault — body `{ amount, email?, account?, currency? }`. `email` is
+the FinVault account that is asked to pay (#351); without it the top-up is **scan-only** (#445) and
+`payment.request` carries no `customerEmail`. `account` is the NexusInfra account the credit is for,
+named in the request's description so a payer sees whose credit they buy. Records a **pending** ledger
+entry (with `payerEmail`, or `null` for scan-only) and emits `payment.request` to FinVault; credit is
+added only on `payment.confirmed`. `202` with `{ status: "pending", reference, entry, payerEmail }`.
 
-- `400` on a non-positive amount or a missing email.
+- `400` on a non-positive amount or an `email` that is not an address.
 - `409` when the account already has three top-ups waiting in FinVault.
 - `503` when the request could not be handed to the broker — the entry is marked failed at once, since
   FinVault will never see it.
@@ -1106,7 +1144,7 @@ truth. Summary:
 | `server.start` / `server.stopped` / `server.started` / `server.crashed` | orchestrator ↔ node-agent | container lifecycle |
 | `deployment.created` / `deployment.failed` | orchestrator → bus | audit; `deployment.created` also carries `resourceLimits` for billing tracking |
 | `deployment.updated` | orchestrator → billing-bridge | a server was resized; carries the new `resourceLimits`, which later runtime is charged at (#364) |
-| `payment.request` | billing-bridge → FinVault | credit top-up charge; FinVault's `payment.request` shape plus `customerEmail`, which names the payer (#351) |
+| `payment.request` | billing-bridge → FinVault | credit top-up charge; FinVault's `payment.request` shape plus `customerEmail`, which names the payer (#351) — absent for a scan-only top-up (#445) |
 | `payment.confirmed` / `payment.failed` | FinVault → billing-bridge | consumed to add / mark-failed a top-up's credit |
 | `billing.server.suspend` | billing-bridge → orchestrator | stop a user's servers when credit is exhausted (hosted; NexusInfra-only key) |
 | `billing.credit.low` | billing-bridge → orchestrator | `{ userId, hoursLeft, available, currency }` — the account's credit lasts less than `LOW_CREDIT_HOURS`; sent once per dip (hosted; NexusInfra-only key, #379) |

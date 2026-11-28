@@ -48,6 +48,15 @@ in-memory, so it survives a broker blip but not a process restart. Heartbeats de
 they're ephemeral, and replaying a stale pulse is worse than losing it. The Node Agent's `/health`
 exposes `pendingEvents` / `droppedEvents`.
 
+**Reconnecting (#448).** Every service notices when its broker connection or channel closes and opens a
+new one — after 1 s, doubling to at most 30 s between tries, for as long as it takes — and sets every
+queue it consumes up again on the new channel. Until #448 the connection was opened once and cached
+forever: after a broker restart (a host reboot, `docker compose restart`, a broker update) consumers
+stopped without a log line, nodes went offline in the panel and server status froze until each service
+was restarted by hand. A consumer whose broker is not reachable at start is kept and set up once it is.
+While disconnected a publish answers `false` immediately rather than waiting, which is what the outbox
+above is for.
+
 ### Routing keys in use
 
 | Routing key | Publisher | Consumer |

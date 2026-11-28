@@ -139,7 +139,7 @@ export class InMemoryRepository implements Repository {
   }
 
   async createLedgerEntry(input: CreateLedgerInput): Promise<CreditLedgerEntry> {
-    const entry: CreditLedgerEntry = { id: randomUUID(), createdAt: new Date().toISOString(), failureReason: null, ...input };
+    const entry: CreditLedgerEntry = { id: randomUUID(), createdAt: new Date().toISOString(), failureReason: null, payerEmail: null, ...input };
     this.ledger.push(entry);
     return { ...entry };
   }

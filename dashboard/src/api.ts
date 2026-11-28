@@ -412,6 +412,8 @@ export interface AppConfig {
   finvault?: { url: string | null; payee: { name: string; iban: string } | null };
   /** TEMPORARY (#439): hosted, with BILLING_TEST_TOOLS=true — the Customers page shows its test tools. */
   billingTestTools?: boolean;
+  /** The release the server runs (#447). */
+  version?: string;
 }
 
 /** One server's disk use (#347); a null is something the node could not measure. */
@@ -476,6 +478,35 @@ export function requestEmailVerification(): Promise<{ status: 'sent' | 'verified
 /** Public config — read before login to decide whether billing UI renders (#144). */
 export function getConfig(): Promise<AppConfig> {
   return request('/config');
+}
+
+// ── System (#447, platform administrators) ─────────────────────────────────
+export interface SystemComponent {
+  service: string;
+  nodeId?: string;
+  label: string;
+  reachable: boolean;
+  version: string | null;
+  edition: string | null;
+  problem?: string;
+}
+
+export interface SystemFeature {
+  id: string;
+  label: string;
+  state: 'on' | 'off' | 'warning';
+  summary: string;
+  variables: string[];
+}
+
+export interface SystemReport {
+  components: SystemComponent[];
+  versionProblem: string | null;
+  features: SystemFeature[];
+}
+
+export function getSystemReport(): Promise<SystemReport> {
+  return request('/admin/system');
 }
 
 // ── Billing (hosted edition; proxied through the orchestrator, #149) ───────────
@@ -545,6 +576,8 @@ export interface LedgerEntry {
   description: string;
   /** Why a top-up failed, in FinVault's words (#351). */
   failureReason?: string | null;
+  /** The FinVault address a top-up's request went to (#445); null when it is paid by QR alone. */
+  payerEmail?: string | null;
   createdAt: string;
 }
 
@@ -678,8 +711,15 @@ export function getLedger(): Promise<LedgerEntry[]> {
 }
 
 /** `payerEmail` is the FinVault account that was asked to pay — where the customer goes to approve it (#351). */
-export function topUp(amount: number): Promise<{ status: string; reference: string; payerEmail?: string }> {
-  return request('/billing/topup', { method: 'POST', body: JSON.stringify({ amount }) });
+/**
+ * How a top-up is paid (#445): a payment request in a FinVault account — the
+ * signed-in one's own address unless `finvaultEmail` names another — or, with
+ * `payWith: 'qr'`, no request in anybody's inbox, only the QR code.
+ */
+export type TopUpPayer = { payWith: 'qr' } | { payWith?: 'email'; finvaultEmail?: string };
+
+export function topUp(amount: number, payer: TopUpPayer = {}): Promise<{ status: string; reference: string; payerEmail?: string | null }> {
+  return request('/billing/topup', { method: 'POST', body: JSON.stringify({ amount, ...payer }) });
 }
 
 /**

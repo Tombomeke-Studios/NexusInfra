@@ -7,8 +7,8 @@ import { IconHexagon } from '../components/Icons';
 import { ThemeToggle } from '../components/ThemeToggle';
 
 // Login screen — ported from the redesign (NexusInfra.dc.html): aurora backdrop
-// (App-level), a spotlight card with a floaty brand, and a magnetic/ripple
-// primary button (FX activated by the interaction layer).
+// (App-level), a card with a floaty brand, and a ripple on the primary button.
+// Nothing follows the pointer (#449).
 export function Login({ mode = 'sign-in' }: { mode?: 'sign-in' | 'register' }) {
   const registering = mode === 'register';
   const [email, setEmail] = useState('');
@@ -69,7 +69,7 @@ export function Login({ mode = 'sign-in' }: { mode?: 'sign-in' | 'register' }) {
           <ThemeToggle />
         </div>
 
-        <div className="card spotlight" data-spotlight style={{ overflow: 'hidden' }}>
+        <div className="card" style={{ overflow: 'hidden' }}>
           <div style={{ padding: '28px 26px' }}>
             <span
               style={{
@@ -149,7 +149,7 @@ export function Login({ mode = 'sign-in' }: { mode?: 'sign-in' | 'register' }) {
                 </p>
               )}
 
-              <button type="submit" className="btn btn--primary btn--block" data-magnetic data-ripple data-burst="primary" disabled={busy}>
+              <button type="submit" className="btn btn--primary btn--block" data-ripple data-burst="primary" disabled={busy}>
                 {busy && <span className="spinner" />}
                 {busy ? (registering ? 'Creating account…' : 'Signing in…') : registering ? 'Create account' : 'Sign in'}
               </button>

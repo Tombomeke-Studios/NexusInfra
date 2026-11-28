@@ -12,6 +12,7 @@ import { Teams } from './pages/Teams';
 import { Preferences } from './pages/Preferences';
 import { Account } from './pages/Account';
 import { Users } from './pages/Users';
+import { System } from './pages/System';
 import { Billing } from './pages/Billing';
 import { VerifyEmail } from './pages/VerifyEmail';
 import { Customers } from './pages/Customers';
@@ -43,6 +44,7 @@ export function AppRoutes() {
           <Route path="/account" element={<Account />} />
           {/* The API answers 403 for non-administrators; the nav just doesn't offer it. */}
           <Route path="/users" element={<Users />} />
+          <Route path="/system" element={<System />} />
           {/* Billing is hosted-edition only (#149) and is not in a community build at
               all (#190) — BILLING_INCLUDED is a compile-time constant, so this whole
               branch disappears from the community bundle. */}
