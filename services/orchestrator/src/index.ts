@@ -15,6 +15,8 @@ import { createBillingProxyRouter } from './billingProxy.js';
 import { createBillingPlansRouter } from './billingPlans.js';
 import { createMonitoringRouter } from './monitoring.js';
 import { createConfigRouter, finvaultFromEnv } from './config.js';
+import { createSystemRouter } from './systemReport.js';
+import { bridgeFetch } from './bridge.js';
 import { createSftpServer, parseSftpPort } from './sftp.js';
 import { createAgentSftpFiles, createSftpAuthenticator, loadOrCreateHostKey } from './sftpBackend.js';
 import { createLoginLimiter } from './loginLimiter.js';
@@ -243,6 +245,7 @@ app.use(
     createBillingProxyRouter({
       emailOf: async (userId) => (await repo.getUser(userId))?.email ?? null,
       topUpProblem: async (userId) => topUpProblem(await repo.getUser(userId), emailVerification.available),
+      canScan: Boolean(finvaultFromEnv()?.payee),
     })
   )
 );
@@ -254,6 +257,21 @@ if (billingTestTools) console.warn('[Orchestrator] TEST TOOLS ARE ON (BILLING_TE
 if (isHosted()) app.use(catchAsync(createBillingPlansRouter({ repo, testTools: billingTestTools })));
 // Surfaces the Control Room's live service/node monitoring to the dashboard (#157).
 app.use(catchAsync(createMonitoringRouter()));
+// The System page (#447): versions side by side, and which optional features are on.
+app.use(
+  catchAsync(
+    createSystemRouter({
+      self: buildInfo(),
+      env: process.env,
+      hosted: isHosted(),
+      listNodes: () => repo.listNodes(),
+      agentUrlFor,
+      agentFetch,
+      bridgeFetch,
+      controlRoomUrl: process.env.CONTROL_ROOM_URL || 'http://control-room:9000',
+    })
+  )
+);
 // Last: turns anything the routes threw into a 500 for that caller only (#294).
 app.use(errorHandler);
 

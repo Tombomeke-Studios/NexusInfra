@@ -1,6 +1,6 @@
 import express from 'express';
 import { readDlq, type QueueProbe } from './dlq.js';
-import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, startHeartbeat, readPayload, connectRabbitMQ, type EventEnvelope, MetricsRegistry, registerBuildInfo, httpMetrics, metricsHandler } from 'shared';
+import { assertEditionIsRunnable, buildInfo, consumeRabbitQueue, startHeartbeat, readPayload, currentRabbitChannel, type EventEnvelope, MetricsRegistry, registerBuildInfo, httpMetrics, metricsHandler } from 'shared';
 import { DEGRADED_MS, Monitor, OFFLINE_MS } from './monitor.js';
 
 // ── Control Room ──────────────────────────────────────────────────────────────
@@ -100,8 +100,15 @@ async function start() {
     // One channel, kept for passive queue inspection. checkQueue consumes
     // nothing: these messages are evidence, and reading them properly would mean
     // requeueing and mutating their redelivery state.
-    const { channel } = await connectRabbitMQ();
-    probe = channel as QueueProbe;
+    // Through whatever channel is live (#448): the one held at start dies with the
+    // broker's next restart, and the DLQ would read "unknown" from then on.
+    probe = {
+      checkQueue: (name: string) => {
+        const live = currentRabbitChannel() as QueueProbe | null;
+        if (!live) return Promise.reject(new Error('not connected to the broker'));
+        return live.checkQueue(name);
+      },
+    };
 
     // Emit our own heartbeat so the Control Room appears in its own status view.
     startHeartbeat('control-room', 1000);

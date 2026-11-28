@@ -27,6 +27,9 @@ export default defineConfig({
   plugins: [react()],
   define: {
     __BUILD_EDITION__: JSON.stringify(edition),
+    // Which release this bundle is (#447) — the release build passes APP_VERSION,
+    // so a browser still holding an older bundle can tell after an update.
+    __APP_VERSION__: JSON.stringify(process.env.APP_VERSION || '0.0.0-dev'),
   },
   resolve: {
     alias:

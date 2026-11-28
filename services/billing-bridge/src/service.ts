@@ -148,23 +148,29 @@ export function createBillingService(deps: BillingServiceDeps) {
      * Start a credit top-up: record a pending ledger entry and ask FinVault to
      * charge the user (payment.request). Credit is added only on payment.confirmed.
      *
-     * `customerEmail` is who FinVault asks to pay (#351) — the account's own
-     * address, supplied by the Orchestrator from the signed-in user, never by the
-     * browser.
+     * `customerEmail` is the FinVault address asked to pay (#351, #445), chosen
+     * by the Orchestrator. Without one the top-up is scan-only: FinVault files the
+     * request under nobody's inbox and it is paid by its QR alone.
+     *
+     * `forAccount` is the NexusInfra account the credit is for, named in what
+     * FinVault shows the payer: the payer may be somebody else (#445), and should
+     * see whose credit they are buying before they approve.
      */
-    async requestTopUp(userId: string, amount: number, currency?: string, customerEmail?: string): Promise<TopUpResult> {
+    async requestTopUp(userId: string, amount: number, currency?: string, customerEmail?: string, forAccount?: string): Promise<TopUpResult> {
       if (!(amount > 0)) throw new TopUpError('top-up amount must be positive', 400);
       const waiting = (await repo.listLedger(userId)).filter((e) => e.type === 'topup' && e.status === 'pending').length;
       if (waiting >= MAX_PENDING_TOPUPS) {
         throw new TopUpError(`you already have ${waiting} top-ups waiting to be approved in FinVault — pay or decline one there first`, 409);
       }
       const wallet = await repo.getWallet(userId);
-      // Where this account's monthly statement goes too (#375).
+      // Where this account's monthly statement goes too (#375). A scan-only
+      // top-up names no address, so it leaves the last one in place.
       if (customerEmail) await repo.setWalletEmail(userId, customerEmail);
       const cur = currency ?? wallet.currency;
       // An RF creditor reference: it is also the structured reference in the
       // top-up's EPC QR, which FinVault pays by (#436).
       const reference = newTopUpReference();
+      const description = forAccount ? `NexusInfra credit top-up for ${forAccount}` : 'NexusInfra credit top-up';
       const entry = await repo.createLedgerEntry({
         userId,
         type: 'topup',
@@ -172,7 +178,8 @@ export function createBillingService(deps: BillingServiceDeps) {
         currency: cur,
         reference,
         status: 'pending',
-        description: 'NexusInfra credit top-up',
+        description,
+        payerEmail: customerEmail ?? null,
       });
       const sent = await emit(KEY_PAYMENT_REQUEST, {
         type: 'payment.request',
@@ -182,7 +189,7 @@ export function createBillingService(deps: BillingServiceDeps) {
           receiverWalletId: billingWalletId,
           amount,
           currency: cur,
-          description: 'NexusInfra credit top-up',
+          description,
           ...(customerEmail ? { customerEmail } : {}),
         },
       });

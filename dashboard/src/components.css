@@ -1,29 +1,6 @@
 /* Reusable component classes built on the design tokens (index.css). Keep visual
    decisions here so pages stay markup-only. */
 
-/* ── Spotlight (glow follows cursor; wired by the interaction layer #91) ─── */
-.spotlight {
-  position: relative;
-  overflow: hidden;
-}
-.spotlight::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  background: radial-gradient(
-    200px circle at var(--mx, 50%) var(--my, 50%),
-    color-mix(in srgb, var(--color-primary) 16%, transparent),
-    transparent 62%
-  );
-  opacity: var(--spot, 0);
-  transition: opacity 200ms;
-}
-.spotlight > * {
-  position: relative;
-}
-
 /* Cards that lift on hover */
 .card--lift {
   transition: transform var(--transition), box-shadow var(--transition);
@@ -127,21 +104,6 @@
   z-index: 9998;
   pointer-events: none;
   overflow: hidden;
-}
-.cursor-aura {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 340px;
-  height: 340px;
-  margin: -170px 0 0 -170px;
-  border-radius: 50%;
-  background: radial-gradient(circle, color-mix(in srgb, var(--color-primary) 22%, transparent), transparent 60%);
-  z-index: 9997;
-  pointer-events: none;
-  will-change: transform;
-  opacity: 0;
-  transition: opacity 400ms;
 }
 .app-content {
   position: relative;

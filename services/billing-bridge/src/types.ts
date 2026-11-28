@@ -53,6 +53,11 @@ export interface CreditLedgerEntry {
   description: string;
   /** Why a top-up failed, as FinVault put it (#351); null otherwise. */
   failureReason: string | null;
+  /**
+   * The FinVault address a top-up's payment request was sent to (#445), or null:
+   * a scan-only top-up (paid by its QR), or an entry that is not a top-up.
+   */
+  payerEmail: string | null;
   createdAt: string;
 }
 
@@ -84,6 +89,8 @@ export interface CreateLedgerInput {
   reference: string;
   status: LedgerStatus;
   description: string;
+  /** Where a top-up's payment request was sent (#445); absent for a scan-only one. */
+  payerEmail?: string | null;
 }
 
 export interface CreateCycleInput {

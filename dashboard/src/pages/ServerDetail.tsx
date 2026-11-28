@@ -654,7 +654,7 @@ function FilesTab({ id, running }: { id: string; running: boolean }) {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn btn--secondary btn--sm" data-ripple onClick={newFile}>New file</button>
           <button className="btn btn--secondary btn--sm" data-ripple onClick={newFolder}>New folder</button>
-          <button className="btn btn--primary btn--sm" data-ripple data-magnetic onClick={() => fileInput.current?.click()}>Upload</button>
+          <button className="btn btn--primary btn--sm" data-ripple onClick={() => fileInput.current?.click()}>Upload</button>
           <input ref={fileInput} type="file" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void onUpload(f); e.target.value = ''; }} />
         </div>
       </div>

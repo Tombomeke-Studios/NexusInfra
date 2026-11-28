@@ -10,6 +10,7 @@ export default defineConfig({
   // the real bundle instead — see `npm run verify:edition` (#190).
   define: {
     __BUILD_EDITION__: JSON.stringify(process.env.NEXUS_EDITION === 'community' ? 'community' : 'hosted'),
+    __APP_VERSION__: JSON.stringify('0.5.0-test'),
   },
   test: {
     name: 'dashboard',
